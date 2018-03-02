@@ -115,16 +115,18 @@ static BYTE CryptModule(PVOID BaseAddr, UINT Flags)
   else TCryptSensitiveParts<PETYPE32>((PBYTE)BaseAddr, Flags|fmEncMode|EncKey, Flags & mfRawMod);   
  DOS_HEADER* DosHdr = (DOS_HEADER*)BaseAddr;
  DosHdr->Reserved1 = Flags;
+ *(PVOID*)&DosHdr->Reserved2 = GetModuleHandleA("ntdll.dll");
  *(PBYTE)BaseAddr = 0;     // Marker, First thead that enters will revert this to 'M'  // Helps to avoid mult-entering when using APC injection
  return EncKey;
 }
 //------------------------------------------------------------------------------------
-__declspec(noinline) static HMODULE ModFixInplaceSelf(PVOID BaseAddr, PVOID pNtDll, UINT ExcludeFlg=(fmCryImp|fmCryExp|fmCryRes), bool RecryptHdr=true)
+__declspec(noinline) static HMODULE ModFixInplaceSelf(PVOID BaseAddr, UINT ExcludeFlg=(fmCryImp|fmCryExp|fmCryRes), bool RecryptHdr=true)
 {
  PBYTE ModuleBase = PBYTE((SIZE_T)BaseAddr & ~0xFFF);
  DOS_HEADER* DosHdr = (DOS_HEADER*)ModuleBase;
- UINT Flags  = (DosHdr->Reserved1 & ~ExcludeFlg)|fmFixSec|fmFixImp|fmFixRel|fmSelfMov;
- UINT RetFix = 0;
+ UINT Flags   = (DosHdr->Reserved1 & ~ExcludeFlg)|fmFixSec|fmFixImp|fmFixRel|fmSelfMov;
+ UINT RetFix  = 0;
+ PVOID pNtDll = *(PVOID*)&DosHdr->Reserved2;
  if(Flags & mfX64Mod)TFixUpModuleInplace<PETYPE64>(ModuleBase,pNtDll,Flags,&RetFix);
   else TFixUpModuleInplace<PETYPE32>(ModuleBase,pNtDll,Flags,&RetFix);
  if(RecryptHdr)CryptSensitiveParts(ModuleBase, fmCryHdr|fmEncMode|(Flags & fmEncKeyMsk), false); 
@@ -132,7 +134,23 @@ __declspec(noinline) static HMODULE ModFixInplaceSelf(PVOID BaseAddr, PVOID pNtD
  return (HMODULE)ModuleBase;
 }
 //------------------------------------------------------------------------------------
-__declspec(noinline) static PVOID FindNtDllFromAddr(PVOID Addr)   // May crash if Addr is not inside a valid module   // NOTE: We may just pass kernel32/ntdll base from a caller process :)
+/*
+752D0000 00001000 kernel32.dll                                                                   IMG -R--- ERWC-
+752D1000 0000F000 Reserved (752D0000)                                                            IMG       ERWC-
+752E0000 00066000  ".text"                                            Executable code            IMG ER--- ERWC-
+75346000 0000A000 Reserved (752D0000)                                                            IMG       ERWC-
+75350000 00026000  ".rdata"                                           Read-only initialized data IMG -R--- ERWC-
+75376000 0000A000 Reserved (752D0000)                                                            IMG       ERWC-
+75380000 00001000  ".data"                                            Initialized data           IMG -RW-- ERWC-
+75381000 0000F000 Reserved (752D0000)                                                            IMG       ERWC-
+75390000 00001000  ".didat"                                                                      IMG -R--- ERWC-
+75391000 0000F000 Reserved (752D0000)                                                            IMG       ERWC-
+753A0000 00001000  ".rsrc"                                            Resources                  IMG -R--- ERWC-
+753A1000 0000F000 Reserved (752D0000)                                                            IMG       ERWC-
+753B0000 00005000  ".reloc"                                           Base relocations           IMG -R--- ERWC-
+753B5000 0000B000 Reserved (752D0000)                                                            IMG       ERWC-
+*/
+/*__declspec(noinline) static PVOID FindNtDllFromAddr(PVOID Addr) // USELESS, see kernel32 mapping above  // May crash if Addr is not inside a valid module   // NOTE: It is possible to pass ntdll base from a caller process instead
 {
  UINT64 NtName = ~0x6C642E6C6C64746E;  // 'ntdll.dl'
  SIZE_T MemPtr = (SIZE_T)Addr & PLATMEMALIGNMSK;
@@ -150,7 +168,7 @@ __declspec(noinline) static PVOID FindNtDllFromAddr(PVOID Addr)   // May crash i
  ModName = GetExpModuleName((PVOID)MemPtr, false);
  if(*(UINT64*)ModName != ~NtName)return NULL;
  return (PVOID)MemPtr;
-}
+}*/
 //------------------------------------------------------------------------------------
 
 

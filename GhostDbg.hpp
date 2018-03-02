@@ -731,7 +731,7 @@ static PVOID FindRtlDispatchException(void)
    if(*PBase == 0xE8){PBase++;                         // call Rel32
 #endif
      PVOID Addr = RelAddrToAddr(PBase-1,5,*(PDWORD)PBase);
-     LOGMSG("Addr: %p",Addr);
+     DBGMSG("Addr: %p",Addr);
      return Addr;
      break;
     }
@@ -1059,14 +1059,21 @@ int _stdcall ProcessRequestDbg(SMsgHdr* Req)
      api.PopArg(BufferLength);
      PBYTE BufPtr = api.PopBlk(BufferLength);
      if(ProcessHandle != UintToFakeHandle(this->CurProcID)){DBGMSG("Process HANDLE mismatch: %08X:%08X",ProcessHandle,UintToFakeHandle(this->CurProcID));}                           
-       else Status = this->NtDll.NtWriteVirtualMemory(NtCurrentProcess, BaseAddress, BufPtr, BufferLength, &RetLen); 
+       else 
+        {
+         if(BufferLength == 1)
+          {
+           bool IsBP = (*BufPtr == this->SwBpVal);
+           if(IsBP)this->BpList.AddBP(BaseAddress);
+             else this->BpList.DelBP(BaseAddress);
+           DBGMSG("miWriteVirtualMemory: Addr=%p, BYTE=%02X, IsBP=%u",BaseAddress,*BufPtr,IsBP);
+           Status = this->NtDll.NtWriteVirtualMemory(NtCurrentProcess, BaseAddress, BufPtr, BufferLength, &RetLen);
+           if(Status && IsBP)this->BpList.DelBP(BaseAddress);  // Remove a failed BP  // Case when removing a BP is failed are left undefined
+          }
+           else Status = this->NtDll.NtWriteVirtualMemory(NtCurrentProcess, BaseAddress, BufPtr, BufferLength, &RetLen);
+        }
      apo.PushArg(RetLen);
      apo.PushArg(Status);
-     if(this->OnlyOwnSwBP && !Status && (BufferLength == 1))
-      {
-       if(*BufPtr == this->SwBpVal)this->BpList.AddBP(BaseAddress);
-        else this->BpList.DelBP(BaseAddress);
-      }
      DBGMSG("miWriteVirtualMemory PutMsg: Status=%08X, Size=%u",Status,apo.GetLen());
      this->PutMsg(mtDbgRsp, miWriteVirtualMemory, Req->Sequence, apo.GetPtr(), apo.GetLen());     
     }

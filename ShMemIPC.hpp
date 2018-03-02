@@ -13,9 +13,9 @@ struct SMemDescr: public Usr
 {
  volatile ULONG MemFlgs;    // Unused for now
  volatile ULONG MemSize;    // Size of MemData
- BYTE NtfEName[MaxNameSize];
- BYTE SynMName[MaxNameSize];         // Name of Mutex
- BYTE Data[0];              // Should be aligned to 8
+ volatile BYTE NtfEName[MaxNameSize];
+ volatile BYTE SynMName[MaxNameSize];         // Name of Mutex
+ volatile BYTE Data[0];              // Should be aligned to 8
 };
 #pragma pack(pop)
 
@@ -220,7 +220,7 @@ struct SMsgBlk    // Always aligned to 64 bit
  volatile ULONG SenderID;
  volatile ULONG MsgSeqID;   // Incremented for each message
  volatile ULONG ValidMrk;   // Opening marker. Closing marker is after data  
- BYTE Data[0];              // Better to be aligned to 8 bytes
+ volatile BYTE  Data[0];    // Better to be aligned to 8 bytes
 
  static ULONG FullSize(ULONG DSize){return AlignFrwd(DSize + sizeof(SMsgBlk) + 8,8);}
  ULONG FullSize(void){return FullSize(this->DataSize);}   // AlignFrwd(this->DataSize + sizeof(SMsgBlk) + 8,8);}     // All data blocks aligned to 8 bytes    
@@ -453,7 +453,7 @@ int AddBlock(UINT TgtID, PVOID* Data, UINT Size)          // TgtID = 0 - Broadca
  Desc->FirstBlk = FMsg;      
  Desc->LastBlk  = LMsg;      
  if(LstMsg)LstMsg->NextOffs = LMsg;   // LstMsg is pointed by current LastBlk, Setting it before moving LastBlk forward will show in unlocked enumeration that the last message have a NEXT value  
- if(Data)*Data = &this->NewMsg->Data;
+ if(Data)*Data  = (PBYTE)&this->NewMsg->Data;
  return 0;
 }
 //---------------------------------------------------------------------------
@@ -809,14 +809,14 @@ int ExchangeMsg(UINT16 MsgID, UINT16 MsgType, CArgBuf* Req, CArgBuf* Rsp, UINT T
 {
  DBGMSG("Request: MsgID=%u, MsgType=%u, ReqSize=%08X",MsgID,MsgType,Req->GetLen());
  if(!this->IsConnected()){DBGMSG("Not connected!"); return -1;}
- if(!this->IsOtherConnections()){LOGMSG("No other connections!"); this->Disconnect(); return -2;}
+ if(!this->IsOtherConnections()){DBGMSG("No other connections!"); this->Disconnect(); return -2;}
  EnterCriticalSection(&this->csec);
 // DBGMSG("Entered!");
  SMsgCtx MCtx;    
  MCtx.BEnum.NxtMsgID = this->ipc.GetNexMsgSeqNum() + 1;    // Limit enumeration to messages added after our request
  int res = this->PutMsg(MsgType, MsgID, 0, Req->GetPtr(), Req->GetLen(), &MCtx.BEnum.NxtMsgID, TgtID);
- if(res < 0){LOGMSG("Failed: %i",res); LeaveCriticalSection(&this->csec); return res;}
- if(!Rsp){DBGMSG("Done Send"); LeaveCriticalSection(&this->csec); return 0;}   // No response needed
+ if(res < 0){DBGMSG("Failed: %i",res); LeaveCriticalSection(&this->csec); return res;}
+ if(!Rsp){DBGMSG("Done, no response expected."); LeaveCriticalSection(&this->csec); return 0;}   // No response needed
  UINT16 ExpectMT = MsgType << 1;  // Special value! Should it be this way?
  DWORD  StTicks  = GetTickCount();               
  for(SMsgHdr* Cmd = this->GetMsg(&MCtx);Cmd || (CSharedIPC::TicksDelta(StTicks) < this->WaitDelay);Cmd = this->GetMsg(&MCtx))   // DO NOT BREAK THIS LOOP by other means than 'meDone'!    // NOTE: Tick counter may overflow!!!
@@ -825,7 +825,7 @@ int ExchangeMsg(UINT16 MsgID, UINT16 MsgType, CArgBuf* Req, CArgBuf* Rsp, UINT T
 //   DBGMSG("MsgType=%04X, MsgID=%04X, DataID=%08X, Sequence=%08X, DataSize=%08X",Cmd->MsgType,Cmd->MsgID,Cmd->DataID,Cmd->Sequence,Cmd->DataSize);
    if((Cmd->MsgType != ExpectMT)||(Cmd->MsgID != MsgID)||(Cmd->DataID != (this->DSeqNum-1)))continue;
    Rsp->Assign(&Cmd->Data,Cmd->DataSize, true);
-   DBGMSG("Response: MsgID=%u, MsgType=%u, RspSize=%08X, UserMsg=%u, RspWaitMs=%u",MsgID,MsgType,Rsp->GetLen(),GetTickCount()-StTicks);
+   DBGMSG("Response: MsgID=%u, MsgType=%u, RspSize=%08X, RspWaitMs=%u",MsgID,MsgType,Rsp->GetLen(),GetTickCount()-StTicks);
    this->EndMsg(&MCtx);      // Unlock buffer
    LeaveCriticalSection(&this->csec);
    return Rsp->GetLen();
