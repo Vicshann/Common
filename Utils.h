@@ -748,24 +748,25 @@ public:
 template<typename T> class CArr
 {
 public:
- T* Data;
+ T* AData;
 
- CArr(void){this->Data = NULL;}
- CArr(UINT Cnt){this->Data = NULL; this->Resize(Cnt);}
+ CArr(void){this->AData = NULL;}
+ CArr(UINT Cnt){this->AData = NULL; this->Resize(Cnt);}
  ~CArr(){this->Resize(0);}
- operator   const T*() {return this->Data;}
+ operator   const T*() {return this->AData;}
+ T* Data(void){return this->AData;}
  UINT Count(void){return (this->Size / sizeof(T));}
- UINT Size(void){return ((this->Data)?(((size_t*)this->Data)[-1]):(0));}
+ UINT Size(void){return ((this->AData)?(((size_t*)this->AData)[-1]):(0));}
  bool Resize(UINT Cnt)
  {
   Cnt = (Cnt*sizeof(T))+sizeof(size_t);
   HANDLE hHeap = GetProcessHeap();
-  size_t* Ptr = (size_t*)this->Data;
-  if(Cnt && this->Data)Ptr = (size_t*)HeapReAlloc(hHeap,HEAP_ZERO_MEMORY,&Ptr[-1],Cnt);
-	else if(!this->Data)Ptr = (size_t*)HeapAlloc(hHeap,HEAP_ZERO_MEMORY,Cnt);
-	  else if(!Cnt && this->Data){HeapFree(hHeap,0,&Ptr[-1]); this->Data=NULL; return false;}
+  size_t* Ptr = (size_t*)this->AData;
+  if(Cnt && this->AData)Ptr = (size_t*)HeapReAlloc(hHeap,HEAP_ZERO_MEMORY,&Ptr[-1],Cnt);
+	else if(!this->AData)Ptr = (size_t*)HeapAlloc(hHeap,HEAP_ZERO_MEMORY,Cnt);
+	  else if(!Cnt && this->AData){HeapFree(hHeap,0,&Ptr[-1]); this->AData=NULL; return false;}
   *Ptr = Cnt;
-  this->Data = (T*)(++Ptr);
+  this->AData = (T*)(++Ptr);
   return true;
  }
 }; 

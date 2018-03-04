@@ -134,6 +134,98 @@ __declspec(noinline) static HMODULE ModFixInplaceSelf(PVOID BaseAddr, UINT Exclu
  return (HMODULE)ModuleBase;
 }
 //------------------------------------------------------------------------------------
+__declspec(noinline) static void RedirRet(PBYTE OldBase, PBYTE NewBase)  
+{
+ PBYTE RetAddr = (PBYTE)_ReturnAddress();
+ RetAddr = &NewBase[RetAddr - OldBase];
+*(PVOID*)_AddressOfReturnAddress() = RetAddr;
+}
+//------------------------------------------------------------------------------------
+static int HideSelfProxyDll(PVOID DllBase, PVOID pNtDll, LPSTR RealDllPath, PVOID* NewBase, PVOID* EntryPT)   // Call this from DllMain
+{                             
+   //  lstrcpyA(GetFileName(RealDllPath),"version.dll");
+   //  LoadLibraryA(RealDllPath);
+ UINT SysPLen = 0;
+ int DelPos = -1;
+ BYTE  DllPath[MAX_PATH];
+ WCHAR SysPath[MAX_PATH];
+ lstrcpyA((LPSTR)&DllPath,RealDllPath);
+ LPSTR DllName = GetFileName((LPSTR)&DllPath);
+ for(;RealDllPath[SysPLen] && (SysPLen < (MAX_PATH-1));SysPLen++)     // RealDllPath on stack will become invalid after relocation
+  {
+   SysPath[SysPLen] = RealDllPath[SysPLen]; 
+   if((RealDllPath[SysPLen] == PATHDLML)||(RealDllPath[SysPLen] == PATHDLMR))DelPos = SysPLen+1;
+  }
+ SysPath[SysPLen] = 0;
+
+ SIZE_T ModSize = GetRealModuleSize(DllBase);
+ PVOID  ModCopy = VirtualAlloc(NULL,ModSize,MEM_COMMIT,PAGE_EXECUTE_READWRITE);  
+ memcpy(ModCopy,DllBase,ModSize);
+ HANDLE hFile = CreateFileA(RealDllPath,GENERIC_READ|GENERIC_EXECUTE,FILE_SHARE_READ|FILE_SHARE_DELETE,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);
+ if(hFile == INVALID_HANDLE_VALUE)return -1;
+ HANDLE hSec  = CreateFileMappingA(hFile,NULL,SEC_IMAGE|PAGE_EXECUTE_READ,0,0,NULL);                                                      // Mapping to same address may fail if there is not enough unallocated space. Add a dummy data space to make your proxy DLL of same size as an real one
+ if(!hSec){CloseHandle(hFile); return -2;}
+
+ *TBaseOfImagePtr<PECURRENT>((PBYTE)ModCopy) = (PECURRENT)DllBase;    // Need current Base for Reloc recalculation
+ TFixRelocations<PECURRENT>((PBYTE)ModCopy, false);
+ RedirRet((PBYTE)DllBase, (PBYTE)ModCopy);   // After this we are inside of ModCopy
+ *(PVOID*)_AddressOfReturnAddress() = &((PBYTE)ModCopy)[(PBYTE)_ReturnAddress() - (PBYTE)DllBase];
+ if(NtUnmapViewOfSection(NtCurrentProcess, DllBase))return -3;                                                                     
+ PVOID MapAddr = MapViewOfFileEx(hSec,FILE_MAP_EXECUTE|FILE_MAP_READ,0,0,0,DllBase);
+ CloseHandle(hSec);
+ CloseHandle(hFile);
+ if(!MapAddr)return -4;
+ TSectionsProtectRW<PECURRENT>((PBYTE)MapAddr, false);
+ TFixRelocations<PECURRENT>((PBYTE)MapAddr, false);
+   DWORD NLdrLoadDll[] = {~0x4C72644C, ~0x4464616F, ~0x00006C6C};  // LdrLoadDll     
+   NLdrLoadDll[0] = ~NLdrLoadDll[0];
+   NLdrLoadDll[1] = ~NLdrLoadDll[1];
+   NLdrLoadDll[2] = ~NLdrLoadDll[2];
+   PVOID Proc = TGetProcedureAddress<PECURRENT>((PBYTE)pNtDll, (LPSTR)&NLdrLoadDll);
+ TResolveImports<PECURRENT>((PBYTE)MapAddr, Proc, 0);
+ TSectionsProtectRW<PECURRENT>((PBYTE)MapAddr, true);
+ 
+ PVOID ModEP = GetLoadedModuleEntryPoint(DllBase);         // New EP address (A real system module)  
+ DOS_HEADER *DosHdr = (DOS_HEADER*)DllBase;
+ WIN_HEADER<PECURRENT>  *WinHdr = (WIN_HEADER<PECURRENT>*)&((PBYTE)DllBase)[DosHdr->OffsetHeaderPE];              
+ PEB_LDR_DATA* ldr = NtCurrentTeb()->ProcessEnvironmentBlock->Ldr;
+ for(LDR_DATA_TABLE_ENTRY_MO* me = ldr->InMemoryOrderModuleList.Flink;me != (LDR_DATA_TABLE_ENTRY_MO*)&ldr->InMemoryOrderModuleList;me = me->InMemoryOrderLinks.Flink)     // Or just use LdrFindEntryForAddress?
+  {
+   if(me->DllBase == DllBase)
+    {
+     me->EntryPoint = ModEP;                      // Set EP of a real module
+     me->SizeOfImage = WinHdr->OptionalHeader.SizeOfImage;
+     me->TimeDateStamp = WinHdr->FileHeader.TimeDateStamp;
+     if(me->FullDllName.Length >= (SysPLen*sizeof(WCHAR)))     // Skip renaming if a system DLL path is longer
+      {
+       memcpy(me->FullDllName.Buffer,&SysPath,(SysPLen+1)*sizeof(WCHAR));
+       me->FullDllName.Length = SysPLen * sizeof(WCHAR); 
+       me->FullDllName.MaximumLength = me->FullDllName.Length + sizeof(WCHAR);
+       if(DelPos > 0)
+        {
+         me->BaseDllName.Buffer = &me->FullDllName.Buffer[DelPos];
+         me->BaseDllName.Length = SysPLen - DelPos;
+         me->BaseDllName.MaximumLength = me->BaseDllName.Length + sizeof(WCHAR);
+        }
+      }
+    }
+     else 
+      {
+       DOS_HEADER     *DosHdr    = (DOS_HEADER*)me->DllBase;
+       WIN_HEADER<PECURRENT> *WinHdr = (WIN_HEADER<PECURRENT>*)&((PBYTE)me->DllBase)[DosHdr->OffsetHeaderPE];
+       DATA_DIRECTORY *ImportDir = &WinHdr->OptionalHeader.DataDirectories.ImportTable;
+       if(!ImportDir->DirectoryRVA)continue;
+       DWORD Oldp;
+       VirtualProtect(&((PBYTE)me->DllBase)[ImportDir->DirectoryRVA],ImportDir->DirectorySize,PAGE_EXECUTE_READWRITE,&Oldp);
+       TResolveImportsForMod<PECURRENT>(DllName, (PBYTE)me->DllBase, (PBYTE)DllBase);  // Reimport api to a real DLL
+       VirtualProtect(&((PBYTE)me->DllBase)[ImportDir->DirectoryRVA],ImportDir->DirectorySize,Oldp,&Oldp);
+      }
+  }
+ if(EntryPT)*EntryPT = ModEP;
+ if(NewBase)*NewBase = ModCopy;
+ return (MapAddr == DllBase);
+}
+//------------------------------------------------------------------------------------
 /*
 752D0000 00001000 kernel32.dll                                                                   IMG -R--- ERWC-
 752D1000 0000F000 Reserved (752D0000)                                                            IMG       ERWC-

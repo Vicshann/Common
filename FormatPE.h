@@ -70,7 +70,7 @@
 
 
 #define PETYPE64  ULONGLONG
-#define PETYPE32  DWORD
+#define PETYPE32  ULONG
 #define PECURRENT ULONG_PTR
 
 #pragma pack( push, 1 )
@@ -150,7 +150,7 @@ template<typename T> struct OPTIONAL_HEADER
    struct
     {
      DWORD BaseOfData;  // Address (RVA) of beginning of data section   0x30
-     DWORD ImageBase;   // The *preferred* load address of the file     0x34
+     ULONG ImageBase;   // The *preferred* load address of the file     0x34
     };
    ULONGLONG ImageBase64;
   };
@@ -580,6 +580,16 @@ static BOOL _stdcall IsNamesEqual(CHAR *NameA, CHAR *NameB)
  return TRUE;
 }
 //------------------------------------------------------------------------------
+static BOOL _stdcall IsNamesEqualIC(CHAR *NameA, CHAR *NameB)
+{
+ for(;;NameA++,NameB++)
+  {
+   if(!IsCharsEqualIC(*NameA, *NameB))return FALSE;
+   if(!*NameA)break;
+  }
+ return TRUE;
+}
+//------------------------------------------------------------------------------
 
 template<typename T> static bool _stdcall TGetModuleSection(PVOID ModuleBase, CHAR *SecName, SECTION_HEADER **ResSec)
 {
@@ -651,7 +661,7 @@ template<typename T> static bool _stdcall TFindImportRecord(PBYTE ModuleBase, LP
  for(DWORD tctr=0;Import[tctr].AddressTabRVA;tctr++)
   {
    LPSTR ModName = (LPSTR)&ModuleBase[(Raw)?(TRvaToFileOffset<T>(ModuleBase,Import[tctr].ModuleNameRVA)):(Import[tctr].ModuleNameRVA)];
-   if(!IsNamesEqual(ModName,LibName))continue;
+   if(!IsNamesEqualIC(ModName,LibName))continue;
    SImportThunk<T>* Table = (SImportThunk<T>*)&((BYTE*)ModuleBase)[(Raw)?(TRvaToFileOffset<T>(ModuleBase,Import[tctr].LookUpTabRVA)):(Import[tctr].LookUpTabRVA)];
    SImportThunk<T>* LtRVA = (SImportThunk<T>*)&((BYTE*)ModuleBase)[(Raw)?(TRvaToFileOffset<T>(ModuleBase,Import[tctr].AddressTabRVA)):(Import[tctr].AddressTabRVA)];
    if(ProcName == LibName)    // Secret :)   // If we need just any address inside that module
@@ -780,6 +790,13 @@ template<typename T> SIZE_T TBaseOfImage(PBYTE ModuleBase)
  return (sizeof(PETYPE64)==sizeof(T))?(WinHdr->OptionalHeader.ImageBase64):(WinHdr->OptionalHeader.ImageBase);
 }       
 //---------------------------------------------------------------------------
+template<typename T> T* TBaseOfImagePtr(PBYTE ModuleBase)
+{
+ WIN_HEADER<T> *WinHdr = (WIN_HEADER<T>*)&ModuleBase[((DOS_HEADER*)ModuleBase)->OffsetHeaderPE];
+ return (sizeof(PETYPE64)==sizeof(T))?((T*)&WinHdr->OptionalHeader.ImageBase64):((T*)&WinHdr->OptionalHeader.ImageBase);
+}       
+//---------------------------------------------------------------------------
+
 template<typename T> static bool _stdcall TFixRelocations(PBYTE ModuleBase, bool Raw)   // Possible not fully correct
 {
  DOS_HEADER     *DosHdr    = (DOS_HEADER*)ModuleBase;
@@ -830,6 +847,55 @@ static PVOID _stdcall LLLoadLibrary(LPSTR LibName, PVOID pLdrLoadDll)
  return ModBase;
 }
 //--------------------------------------------------------------------------- 
+template<typename T> static int _stdcall TResolveImportsForMod(LPSTR ImpModName, PBYTE ModuleBase, PBYTE ExpModase, PVOID pLdrLoadDll=NULL)
+{
+ DOS_HEADER     *DosHdr    = (DOS_HEADER*)ModuleBase;
+ WIN_HEADER<T>  *WinHdr = (WIN_HEADER<T>*)&ModuleBase[DosHdr->OffsetHeaderPE];
+ DATA_DIRECTORY *ImportDir = &WinHdr->OptionalHeader.DataDirectories.ImportTable;
+ if(!ImportDir->DirectoryRVA)return 0;
+ IMPORT_DESC    *Import    = (IMPORT_DESC*)&ModuleBase[ImportDir->DirectoryRVA];
+
+ T OMask = ((T)1 << ((sizeof(T)*8)-1));
+ for(DWORD tctr=0;Import[tctr].AddressTabRVA;tctr++)
+  {
+   LPSTR ModName = (LPSTR)&ModuleBase[Import[tctr].ModuleNameRVA];
+   if(!IsNamesEqualIC(ModName,ImpModName))continue;
+   SImportThunk<T>* Table = (SImportThunk<T>*)&ModuleBase[Import[tctr].LookUpTabRVA];
+   SImportThunk<T>* LtRVA = (SImportThunk<T>*)&ModuleBase[Import[tctr].AddressTabRVA];
+   for(DWORD actr=0;Table[actr].Value;actr++)
+    {
+     bool OnlyOrd = (Table[actr].Value & OMask);
+     if(OnlyOrd)   // Have only API ordinal
+      {	                                                         
+       T Ord = Table[actr].Value & ~OMask;
+       LtRVA[actr].Value = (SIZE_T)TGetProcedureAddress<T>(ExpModase, (LPSTR)Ord);
+      }
+       else    // Have an import API name
+        {
+         SImportByName* INam = (SImportByName*)&ModuleBase[Table[actr].Value];    
+         LPSTR Forwarder = NULL;
+         PVOID PAddr = TGetProcedureAddress<T>(ExpModase, (LPSTR)&INam->Name, &Forwarder);       
+         if(Forwarder)
+          {
+           BYTE OutDllName[MAX_PATH]; 
+           BYTE OutProcName[MAX_PATH];
+           LPSTR PNamePtr;
+           UINT Ord = ParseForwarderStr(Forwarder, (LPSTR)&OutDllName, (LPSTR)&OutProcName);  
+           if(!OutProcName[0])PNamePtr = (LPSTR)Ord;
+            else PNamePtr = (LPSTR)&OutProcName;
+           PBYTE ImpModBaseF = (PBYTE)GetModuleHandleA((LPSTR)&OutDllName);         // <<<<<<<<<<<<<<<<<<<<<<<<<<
+           if(!ImpModBaseF)return -1;
+           PAddr = TGetProcedureAddress<T>(ImpModBaseF, PNamePtr, &Forwarder);    // No more forwarding?
+          }
+         LtRVA[actr].Value = (SIZE_T)PAddr;        
+        }
+     if(!LtRVA[actr].Value)return -2;
+    } 
+  }
+ return 0;
+}
+//--------------------------------------------------------------------------- 
+
 enum EFixMod {fmNone,fmEncKeyMsk=0xFF, fmFixSec=0x0100,fmFixImp=0x0200,fmFixRel=0x0400,   fmCryHdr=0x1000,fmCryImp=0x2000,fmCryExp=0x4000,fmCryRes=0x8000,  fmEncMode=0x00010000,fmOwnLDib=0x00040000,fmSelfMov=0x00080000};
 
 template<typename T> static int _stdcall TResolveImports(PBYTE ModuleBase, PVOID pLdrLoadDll, UINT Flags=0)
@@ -861,14 +927,14 @@ template<typename T> static int _stdcall TResolveImports(PBYTE ModuleBase, PVOID
        T Ord = Table[actr].Value & ~OMask;
        LtRVA[actr].Value = (SIZE_T)TGetProcedureAddress<T>(ImpModBase, (LPSTR)Ord);
       }
-       else    // Have import API name
+       else    // Have an import API name
         {
   	     SImportByName* INam = (SImportByName*)&ModuleBase[Table[actr].Value];
          BYTE  PName[256];
          LPSTR PNamePtr = (LPSTR)&INam->Name;
          if(EncKey){DecryptStrSimple(PNamePtr,(LPSTR)&PName, EncKey); PNamePtr=(LPSTR)&PName;}     
          LPSTR Forwarder=NULL;
-         PVOID PAddr = TGetProcedureAddress<T>(ImpModBase, PNamePtr, &Forwarder);           //TGetProcedureAddress<PECURRENT>((PBYTE)GetModuleHandleA("Kernel32.dll"), "EnterCriticalSection",&Forwarder);
+         PVOID PAddr = TGetProcedureAddress<T>(ImpModBase, PNamePtr, &Forwarder);          
          if(Forwarder)
           {
            BYTE OutDllName[MAX_PATH]; 
@@ -1092,6 +1158,32 @@ static void _stdcall MakeFakeHeaderPE(PBYTE Header)  // To pass a check in RtlIm
  DosHdr->OffsetHeaderPE = sizeof(DOS_HEADER);
  WIN_HEADER<PECURRENT>  *WinHdr = (WIN_HEADER<PECURRENT>*)&Header[DosHdr->OffsetHeaderPE];
  WinHdr->FlagPE = SIGN_PE;
+}
+//---------------------------------------------------------------------------
+template<typename T> static int _stdcall TSectionsProtectRW(PBYTE ModuleBase, bool Restore)
+{
+ DOS_HEADER     *DosHdr = (DOS_HEADER*)ModuleBase;
+ WIN_HEADER<T>  *WinHdr = (WIN_HEADER<T>*)&ModuleBase[DosHdr->OffsetHeaderPE];
+ UINT            HdrLen = DosHdr->OffsetHeaderPE+WinHdr->FileHeader.HeaderSizeNT+sizeof(FILE_HEADER)+sizeof(DWORD);
+ SECTION_HEADER *CurSec = (SECTION_HEADER*)&ModuleBase[HdrLen];
+ DWORD Oldp;
+ if(!Restore)VirtualProtect(ModuleBase,WinHdr->OptionalHeader.SizeOfHeaders,PAGE_EXECUTE_READWRITE,&Oldp);
+ WinHdr->OptionalHeader.Win32Version = Oldp; 
+ for(int ctr = 0;ctr < WinHdr->FileHeader.SectionsNumber;ctr++,CurSec++)
+  {
+   if(Restore)
+    {     
+     VirtualProtect(&ModuleBase[CurSec->SectionRva],CurSec->VirtualSize,CurSec->PtrToLineNumbers,&Oldp);
+     CurSec->PtrToLineNumbers = 0;
+    }
+    else 
+     {
+      VirtualProtect(&ModuleBase[CurSec->SectionRva],CurSec->VirtualSize,PAGE_EXECUTE_READWRITE,&Oldp);
+      CurSec->PtrToLineNumbers = Oldp;
+     }
+  }
+ if(Restore)VirtualProtect(ModuleBase,WinHdr->OptionalHeader.SizeOfHeaders,WinHdr->OptionalHeader.Win32Version,&Oldp);
+ return 0;
 }
 //---------------------------------------------------------------------------
 

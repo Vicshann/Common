@@ -1116,15 +1116,20 @@ typedef struct _RTL_BALANCED_NODE
     } u;
 } RTL_BALANCED_NODE, *PRTL_BALANCED_NODE;
 
-typedef struct _LDR_DATA_TABLE_ENTRY
+#ifdef __cplusplus
+}
+#endif
+
+
+template<typename T> struct TLIST_ENTRY 
 {
-    LIST_ENTRY InLoadOrderLinks;
-    LIST_ENTRY InMemoryOrderLinks;
-    union
-    {
-        LIST_ENTRY InInitializationOrderLinks;
-        LIST_ENTRY InProgressLinks;
-    };
+   T *Flink;
+   T *Blink;
+};
+
+
+template<typename T> struct TLDR_DATA_TABLE_ENTRY: public T
+{
     PVOID DllBase;
     PVOID EntryPoint;
     ULONG SizeOfImage;
@@ -1186,7 +1191,51 @@ typedef struct _LDR_DATA_TABLE_ENTRY
     ULONG ReferenceCount;
     ULONG DependentLoadFlags;
     UCHAR SigningLevel; // Since Windows 10 RS2
-} LDR_DATA_TABLE_ENTRY, *PLDR_DATA_TABLE_ENTRY;
+};  // LDR_DATA_TABLE_ENTRY, *PLDR_DATA_TABLE_ENTRY;
+
+
+struct LDR_DATA_TABLE_BASE_IO
+{
+    union
+    {
+        TLIST_ENTRY<TLDR_DATA_TABLE_ENTRY<LDR_DATA_TABLE_BASE_IO> > InInitializationOrderLinks;
+        TLIST_ENTRY<TLDR_DATA_TABLE_ENTRY<LDR_DATA_TABLE_BASE_IO> > InProgressLinks;
+    };
+};
+
+struct LDR_DATA_TABLE_BASE_MO
+{
+ TLIST_ENTRY<TLDR_DATA_TABLE_ENTRY<LDR_DATA_TABLE_BASE_MO> > InMemoryOrderLinks;
+    union
+    {
+        TLIST_ENTRY<TLDR_DATA_TABLE_ENTRY<LDR_DATA_TABLE_BASE_IO> > InInitializationOrderLinks;
+        TLIST_ENTRY<TLDR_DATA_TABLE_ENTRY<LDR_DATA_TABLE_BASE_IO> > InProgressLinks;
+    };
+};
+
+struct LDR_DATA_TABLE_BASE_LO
+{
+ TLIST_ENTRY<TLDR_DATA_TABLE_ENTRY<LDR_DATA_TABLE_BASE_LO> > InLoadOrderLinks;
+ TLIST_ENTRY<TLDR_DATA_TABLE_ENTRY<LDR_DATA_TABLE_BASE_MO> > InMemoryOrderLinks;
+    union
+    {
+        TLIST_ENTRY<TLDR_DATA_TABLE_ENTRY<LDR_DATA_TABLE_BASE_IO> > InInitializationOrderLinks;
+        TLIST_ENTRY<TLDR_DATA_TABLE_ENTRY<LDR_DATA_TABLE_BASE_IO> > InProgressLinks;
+    };
+};
+
+
+
+typedef TLDR_DATA_TABLE_ENTRY<LDR_DATA_TABLE_BASE_LO>  LDR_DATA_TABLE_ENTRY;
+
+typedef TLDR_DATA_TABLE_ENTRY<LDR_DATA_TABLE_BASE_LO>  LDR_DATA_TABLE_ENTRY_LO;
+typedef TLDR_DATA_TABLE_ENTRY<LDR_DATA_TABLE_BASE_MO>  LDR_DATA_TABLE_ENTRY_MO;
+typedef TLDR_DATA_TABLE_ENTRY<LDR_DATA_TABLE_BASE_IO>  LDR_DATA_TABLE_ENTRY_IO;
+
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 typedef struct _INITIAL_TEB
 {
@@ -2519,18 +2568,29 @@ typedef ULONG GDI_HANDLE_BUFFER[GDI_HANDLE_BUFFER_SIZE];
 #define TLS_MINIMUM_AVAILABLE 64
 #define TLS_EXPANSION_SLOTS 1024
 
-typedef struct _PEB_LDR_DATA
+#ifdef __cplusplus
+}
+#endif
+
+
+struct PEB_LDR_DATA
 {
     ULONG Length;
     BOOLEAN Initialized;
     HANDLE SsHandle;
-    LIST_ENTRY InLoadOrderModuleList;
-    LIST_ENTRY InMemoryOrderModuleList;
-    LIST_ENTRY InInitializationOrderModuleList;
+    TLIST_ENTRY<TLDR_DATA_TABLE_ENTRY<LDR_DATA_TABLE_BASE_LO> > InLoadOrderModuleList;
+    TLIST_ENTRY<TLDR_DATA_TABLE_ENTRY<LDR_DATA_TABLE_BASE_MO> > InMemoryOrderModuleList;
+    TLIST_ENTRY<TLDR_DATA_TABLE_ENTRY<LDR_DATA_TABLE_BASE_IO> > InInitializationOrderModuleList;   // Not including EXE
     PVOID EntryInProgress;
     BOOLEAN ShutdownInProgress;
     HANDLE ShutdownThreadId;
-} PEB_LDR_DATA, *PPEB_LDR_DATA;
+};
+typedef  PEB_LDR_DATA*  PPEB_LDR_DATA;
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 
 typedef struct _ACTIVATION_CONTEXT_STACK
 {
@@ -7198,6 +7258,14 @@ LdrFindResourceEx_U(
     _In_ CONST LDR_RESOURCE_INFO* ResourceIdPath,
     _In_ ULONG ResourceIdPathLength,
     _Out_ PIMAGE_RESOURCE_DATA_ENTRY* ResourceDataEntry
+);
+
+NTSYSAPI
+NTSTATUS
+NTAPI
+LdrFindEntryForAddress(
+    HMODULE hMod,
+    LDR_DATA_TABLE_ENTRY** ppEntry
 );
 
 NTSYSAPI
