@@ -858,8 +858,10 @@ template<typename T> static int _stdcall TResolveImportsForMod(LPSTR ImpModName,
  T OMask = ((T)1 << ((sizeof(T)*8)-1));
  for(DWORD tctr=0;Import[tctr].AddressTabRVA;tctr++)
   {
+   DWORD OldProt = 0;
    LPSTR ModName = (LPSTR)&ModuleBase[Import[tctr].ModuleNameRVA];
-   if(!IsNamesEqualIC(ModName,ImpModName))continue;
+   if(!IsNamesEqualIC(ModName,ImpModName))continue;     // May by more than one entry for a same module
+   LOGMSG("Updating import for '%s'",ImpModName);
    SImportThunk<T>* Table = (SImportThunk<T>*)&ModuleBase[Import[tctr].LookUpTabRVA];
    SImportThunk<T>* LtRVA = (SImportThunk<T>*)&ModuleBase[Import[tctr].AddressTabRVA];
    for(DWORD actr=0;Table[actr].Value;actr++)
@@ -868,13 +870,16 @@ template<typename T> static int _stdcall TResolveImportsForMod(LPSTR ImpModName,
      if(OnlyOrd)   // Have only API ordinal
       {	                                                         
        T Ord = Table[actr].Value & ~OMask;
+       LOGMSG("Ordinal: %u",Ord);
        LtRVA[actr].Value = (SIZE_T)TGetProcedureAddress<T>(ExpModase, (LPSTR)Ord);
       }
        else    // Have an import API name
         {
-         SImportByName* INam = (SImportByName*)&ModuleBase[Table[actr].Value];    
+         SImportByName* INam = (SImportByName*)&ModuleBase[Table[actr].Value]; 
+         LOGMSG("Name: %s",(LPSTR)&INam->Name);
          LPSTR Forwarder = NULL;
-         PVOID PAddr = TGetProcedureAddress<T>(ExpModase, (LPSTR)&INam->Name, &Forwarder);       
+         PVOID PAddr = TGetProcedureAddress<T>(ExpModase, (LPSTR)&INam->Name, &Forwarder);   
+         LOGMSG("New Address: %p",PAddr);
          if(Forwarder)
           {
            BYTE OutDllName[MAX_PATH]; 
@@ -887,10 +892,13 @@ template<typename T> static int _stdcall TResolveImportsForMod(LPSTR ImpModName,
            if(!ImpModBaseF)return -1;
            PAddr = TGetProcedureAddress<T>(ImpModBaseF, PNamePtr, &Forwarder);    // No more forwarding?
           }
-         LtRVA[actr].Value = (SIZE_T)PAddr;        
+//         if(IsBadWritePtr(&LtRVA[actr].Value,sizeof(PVOID))){LOGMSG("Import table is not writable at %p !",&LtRVA[actr].Value); return -2;}      // Make optional?   // Avoid  IsBadReadPtr?
+         if(!OldProt && !VirtualProtect(LtRVA,0x1000,PAGE_EXECUTE_READWRITE,&OldProt)){LOGMSG("VP failed: %u", GetLastError()); return -2;}
+         LtRVA[actr].Value = (SIZE_T)PAddr;  
         }
-     if(!LtRVA[actr].Value)return -2;
-    } 
+     if(!LtRVA[actr].Value)return -3;  // Leaving OldProt unrestored is OK?
+    }
+   if(OldProt)VirtualProtect(LtRVA,0x1000,OldProt,&OldProt);
   }
  return 0;
 }

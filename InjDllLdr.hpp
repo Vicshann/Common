@@ -142,7 +142,8 @@ __declspec(noinline) static void RedirRet(PBYTE OldBase, PBYTE NewBase)
 }
 //------------------------------------------------------------------------------------
 static int HideSelfProxyDll(PVOID DllBase, PVOID pNtDll, LPSTR RealDllPath, PVOID* NewBase, PVOID* EntryPT)   // Call this from DllMain
-{                             
+{    
+ LOGMSG("DllBase=%p, pNtDll=%p, RealDllPath=%s",DllBase,pNtDll,RealDllPath);                        
    //  lstrcpyA(GetFileName(RealDllPath),"version.dll");
    //  LoadLibraryA(RealDllPath);
  UINT SysPLen = 0;
@@ -162,37 +163,49 @@ static int HideSelfProxyDll(PVOID DllBase, PVOID pNtDll, LPSTR RealDllPath, PVOI
  PVOID  ModCopy = VirtualAlloc(NULL,ModSize,MEM_COMMIT,PAGE_EXECUTE_READWRITE);  
  memcpy(ModCopy,DllBase,ModSize);
  HANDLE hFile = CreateFileA(RealDllPath,GENERIC_READ|GENERIC_EXECUTE,FILE_SHARE_READ|FILE_SHARE_DELETE,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);
- if(hFile == INVALID_HANDLE_VALUE)return -1;
+ if(hFile == INVALID_HANDLE_VALUE){LOGMSG("Failed to open: %s", RealDllPath); return -1;}
  HANDLE hSec  = CreateFileMappingA(hFile,NULL,SEC_IMAGE|PAGE_EXECUTE_READ,0,0,NULL);                                                      // Mapping to same address may fail if there is not enough unallocated space. Add a dummy data space to make your proxy DLL of same size as an real one
- if(!hSec){CloseHandle(hFile); return -2;}
+ if(!hSec){CloseHandle(hFile); LOGMSG("Failed to create mapping for: %s", RealDllPath); return -2;}
 
  *TBaseOfImagePtr<PECURRENT>((PBYTE)ModCopy) = (PECURRENT)DllBase;    // Need current Base for Reloc recalculation
  TFixRelocations<PECURRENT>((PBYTE)ModCopy, false);
+ DBGMSG("Start redirecting itself: NewBase=%p, Size=%08X",ModCopy,ModSize);
  RedirRet((PBYTE)DllBase, (PBYTE)ModCopy);   // After this we are inside of ModCopy
+ DBGMSG("Done redirecting!");
  *(PVOID*)_AddressOfReturnAddress() = &((PBYTE)ModCopy)[(PBYTE)_ReturnAddress() - (PBYTE)DllBase];
- if(NtUnmapViewOfSection(NtCurrentProcess, DllBase))return -3;                                                                     
+ if(NtUnmapViewOfSection(NtCurrentProcess, DllBase)){LOGMSG("Failed to unmap this proxy dll: %p", DllBase);return -3;}  
+ DBGMSG("Proxy dll unmapped");                                                                  
  PVOID MapAddr = MapViewOfFileEx(hSec,FILE_MAP_EXECUTE|FILE_MAP_READ,0,0,0,DllBase);
  CloseHandle(hSec);
  CloseHandle(hFile);
- if(!MapAddr)return -4;
+ if(!MapAddr){LOGMSG("Failed to map a real DLL!"); return -4;}
+ DBGMSG("A real dll is unmapped");
  TSectionsProtectRW<PECURRENT>((PBYTE)MapAddr, false);
+ DBGMSG("A real dll`s memory is unprotected");
  TFixRelocations<PECURRENT>((PBYTE)MapAddr, false);
+ DBGMSG("A real dll`s relocs fixed");
    DWORD NLdrLoadDll[] = {~0x4C72644C, ~0x4464616F, ~0x00006C6C};  // LdrLoadDll     
    NLdrLoadDll[0] = ~NLdrLoadDll[0];
    NLdrLoadDll[1] = ~NLdrLoadDll[1];
    NLdrLoadDll[2] = ~NLdrLoadDll[2];
    PVOID Proc = TGetProcedureAddress<PECURRENT>((PBYTE)pNtDll, (LPSTR)&NLdrLoadDll);
+ DBGMSG("LdrLoadDll: %p",Proc);
  TResolveImports<PECURRENT>((PBYTE)MapAddr, Proc, 0);
+ DBGMSG("A real dll`s imports resolved");
  TSectionsProtectRW<PECURRENT>((PBYTE)MapAddr, true);
+ DBGMSG("A real dll`s memory protection restored");
  
  PVOID ModEP = GetLoadedModuleEntryPoint(DllBase);         // New EP address (A real system module)  
  DOS_HEADER *DosHdr = (DOS_HEADER*)DllBase;
  WIN_HEADER<PECURRENT>  *WinHdr = (WIN_HEADER<PECURRENT>*)&((PBYTE)DllBase)[DosHdr->OffsetHeaderPE];              
  PEB_LDR_DATA* ldr = NtCurrentTeb()->ProcessEnvironmentBlock->Ldr;
+ DBGMSG("PEB_LDR_DATA: %p",ldr);
  for(LDR_DATA_TABLE_ENTRY_MO* me = ldr->InMemoryOrderModuleList.Flink;me != (LDR_DATA_TABLE_ENTRY_MO*)&ldr->InMemoryOrderModuleList;me = me->InMemoryOrderLinks.Flink)     // Or just use LdrFindEntryForAddress?
   {
+   DBGMSG("Begin LDR_DATA_TABLE_ENTRY_MO: %p",me);
    if(me->DllBase == DllBase)
     {
+     DBGMSG("Updating DLL info: %ls",(me->FullDllName.Length)?(me->FullDllName.Buffer):(L""));
      me->EntryPoint = ModEP;                      // Set EP of a real module
      me->SizeOfImage = WinHdr->OptionalHeader.SizeOfImage;
      me->TimeDateStamp = WinHdr->FileHeader.TimeDateStamp;
@@ -208,18 +221,18 @@ static int HideSelfProxyDll(PVOID DllBase, PVOID pNtDll, LPSTR RealDllPath, PVOI
          me->BaseDllName.MaximumLength = me->BaseDllName.Length + sizeof(WCHAR);
         }
       }
+     DBGMSG("Done updating DLL info");
     }
      else 
       {
+       DBGMSG("Fixing moved import for: %p, %ls", me->DllBase,(me->FullDllName.Length)?(me->FullDllName.Buffer):(L""));
        DOS_HEADER     *DosHdr    = (DOS_HEADER*)me->DllBase;
        WIN_HEADER<PECURRENT> *WinHdr = (WIN_HEADER<PECURRENT>*)&((PBYTE)me->DllBase)[DosHdr->OffsetHeaderPE];
-       DATA_DIRECTORY *ImportDir = &WinHdr->OptionalHeader.DataDirectories.ImportTable;
-       if(!ImportDir->DirectoryRVA)continue;
-       DWORD Oldp;
-       VirtualProtect(&((PBYTE)me->DllBase)[ImportDir->DirectoryRVA],ImportDir->DirectorySize,PAGE_EXECUTE_READWRITE,&Oldp);
-       TResolveImportsForMod<PECURRENT>(DllName, (PBYTE)me->DllBase, (PBYTE)DllBase);  // Reimport api to a real DLL
-       VirtualProtect(&((PBYTE)me->DllBase)[ImportDir->DirectoryRVA],ImportDir->DirectorySize,Oldp,&Oldp);
+       DATA_DIRECTORY *ImportDir = &WinHdr->OptionalHeader.DataDirectories.ImportTable;       // ImportAddressTable may not be inside it!
+       if(ImportDir->DirectoryRVA)TResolveImportsForMod<PECURRENT>(DllName, (PBYTE)me->DllBase, (PBYTE)DllBase);  // Reimport api to a real DLL
+       DBGMSG("Done fixing moved import");
       }
+   DBGMSG("End LDR_DATA_TABLE_ENTRY_MO: %p",me);
   }
  if(EntryPT)*EntryPT = ModEP;
  if(NewBase)*NewBase = ModCopy;

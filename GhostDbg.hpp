@@ -739,6 +739,39 @@ static PVOID FindRtlDispatchException(void)
  return NULL;
 }
 //------------------------------------------------------------------------------------
+/*
+RtlUserThreadStart (Callback)    // CREATE_SUSPENDED thread`s IP 
+  x32  x64
+  EAX  RCX = ThreadProc
+  EBX  RDX = ThreadParam
+*/
+static bool ChangeNewSuspThProcAddr(HANDLE hThread, PVOID NewThProc, PVOID* Param)
+{
+ CONTEXT ctx;
+ ctx.ContextFlags = CONTEXT_INTEGER;   // CONTEXT_CONTROL - no check if IP is at RtlUserThreadStart
+ if(!GetThreadContext(hThread, &ctx)){LOGMSG("Failed to get CONTEXT"); return false;}
+#ifdef _AMD64_ 
+ if(NewThProc)ctx.Rcx = (DWORD64)NewThProc;
+ if(Param)
+  {
+   DWORD64 Prv = ctx.Rdx;
+   ctx.Rdx = (DWORD64)*Param;
+   *Param  = (PVOID)Prv;
+  }
+#else
+ if(NewThProc)ctx.Eax = (DWORD)NewThProc;
+ if(Param)
+  {
+   DWORD Prv = ctx.Ebx;
+   ctx.Ebx = (DWORD)*Param;
+   *Param  = (PVOID)Prv;
+  }
+#endif
+ if(!SetThreadContext(hThread, &ctx)){LOGMSG("Failed to set CONTEXT"); return false;}
+ LOGMSG("New ThProc: %p", NewThProc);
+ return true;
+}
+//------------------------------------------------------------------------------------
 
 };
 //====================================================================================
@@ -767,30 +800,6 @@ static DWORD WINAPI DbgBreakThread(LPVOID lpThreadParameter)
 {
  CDbgClient* DbgIPC = (CDbgClient*)lpThreadParameter;
  DoDbgBreak(DbgIPC);  // x64Dbg will continue normally from this  // Any DebugBreak functions may be tracked   
- return 0;
-}
-//------------------------------------------------------------------------------------
-// Different threads of a debugger will direct their requests here
-//
-static DWORD WINAPI IPCQueueThread(LPVOID lpThreadParameter)
-{      
- DBGMSG("Enter");
- CDbgClient* DbgIPC = (CDbgClient*)lpThreadParameter;
- DbgIPC->ClientThID = GetCurrentThreadId();
- DbgIPC->Connect(GetCurrentProcessId(),DbgIPC->IPCSize);       // Create SharedBuffer name for current process, a debugger will connect to it
- DbgIPC->BreakWrk = false;
- while(!DbgIPC->BreakWrk) 
-  { 
-   SMsgHdr* Cmd = DbgIPC->GetMsg();
-   if(!Cmd)continue;   // Timeout and still no messages
-   DBGMSG("MsgType=%04X, MsgID=%04X, DataID=%08X, Sequence=%08X, DataSize=%08X",Cmd->MsgType,Cmd->MsgID,Cmd->DataID,Cmd->Sequence,Cmd->DataSize);
-   if(Cmd->MsgType & mtDbgReq)DbgIPC->ProcessRequestDbg(Cmd);
-   if(Cmd->MsgType & mtUsrReq)DbgIPC->ProcessRequestUsr(Cmd);  
-  }
- DbgIPC->EndMsg();   // Unlock shared buffer if it is still locked
- DbgIPC->ipc.Clear();
- DbgIPC->Disconnect();
- DBGMSG("Exit");
  return 0;
 }
 //------------------------------------------------------------------------------------
@@ -1308,6 +1317,30 @@ static bool   IsFakeHandle(HANDLE hTh){return !((UINT)hTh & 0x1F) && ((UINT)hTh 
 bool IsDbgThreadID(DWORD ThID){return (ThID == this->ClientThID);}
 bool IsActive(void){return ((bool)this->hIPCThread && !this->BreakWrk);}
 //------------------------------------------------------------------------------------
+// Different threads of a debugger will direct their requests here
+//
+static DWORD WINAPI IPCQueueThread(LPVOID lpThreadParameter)
+{      
+ DBGMSG("Enter");
+ CDbgClient* DbgIPC = (CDbgClient*)lpThreadParameter;
+ DbgIPC->ClientThID = GetCurrentThreadId();
+ DbgIPC->Connect(GetCurrentProcessId(),DbgIPC->IPCSize);       // Create SharedBuffer name for current process, a debugger will connect to it
+ DbgIPC->BreakWrk = false;
+ while(!DbgIPC->BreakWrk) 
+  { 
+   SMsgHdr* Cmd = DbgIPC->GetMsg();
+   if(!Cmd)continue;   // Timeout and still no messages
+   DBGMSG("MsgType=%04X, MsgID=%04X, DataID=%08X, Sequence=%08X, DataSize=%08X",Cmd->MsgType,Cmd->MsgID,Cmd->DataID,Cmd->Sequence,Cmd->DataSize);
+   if(Cmd->MsgType & mtDbgReq)DbgIPC->ProcessRequestDbg(Cmd);
+   if(Cmd->MsgType & mtUsrReq)DbgIPC->ProcessRequestUsr(Cmd);  
+  }
+ DbgIPC->EndMsg();   // Unlock shared buffer if it is still locked
+ DbgIPC->ipc.Clear();
+ DbgIPC->Disconnect();
+ DBGMSG("Exit");
+ return 0;
+}
+//------------------------------------------------------------------------------------
 CDbgClient(void)
 {
  this->HideDbgState = true;
@@ -1335,17 +1368,30 @@ CDbgClient(void)
  this->Stop();
 }
 //------------------------------------------------------------------------------------
-bool Start(UINT Size=0)
+bool Start(UINT Size=0, HANDLE hThread=NULL, PVOID IPCThProc=NULL)
 {
- if(this->IsActive())return false;
+ if(this->IsActive()){DBGMSG("Already active!"); return false;}
  if(Size)this->IPCSize = Size;
- this->hIPCThread = CreateThread(NULL,0,&CDbgClient::IPCQueueThread,this,0,NULL);
+ if(!hThread)
+  {
+   DBGMSG("IPC thread proc: %p",&CDbgClient::IPCQueueThread);
+   this->hIPCThread = CreateThread(NULL,0,&CDbgClient::IPCQueueThread,this,0,NULL);
+  }
+   else
+    {
+     this->hIPCThread = hThread;
+     PVOID Param = this;
+     if(!IPCThProc)IPCThProc = &CDbgClient::IPCQueueThread;
+     if(!SNtDll::ChangeNewSuspThProcAddr(this->hIPCThread, IPCThProc, &Param))return false;
+     ResumeThread(hThread);    
+    }
+ if(!this->hIPCThread){DBGMSG("Failed to create IPC thread: %u", GetLastError());}
  return (bool)this->hIPCThread;
 }
 //------------------------------------------------------------------------------------
 bool Stop(void)
 {
- if(!this->IsActive())return false;
+ if(!this->IsActive()){DBGMSG("Not active!"); return false;}
  this->BreakWrk = true;
  if(this->ClientThID != GetCurrentThreadId())
   {

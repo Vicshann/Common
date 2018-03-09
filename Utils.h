@@ -577,7 +577,8 @@ template<typename T, typename S> S DecNumToStrS(T Val, S buf, int* Len=0)
   }
  if(isNeg)*buf = '-';
    else buf++;
- if(Len)*Len = end-buf;
+ if(Len)*Len = end-buf;     // A counted string
+  else buf[end-buf] = 0;    // A null terminated string
  return buf;
 } 
 //---------------------------------------------------------------------------
@@ -747,13 +748,13 @@ public:
 //---------------------------------------------------------------------------
 template<typename T> class CArr
 {
-public:
  T* AData;
 
+public:
  CArr(void){this->AData = NULL;}
  CArr(UINT Cnt){this->AData = NULL; this->Resize(Cnt);}
  ~CArr(){this->Resize(0);}
- operator   const T*() {return this->AData;}
+ operator  T*() {return this->AData;}    // operator   const T*() {return this->AData;}
  T* Data(void){return this->AData;}
  UINT Count(void){return (this->Size / sizeof(T));}
  UINT Size(void){return ((this->AData)?(((size_t*)this->AData)[-1]):(0));}
