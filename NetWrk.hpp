@@ -24,8 +24,10 @@
 #include <Winsock2.h>
 #include <Wininet.h>
 #include "ssl.h"
+#ifndef NETWNOGZ
 #include "gzip.h"
-#include "sha.h"
+#endif
+//#include "sha.h"
 #include "Utils.h"
 #include "MiniString.h"
 #include "Json.h"
@@ -277,6 +279,7 @@ int GetResponseContent(CMiniStr& Rsp, CMiniStr& Content)    // TODO: Decode Url 
     }
   }
    else Content.cAssign((LPSTR)&Rsp.c_data()[DataOffs], Rsp.Length() - DataOffs);
+#ifndef NETWNOGZ
  if(GZipd && (Content.c_data()[0] == 0x1F)&&(Content.c_data()[1] == 0x8B))
   {
    CMiniStr Str;
@@ -289,6 +292,7 @@ int GetResponseContent(CMiniStr& Rsp, CMiniStr& Content)    // TODO: Decode Url 
    if(Uncompr != UnGzLen){LOGMSG("Decompressed size mismatch: UnGzLen=%u, Uncompr=%u");}
    Content = Str;
   }
+#endif
  return 0;
 }
 //------------------------------------------------------------------------------------------------------------
@@ -301,6 +305,43 @@ int Disconnect(void)
  return 0;
 }
 //------------------------------------------------------------------------------------------------------------
+static ULONG netServerDataExchange(SOCKET Soc, PBYTE DataToSend, PBYTE RecBuffer, ULONG DataLength, ULONG RecBufLen, PULONG Remains)   // TEMPORARY
+{
+ ULONG DLeft = 0;
+ ULONG Total = 0;
+ if(DataToSend && DataLength){if(SOCKET_ERROR == send(Soc,(LPSTR)DataToSend,DataLength,0))return 0;}
+ for(ULONG Len = 1;RecBufLen;)
+  {
+   if(SOCKET_ERROR == recv(Soc,(char*)&RecBuffer[Total],Len,0))break;  // Can`t read
+   Total     += Len;
+   RecBufLen -= Len;
+   if(!RecBufLen && !Remains)break; // Fully readed
+   if(ioctlsocket(Soc,FIONREAD,&DLeft) || !DLeft)break;  // No more Data    // Unreliable!
+   Len = (DLeft > RecBufLen)?(RecBufLen):(DLeft);
+  }
+ if(Remains)*Remains = DLeft;
+ return Total;
+}
+//------------------------------------------------------------------------------------------------------------
+static ULONG netServerDataExchange(SOCKET Soc, CMiniStr* Req, CMiniStr* Rsp, int Timeout)
+{
+ ULONG DLeft = 0;
+ ULONG Total = 0;
+ if(Req && Req->Length()){if(SOCKET_ERROR == send(Soc,(LPSTR)Req->c_data(),Req->Length(),0))return 0;}
+ if(!Rsp)return 0;
+ Rsp->Clear();
+ for(ULONG Len = (int)(Timeout <= 0);;)
+  {
+   while(!Len && (Timeout > 0)){Timeout -= 250; Sleep(250); ioctlsocket(Soc,FIONREAD,&Len);}
+   Rsp->SetLength(Rsp->Length()+Len, 0);
+   if(SOCKET_ERROR == recv(Soc,(char*)&Rsp->c_data()[Total],Len,0))break;  // Can`t read
+   Total += Len;
+   if(ioctlsocket(Soc,FIONREAD,&DLeft) || !DLeft)break;  // No more Data
+   Len = DLeft;
+  }
+ return Total;
+}
+//---------------------------------------------------------------------------
 
 };
 //===========================================================================================================

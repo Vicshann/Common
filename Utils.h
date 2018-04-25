@@ -116,8 +116,8 @@ long  _fastcall CharToHex(BYTE CharValue);
 WORD  _fastcall HexToChar(BYTE Value, bool UpCase=true);
 //char* _fastcall DecNumToStrU(UINT64 Val, char* buf, int* Len);
 BYTE  _stdcall CharToLowCase(BYTE CharValue);
-UINT64 _fastcall DecStrToNum(char* Str);  //UINT _fastcall DecStrToNum(char* Str);
-UINT64 _fastcall HexStrToNum(char* Str);
+//UINT64 _fastcall DecStrToNum(char* Str);  //UINT _fastcall DecStrToNum(char* Str);
+//UINT64 _fastcall HexStrToNum(char* Str);
 DWORD _stdcall DecStrToDW(LPSTR String, UINT* Len=NULL);
 DWORD _stdcall HexStrToDW(LPSTR String, UINT Bytes);
 DWORD _stdcall WriteLocalProtectedMemory(PVOID Address, PVOID Data, DWORD DataSize, bool RestoreProt);
@@ -137,6 +137,8 @@ int _stdcall ConvertToUTF8(PWSTR Src, LPSTR Dest, UINT DestLen);
 long  _stdcall GetProcessPath(LPSTR ProcNameOrID, LPSTR PathBuffer, long BufferLngth);
 UINT _stdcall GetRandomValue(UINT MinVal, UINT MaxVal);
 HMODULE _stdcall FindModuleByExpName(LPSTR ModuleName);
+bool _stdcall AssignFilePath(LPSTR DstPath, LPSTR BasePath, LPSTR FilePath);
+HANDLE WINAPI CreateFileX(PVOID lpFileName,DWORD dwDesiredAccess,DWORD dwShareMode,LPSECURITY_ATTRIBUTES lpSecurityAttributes,DWORD dwCreationDisposition,DWORD dwFlagsAndAttributes,HANDLE hTemplateFile);
 //---------------------------------------------------------------------------
 
 
@@ -362,7 +364,7 @@ template<typename T> bool _stdcall IsPathLink(T Name)
  return false;
 }
 //---------------------------------------------------------------------------
-template<typename T> char* _fastcall DecNumToStrU(T Val, char* buf, int* Len)
+template<typename T> char* _fastcall DecNumToStrU(T Val, char* buf, int* Len)     // A/W char string and Signed/Unsigned output by constexpr
 {
  if(Val == 0){if(Len)*Len = 1; return "0";}
  buf  = &buf[20];
@@ -379,6 +381,29 @@ template<typename T> char* _fastcall DecNumToStrU(T Val, char* buf, int* Len)
  return buf;
 }
 //--------------------------------------------------------------------------- 
+template<typename O, typename T> O _fastcall DecStrToNum(T Str, long* Size=nullptr)
+{
+ O x = 0;
+ T Old = Str;
+ bool neg = false;
+ if (*Str == '-'){neg = true; ++Str;}
+ for(unsigned char ch;(ch=*Str++ - '0') <= 9;)x = (x*10) + ch;
+ if(Size)*Size = (char*)Str - (char*)Old - 1;               // Constexpr?
+ if(neg)x = -x;
+ return x;
+}
+//---------------------------------------------------------------------------
+template<typename O, typename T> O _fastcall HexStrToNum(T Str, long* Size=nullptr)      // Negative values?
+{
+ O x = 0;
+ T Old = Str;
+ for(long chv;(chv=CharToHex(*Str++)) >= 0;)x = (x<<4) + chv;  // (<<4) avoids call to __llmul which is big
+ if(Size)*Size = (char*)Str - (char*)Old - 1;               // Constexpr?
+ return x;
+}
+//---------------------------------------------------------------------------
+
+
 static _inline BYTE _fastcall CharLowSimple(BYTE val){return (((val >= 'A')&&(val <= 'Z'))?(val + 0x20):(val));}    // TODO: Use lambda in template (But no BDS 2006 then :( )
 template<typename A, typename B> int GetSubStrOffsSimpleIC(A StrVal, B StrBase, UINT Offs=0, UINT Len=0)   // NOTE: Keep usage of WinAPI to a minimum and try to support both CHAR and WCHAR
 {
@@ -397,8 +422,17 @@ template<typename A, typename B> int StrCompareSimpleIC(A StrValA, B StrValB)  /
  if(!StrValA || !StrValB)return -1;
  for(int voffs=0;;voffs++)
   {
-   if(!StrValA[voffs])return 0;;     
+   if(!StrValA[voffs])return 0;     
    if(CharLowSimple(StrValA[voffs]) != CharLowSimple(StrValB[voffs]))return voffs+1;
+  }
+}
+template<typename A, typename B> int StrCompareSimple(A StrValA, B StrValB)  // Not exactly standart!
+{
+ if(!StrValA || !StrValB)return -1;
+ for(int voffs=0;;voffs++)
+  {
+   if(!StrValA[voffs])return 0;     
+   if(StrValA[voffs] != StrValB[voffs])return voffs+1;
   }
 }
 //--------------------------------------------------------------------------- 
@@ -528,7 +562,7 @@ template<typename T> T GetCmdLineParam(T CmdLine, T Param, PUINT ParLen=NULL)  /
 //---------------------------------------------------------------------------
 // Return address always points to Number[16-MaxDigits];
 //
-template<typename T, typename S> S ConvertToHexStr(T Value, int MaxDigits, S NumBuf, bool UpCase) 
+template<typename T, typename S> S ConvertToHexStr(T Value, int MaxDigits, S NumBuf, bool UpCase, UINT* Len=0) 
 {
  const int cmax = sizeof(T)*2;      // Number of byte halves (Digits)
  char  HexNums[] = "0123456789ABCDEF0123456789abcdef";
@@ -546,13 +580,14 @@ template<typename T, typename S> S ConvertToHexStr(T Value, int MaxDigits, S Num
     }
      else *DstPtr = '0';
   }
- NumBuf[MaxDigits] = 0;
+ if(Len)*Len = MaxDigits;
+   else NumBuf[MaxDigits] = 0;
  return NumBuf; 
 }
 //---------------------------------------------------------------------------
 template<typename T> T _fastcall CharLowSimple(T val) {return (((val >= 'A') && (val <= 'Z')) ? (val + 0x20) : (val));}
 
-template<typename T> bool _fastcall IsStrEqSimpleIC(T StrA, T StrB, int MaxLen)
+template<typename T> bool _fastcall IsStrEqSimpleIC(T StrA, T StrB, int MaxLen=-1)
 {
  for(int ctr = 0; (MaxLen < 0) || (ctr < MaxLen); ctr++)
   {
@@ -562,7 +597,7 @@ template<typename T> bool _fastcall IsStrEqSimpleIC(T StrA, T StrB, int MaxLen)
  return true;
 }
 //---------------------------------------------------------------------------
-template<typename T, typename S> S DecNumToStrS(T Val, S buf, int* Len=0)     
+template<typename T, typename S> S DecNumToStrS(T Val, S buf, UINT* Len=0)     
 {
  if(Val == 0){if(Len)*Len = 1; *buf = '0'; buf[1] = 0; return buf;}
  bool isNeg = (Val < 0);

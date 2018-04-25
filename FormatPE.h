@@ -773,7 +773,7 @@ static int _stdcall ParseForwarderStr(LPSTR InStr, LPSTR OutDllName, LPSTR OutPr
  if(InStr[namctr] == '#')
   {
    *OutProcName = 0;
-   return DecStrToNum(&InStr[++namctr]);
+   return DecStrToNum<int>(&InStr[++namctr]);
   }
    else 
     {

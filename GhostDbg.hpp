@@ -217,6 +217,12 @@ int FindThreadIdxInList(SThDesc** Res, DWORD ThreadID, HANDLE hThread=NULL)
  return -1;
 }
 //------------------------------------------------------------------------------------
+SThDesc* GetThreadDesc(UINT Index)
+{
+ if(Index >= this->ThreadLst.Count())return NULL;
+ return &this->ThreadLst[Index];
+}
+//------------------------------------------------------------------------------------
 bool RemoveThreadFromList(DWORD ThreadID, HANDLE hThread=NULL)
 {
  EnterCriticalSection(&this->csec);
@@ -717,28 +723,6 @@ SNtDll(void)       // NOTE: Better call this before hooking NtMapViewOfSection
  if(Ptr)VirtualFree(Ptr,0,MEM_RELEASE);
 }
 //------------------------------------------------------------------------------------
-static PVOID FindRtlDispatchException(void)
-{
- PBYTE PBase = (PBYTE)GetProcAddress(GetModuleHandleA("ntdll.dll"),"KiUserExceptionDispatcher");
- if(!PBase)return NULL;
- PBase += 8;
- for(UINT ctr=0;;ctr++,PBase++)
-  {
-   if(ctr >= 56)return NULL;
-#ifdef _AMD64_
-   if(*(PDWORD)PBase == 0xE8D48B48){PBase+=4;          // mov RDX, RSP; call Rel32
-#else
-   if(*PBase == 0xE8){PBase++;                         // call Rel32
-#endif
-     PVOID Addr = RelAddrToAddr(PBase-1,5,*(PDWORD)PBase);
-     DBGMSG("Addr: %p",Addr);
-     return Addr;
-     break;
-    }
-  }  
- return NULL;
-}
-//------------------------------------------------------------------------------------
 /*
 RtlUserThreadStart (Callback)    // CREATE_SUSPENDED thread`s IP 
   x32  x64
@@ -1004,7 +988,8 @@ int _stdcall ProcessRequestDbg(SMsgHdr* Req)
      if(!ThreadHandle){DBGMSG("Thread handle not found: ThIdx=%i",ThIdx);}
      api.PopArg(ctx);
      HRESULT Status = STATUS_SUCCESS;
-     if(!this->ThList.GetContextVal(ThIdx, &ctx))Status = this->NtDll.NtGetContextThread(ThreadHandle, &ctx);   
+     if(!this->ThList.GetContextVal(ThIdx, &ctx))Status = this->NtDll.NtGetContextThread(ThreadHandle, &ctx);  
+       else {DBGMSG("GetContext read locally: %u",ThIdx);}     
      apo.PushArg(ctx);
      apo.PushArg(Status); 
      if(!Status && ThreadHandle){if(this->OnlyOwnHwBP)this->ThList.UpdHardwareBp(ThIdx, &ctx); if(this->OnlyOwnTF)this->ThList.UpdTraceFlag(ThIdx, &ctx);}    // Need update here?
@@ -1024,6 +1009,8 @@ int _stdcall ProcessRequestDbg(SMsgHdr* Req)
      api.PopArg(ctx);
      HRESULT Status = STATUS_SUCCESS;
      if(!this->ThList.SetContextVal(ThIdx, &ctx))Status = this->NtDll.NtSetContextThread(ThreadHandle, &ctx);
+       else {DBGMSG("SetContext stored locally: %u",ThIdx);}
+     DBGMSG("SetContext %u: Dr0=%p, Dr1=%p, Dr2=%p, Dr3=%p",ThIdx,ctx.Dr0,ctx.Dr1,ctx.Dr2,ctx.Dr3);
      apo.PushArg(Status);
      if(!Status && ThreadHandle){if(this->OnlyOwnHwBP)this->ThList.UpdHardwareBp(ThIdx, &ctx); if(this->OnlyOwnTF)this->ThList.UpdTraceFlag(ThIdx, &ctx);}
      DBGMSG("miSetThreadContext PutMsg: Status=%08X, FLAGS=%08X, Size=%u",Status,ctx.ContextFlags, apo.GetLen());
@@ -1369,7 +1356,7 @@ CDbgClient(void)
 }
 //------------------------------------------------------------------------------------
 bool Start(UINT Size=0, HANDLE hThread=NULL, PVOID IPCThProc=NULL)
-{
+{        
  if(this->IsActive()){DBGMSG("Already active!"); return false;}
  if(Size)this->IPCSize = Size;
  if(!hThread)
@@ -1379,6 +1366,7 @@ bool Start(UINT Size=0, HANDLE hThread=NULL, PVOID IPCThProc=NULL)
   }
    else
     {
+     DBGMSG("Reusing an existing thread: %p",hThread);
      this->hIPCThread = hThread;
      PVOID Param = this;
      if(!IPCThProc)IPCThProc = &CDbgClient::IPCQueueThread;
@@ -1448,7 +1436,11 @@ bool HandleException(DWORD ThID, PEXCEPTION_RECORD ExceptionRecord, PCONTEXT Con
 int GetThread(DWORD ThID, CThreadList::SThDesc** Desc=NULL)
 {
  int thidx = this->ThList.FindThreadIdxInList(Desc, ThID);
- if(thidx < 0)this->Report_CREATE_THREAD_DEBUG_EVENT(ThID,&thidx);               // First report a new thread
+ if(thidx < 0)
+  {
+   this->Report_CREATE_THREAD_DEBUG_EVENT(ThID,&thidx);               // First report a new thread
+   if((thidx >= 0) && Desc)*Desc =this->ThList.GetThreadDesc(thidx);
+  }
  return thidx;
 }
 //------------------------------------------------------------------------------------

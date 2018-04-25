@@ -399,7 +399,7 @@ unsigned int Disasm(const void *code)
                 ht = THde::Table() + THde::DELTA_OP_ONLY_MEM;
                 table_end = ht + THde::DELTA_OP2_ONLY_MEM - THde::DELTA_OP_ONLY_MEM;
             }
-            for (; ht != table_end; ht += 2)
+            for (; ht < table_end; ht += 2)     // Fix: 'ht != table_end' crash on '41 0F B6 C6  movzx eax, r14b'
                 if (*ht++ == opcode) {
                     if (*ht++ & pref && !((*ht << m_reg) & 0x80))
                         goto error_operand;

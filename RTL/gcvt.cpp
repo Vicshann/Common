@@ -17,10 +17,10 @@ union UDbl         // Do magic without 64 bit shifts?
 };
 #pragma pack(pop)
 
- // Converts a given integer x to string str[].  d is the number
+ // Converts a given integer x to string str[].  d is the number  // 18.01 becomes 18.1 !!!!!!!!!!!!!
  // of digits required in output. If d is more than the number
  // of digits in x, then 0s are added at the beginning.
-int intToStrBk(unsigned __int64 x, char* str)    // If used simple 'int' then 'ftol_sse' is required   // max int64 20 digits   // points to end of buffer, no terminating 0
+/*int intToStrBk(unsigned __int64 x, char* str)    // If used simple 'int' then 'ftol_sse' is required   // max int64 20 digits   // points to end of buffer, no terminating 0
 {
  int i = 0;
  do    // for(;x;i++,str--)
@@ -38,38 +38,57 @@ unsigned __int64 slow_pow(int X, int Y)    // TODO: TestIt
  __int64 val = 1;
   while(Y--)val *= X;
  return val;
-}
+} */
           
 // Converts a floating point number to string.
 // Check for 0?  
 // Buffer MUST be at least of 50 bytes of size
 // Result is NOT placed at beginning of the buffer, instead returned a pointer inside of it
 // Fast but only max up to 19 digits after '.' (limitation of UINT64)!
-char* ftoa_simple(double n, char *res, unsigned int afterpoint, unsigned int* size)    // TODO: Nan and everything else
+char* ftoa_simple(double n, char *res, unsigned int afterpoint, unsigned int* size)    // TODO: Nan and everything else   // Format options
 {    
+ int sc = 0;
+ char *ptr = res;
  bool negative = (n < 0);                // -0.0 is in the case?
- if(negative)n = -n;             // force it positive
+ if(negative){n = -n; *(ptr++) = '-'; sc++;}              // force it positive
  unsigned __int64 ipart = (unsigned __int64)n;            // Extract integer part  
- double  fpart = n - (double)ipart;     // Extract floating part
+ double  fpart = n - (double)ipart;     // Extract floating part   // At 18 digit after dot getting mistakes
  if(fpart <  0)fpart = n - (double)(--ipart);   // Fix rounding up, don`t touch FPU rounding modes
- if(fpart >= 1)fpart = n - (double)(++ipart);   // Fix rounding down  
- if(afterpoint > 19)afterpoint = 19;   // Hardware limit
- res += 64;       // Starting offset in the buffer
- int sc = 0;      // Number of chars in the buffer
- *(--res) = 0;    // Terminating NULL
- if(afterpoint)   // check for display option after point
+ if(fpart >= 1)fpart = n - (double)(++ipart);   // Fix rounding down 
+ double fixup = 1.0;
+ do   
   {
-   fpart = fpart * slow_pow(10, afterpoint); // pow  // Get the value of fraction part upto given no. of points after dot. The third parameter is needed to handle cases like 233.007  // 'pow' is hardware?
-   sc  += intToStrBk((unsigned __int64)fpart, res);
-   res -= sc;
-   if(sc < afterpoint)afterpoint = sc;
-   res[afterpoint] = 0;  // Trim to AfterPoint digits
-   *(--res) = '.';  // add dot
+   *(ptr++) = (ipart%10) + '0';
+   ipart = ipart/10;     // No way to take this from 'double'?
+   sc++;
+   fixup /= 10.0f;
+  } 
+   while(ipart);
+ if(fpart > fixup)fpart += fixup; // Rounding fix
+ 
+ ptr = &res[sc-1];
+ char *dat = res;
+ for(;dat < ptr;dat++,ptr--)  // Reverse digits of integer part
+  {
+   char v = *dat;
+   *dat = *ptr;
+   *ptr = v; 
   }
- int ic = intToStrBk(ipart, res);  // convert integer part to string // At least keep one 0 of integer part 
- res -= ic;
- if(negative){*(--res) = '-'; sc++;}
- if(size)*size = (sc + ic);
+
+ ptr = &res[sc];
+ if(afterpoint){*(ptr++) = '.'; sc++;}  // add a dot
+// unsigned int VSum = 0;   // For detection of only zeroes after dot
+ for(;afterpoint;afterpoint--,sc++)
+  {
+   fpart *= 10.0f;        // TODO: Parse 'double'
+   unsigned __int64 ival = (fpart-0.5);    // 3.52 becomes 4 without '-0.5'!
+   fpart -= ival;
+//   VSum  |= ival;
+   ival  += '0';
+   *(ptr++) = ival;
+  } 
+ *(ptr) = 0;     // Make Optional
+ if(size)*size = sc;
  return res;
 }
  

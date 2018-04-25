@@ -1,11 +1,19 @@
 
 #pragma once
 
+#include <windows.h>
+#include <Windowsx.h>
+#include <Commctrl.h>
 
 //==========================================================================================================================
 // NOTE: No multithreading yet!
 
 /*
+ BEHAVIOUR notes:
+  When a window moved, it may affect dimentions of its siblings if some alignment are used and its own
+  When a window resize, its children and sibling also may be resized
+
+
 
  TODO: 'Stick to edge' feature. Set child`s stick to left and no stick to right and when a window resized, child is moved to left with it 
        Set child`s stick to right and no stick to left and when a window resized, child is stayed at right position

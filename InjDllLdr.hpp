@@ -87,7 +87,7 @@ static int InjModuleIntoProcessAndExec(HANDLE hProcess, PVOID ModuleData, UINT M
    else if(Flags & mfRunRMTH)
     {
      PVOID FlagArg = PVOID((SIZE_T)RemoteAddr | 0xFF);     // Mark base address
-     HANDLE hTh = CreateRemoteThread(hProcess,NULL,0,(LPTHREAD_START_ROUTINE)RemEntry,FlagArg,0,NULL);
+     HANDLE hTh = CreateRemoteThread(hProcess,NULL,0,(LPTHREAD_START_ROUTINE)RemEntry,FlagArg,0,NULL);        // Firefox Quantum: It gets into LdrInitializeThunk but not into specified ThreadProc!!!!
      if(!hTh){LOGMSG("Failed to create a remote thread (%u): RemEntry=%p, FlagArg=%p", GetLastError(), RemEntry, FlagArg); return -5;}
      WaitForSingleObject(hTh, INFINITE);
     }
@@ -239,6 +239,27 @@ static int HideSelfProxyDll(PVOID DllBase, PVOID pNtDll, LPSTR RealDllPath, PVOI
  return (MapAddr == DllBase);
 }
 //------------------------------------------------------------------------------------
+static PVOID GetModuleBase(LPSTR ModName)
+{
+ PEB_LDR_DATA* ldr = NtCurrentTeb()->ProcessEnvironmentBlock->Ldr;
+ DBGMSG("PEB_LDR_DATA: %p, %s",ldr,ModName);
+ for(LDR_DATA_TABLE_ENTRY_MO* me = ldr->InMemoryOrderModuleList.Flink;me != (LDR_DATA_TABLE_ENTRY_MO*)&ldr->InMemoryOrderModuleList;me = me->InMemoryOrderLinks.Flink)     // Or just use LdrFindEntryForAddress?
+  {
+   if(!me->BaseDllName.Length || !me->BaseDllName.Buffer)continue;
+   DBGMSG("Base=%p, Name='%ls'",me->DllBase,me->BaseDllName.Buffer);    // Zero terminated?
+   bool Match = true;
+   UINT ctr = 0;
+   for(UINT tot=me->BaseDllName.Length/sizeof(WCHAR);ctr < tot;ctr++)
+    {
+     if(me->BaseDllName.Buffer[ctr] != (WCHAR)ModName[ctr]){Match=false; break;}
+    }
+   if(Match && !ModName[ctr])return me->DllBase;
+  }
+ DBGMSG("Not found for: %s",ModName);
+ return NULL;
+}
+//------------------------------------------------------------------------------------
+
 /*
 752D0000 00001000 kernel32.dll                                                                   IMG -R--- ERWC-
 752D1000 0000F000 Reserved (752D0000)                                                            IMG       ERWC-

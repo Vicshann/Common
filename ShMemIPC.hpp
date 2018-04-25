@@ -397,7 +397,7 @@ int AddBlock(UINT TgtID, PVOID* Data, UINT Size)          // TgtID = 0 - Broadca
 {
  if(this->NewMsg || !this->IsConnected()){DBGMSG("Not ready yet!"); return -2;}
  if(Size > this->MBuf.BufferSize()){DBGMSG("Block too big: Size=%08X, BufferSize=%08X",Size,this->MBuf.BufferSize()); return -3;}      // Won`t fit even if will be the only message in buffer
- if(!this->MBuf.LockBuffer(this->SyncDelay)){DBGMSG("Failed to lock the buffer!"); return -4;}
+ if(!this->MBuf.LockBuffer(this->SyncDelay)){DBGMSG("Failed to lock IPC buffer!"); return -4;}
  SDescr* Desc    = this->MBuf.UserData();
  SMsgBlk* LstMsg = NULL;
  SMsgBlk* FstMsg = NULL;
@@ -784,7 +784,7 @@ SMsgHdr* GetMsg(SMsgCtx* Ctx)    // Will unlock the queue when there is no more 
  return Ctx->Last;
 }
 //------------------------------------------------------------------------------------
-int PutMsg(UINT16 MsgType, UINT16 MsgID, UINT32 DataID, PVOID MsgData, UINT DataSize, PULONG MsgSeqNum=NULL, UINT TgtID=CSharedIPC::MSG_BROADCAST)      // From clients to exact InstanceID (And optionally a stream) or broadcast
+int BeginMsg(PVOID* MsgPtr, UINT16 MsgType, UINT16 MsgID, UINT32 DataID, UINT DataSize, UINT TgtID=CSharedIPC::MSG_BROADCAST)
 {
  if(!this->IsConnected())return -1;
  EnterCriticalSection(&this->csec);
@@ -795,10 +795,23 @@ int PutMsg(UINT16 MsgType, UINT16 MsgID, UINT32 DataID, PVOID MsgData, UINT Data
  hdr->DataID    = DataID;
  hdr->Sequence  = this->DSeqNum++;   // A Seq number to detect a message loss
  hdr->DataSize  = DataSize;          // 0 for mtEndStrm
- if(MsgData && DataSize)memcpy(&hdr->Data,MsgData,DataSize);
+ if(MsgPtr)*MsgPtr = &hdr->Data;
+ return 0;
+}
+//------------------------------------------------------------------------------------
+int DoneMsg(PULONG MsgSeqNum=NULL)
+{
  if(!this->ipc.CloseBlock(MsgSeqNum)){LeaveCriticalSection(&this->csec); return -3;}
  LeaveCriticalSection(&this->csec);
  return 0;
+}
+//------------------------------------------------------------------------------------
+int PutMsg(UINT16 MsgType, UINT16 MsgID, UINT32 DataID, PVOID MsgData, UINT DataSize, PULONG MsgSeqNum=NULL, UINT TgtID=CSharedIPC::MSG_BROADCAST)      // From clients to exact InstanceID (And optionally a stream) or broadcast
+{
+ PVOID MsgPtr = NULL;
+ if(this->BeginMsg(&MsgPtr, MsgType, MsgID, DataID, DataSize, TgtID) < 0)return -5;
+ if(MsgData && DataSize)memcpy(MsgPtr,MsgData,DataSize);
+ return this->DoneMsg(MsgSeqNum);
 }
 //------------------------------------------------------------------------------------
 // RspSize contains size of RspData buffer and later set to size of received data in that buffer

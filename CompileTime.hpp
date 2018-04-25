@@ -73,7 +73,8 @@ template <typename C, UINT32... Idx> struct ctStrHldr<C,ctCplIndexList<Idx...> >
  constexpr __forceinline ctStrHldr(const C* const Str) : Array{ Str[Idx]... } {}  // Compile-time constructor  
 
  constexpr __forceinline UINT Size(void){return (sizeof...(Idx));}
- constexpr __forceinline C* Value(void){return (C*)&this->Array;}
+ constexpr __forceinline C* Value(void){return (C*)&this->Array;}   
+ constexpr __forceinline C* Decrypt(void){return (C*)&this->Array;}  
  constexpr __forceinline operator   const C*()    {return this->Array;}
 };
 //------------------------------------------------------------------------------

@@ -489,6 +489,37 @@ int Count(BYTE chr, int from=0)
  static CMiniStr operator + (const int val1, const CMiniStr &str2) {return CMiniStr(val1,str2);}
  static CMiniStr operator + (const CMiniStr &str2, const int val1) {return CMiniStr(str2,val1);} // Why BCC confuses it with 'operator []' ?
 //---------------------------------------------------------------------------
+static int _stdcall ReplaceParamXML(CMiniStr& XmlStr, LPCSTR ParName, LPSTR ParValue, bool Single)
+{
+ int ReplCnt = 0;
+ int NamLen  = lstrlenA(ParName);
+ for(int offs=0,spos=0;;)
+  {
+   if((spos = XmlStr.Pos(ParName, offs)) < 0)break;
+   spos += NamLen;
+   if(spos >= XmlStr.Length())break;  
+   bool ExCont = false;
+   offs = spos+1;
+   for(;XmlStr.c_str()[spos] != '=';spos++){if(XmlStr.c_str()[spos] > 0x20){ExCont=true; break;}}   // Not a param
+   if(ExCont)continue;
+   spos++;
+   ExCont = false;
+   offs = spos+1;
+   for(;XmlStr.c_str()[spos] != '\"';spos++){if(XmlStr.c_str()[spos] > 0x20){ExCont=true; break;}}   // Not a param
+   if(ExCont){continue;}
+   spos++;
+   offs = spos;  // + 1;         // Start of param
+   if((spos = XmlStr.Pos('"', CMiniStr::ComparatorE, offs )) < 0)break;
+   int plen = spos - offs;  // End of param
+
+   XmlStr.Delete(offs,plen);  // Some special TextSegmentReplace proc will be faster than this double reallocation
+   XmlStr.cInsert(ParValue,offs);
+   ReplCnt++;
+   if(Single)break;
+  }
+ return ReplCnt;
+}
+//------------------------------------------------------------------------------------
 
 
 //===========================================================================================================

@@ -2,7 +2,7 @@
 
 #define _CRT_SECURE_NO_WARNINGS
 #include "ssl.h"
-#include "z.h"
+//#include "z.h"
 
 //* PENDING:
 //* Certificate Chain 
@@ -769,8 +769,8 @@ SECURITY_STATUS SSL_SOCKET :: VerifySessionCertificate()
 //------------------------------------------------------------------------------
 void SSL_SOCKET :: NoFail(HRESULT hr)
 	{
-	if (FAILED(hr))
-		throw;
+//	if (FAILED(hr))
+//		throw;
 	}
 //------------------------------------------------------------------------------
 PCCERT_CONTEXT SSL_SOCKET :: CreateOurCertificate()
@@ -784,15 +784,15 @@ PCCERT_CONTEXT SSL_SOCKET :: CreateOurCertificate()
 	BOOL AX = 0;
 
 	// Step by step to create our own certificate
-	try
-		{
+//	try
+//		{
 		// Create the subject
 		char cb[1000] = {0};
 		sib.pbData = (BYTE*)cb; 
 		sib.cbData = 1000;
 		wchar_t*	szSubject= L"CN=Certificate";
-		if (!CertStrToNameW(CRYPT_ASN_ENCODING, szSubject,0,0,sib.pbData,&sib.cbData,NULL))
-			throw;
+		if (!CertStrToNameW(CRYPT_ASN_ENCODING, szSubject,0,0,sib.pbData,&sib.cbData,NULL))return NULL;
+			//throw;
 	
 
 		// Acquire Context
@@ -803,18 +803,18 @@ PCCERT_CONTEXT SSL_SOCKET :: CreateOurCertificate()
 			hr = GetLastError();
 			if (GetLastError() == NTE_EXISTS)
 				{
-				if (!CryptAcquireContextW(&hProv,pszKeyContainerName,MS_DEF_PROV_W,PROV_RSA_FULL,CRYPT_MACHINE_KEYSET))
-					{
-					throw;
-					}
+				if (!CryptAcquireContextW(&hProv,pszKeyContainerName,MS_DEF_PROV_W,PROV_RSA_FULL,CRYPT_MACHINE_KEYSET))return NULL;
+					//{
+					//throw;
+					//}
 				}
-			else
-				throw;
+			else return NULL;
+				//throw;
 			}
 
 		// Generate KeyPair
-		if (!CryptGenKey(hProv, AT_KEYEXCHANGE, CRYPT_EXPORTABLE, &hKey))
-			throw;
+		if (!CryptGenKey(hProv, AT_KEYEXCHANGE, CRYPT_EXPORTABLE, &hKey))return NULL;
+			// throw;
 
 		// Generate the certificate
 		CRYPT_KEY_PROV_INFO kpi = {0};
@@ -835,11 +835,8 @@ PCCERT_CONTEXT SSL_SOCKET :: CreateOurCertificate()
 /*		hCS = CertOpenStore(CERT_STORE_PROV_MEMORY,0,0,CERT_STORE_CREATE_NEW_FLAG,0);
 		AX = CertAddCertificateContextToStore(hCS,p,CERT_STORE_ADD_NEW,0);
 		AX = CryptFindCertificateKeyProvInfo(p,CRYPT_FIND_MACHINE_KEYSET_FLAG,NULL);*/
-		}
-	
-	catch(...)
-		{
-		}
+//		}	
+//	catch(...){}
 	
 	if (hKey)
 		CryptDestroyKey(hKey);

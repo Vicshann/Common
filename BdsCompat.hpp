@@ -37,6 +37,8 @@
 // ArgA: EAX
 // RetAddr
 //---------------------------------------------------------------------------
+namespace BDS
+{
 template <typename R, typename... Types> constexpr int GetArgCount( R(*f)(Types ...) ){ return sizeof...(Types); }   // GetArgCount( R(*f)(Types ...) )
 
 
@@ -50,9 +52,9 @@ template <typename Ret, typename... Args> struct CountArgs<Ret(Args...)>
 #if !defined(_AMD64_)
 //---------------------------------------------------------------------------
 // Expose a proc as a BDS fastcall (MSVC proc must be declared as '_stdcall')
-// UINT64 is two DWORDS on stack but counted as ine argument!
+// UINT64 is two DWORDS on stack but counted as one argument!
 //
-#define BDSWRAP(proc) &BdsFWrap<proc, GetArgCount(proc)>      // There is some problem with GetArgCount !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+#define BDSWRAP(proc) &BDS::BdsFWrap<proc, BDS::GetArgCount(proc)>      // There is some problem with GetArgCount !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 template<void* WProc, int Args> PVOID _stdcall BdsFWrap(void)   // [EAX,EDX,ECX,...] [EAX,EDX,ECX] [EAX,EDX] [EAX] []   // Use of specialization for 1 and 2 arg variants is somehow possible?
 {
  static const PVOID Addr = WProc;         // Can`t be taken by an assembler code directly(Results in Null)
@@ -153,15 +155,32 @@ static inline double UnixToDateTime(__int64 USec)
  return ((double)USec / 86400.0) + UnixStartDate;
 }
 
-static inline double _stdcall Delphi_Now(void)
+static inline double Delphi_Now(void)
 {
  return UnixToDateTime(GetTime64(true));
 }
 //---------------------------------------------------------------------------
+static inline UINT& __fastcall RndGenSeed(void)
+{
+ static UINT Seed = 0;
+ return Seed; 
+}
+//---------------------------------------------------------------------------
+static inline void __fastcall DelphiRndSeed(UINT a1)
+{
+ RndGenSeed() = a1;
+}
+//------------------------------------------------------------------------------------------------------------
+static inline int __fastcall DelphiRandom(UINT a1)
+{
+ RndGenSeed() = 0x8088405 * RndGenSeed() + 1;
+ return (RndGenSeed() * (UINT64)a1) >> 32;
+}
+//------------------------------------------------------------------------------------------------------------
 
 
 //---------------------------------------------------------------------------
-
+};
 #pragma warning(pop)
 
 //====================================================================================

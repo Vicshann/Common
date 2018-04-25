@@ -133,6 +133,13 @@ void __cdecl operator delete[](void* p)
 
 extern "C" int _fltused = 0;
 
+
+extern "C" int __cdecl atexit( void (__cdecl *func )( void ) )   // MINIRTL ?
+{
+ if(func)func();
+ return 0;
+}
+//---------------------------------------------------------------------------
 #ifndef _M_X64
 extern "C" __declspec(naked) float _cdecl _CIsqrt(float &Value)
 {
@@ -732,17 +739,7 @@ LPSTR _stdcall ConvertToDecDW(DWORD Value, LPSTR Number)
  return x;
 } */
 //---------------------------------------------------------------------------
-UINT64 _fastcall DecStrToNum(char* Str)
-{
- UINT64 x = 0;
- bool neg = false;
- if (*Str == '-'){neg = true; ++Str;}
- for(BYTE ch;(ch=*Str++ - '0') <= 9;)x = (x*10) + ch;
- if(neg)x = -x;
- return x;
-}
-//---------------------------------------------------------------------------
-UINT64 _fastcall DecStrToNumFpu(char* Str)  // A little bit faster // NOTE: Need more tests in case it still can lose some precision somtimes
+/*UINT64 _fastcall DecStrToNumFpu(char* Str)  // A little bit faster // NOTE: Need more tests in case it still can lose some precision somtimes
 {
  long double x = 0;
  bool neg = false;
@@ -750,21 +747,31 @@ UINT64 _fastcall DecStrToNumFpu(char* Str)  // A little bit faster // NOTE: Need
  for(BYTE ch;(ch=*Str++ - '0') <= 9;)x = (x*10) + ch;
  if(neg)x = -x;
  return x;
-}
+}*/
 //---------------------------------------------------------------------------
-UINT64 _fastcall HexStrToNum(char* Str)
+/*UINT64 _fastcall DecStrToNum(char* Str)       // It is a template now
+{
+ UINT64 x = 0;
+ bool neg = false;
+ if (*Str == '-'){neg = true; ++Str;}
+ for(BYTE ch;(ch=*Str++ - '0') <= 9;)x = (x*10) + ch;
+ if(neg)x = -x;
+ return x;
+}*/
+//---------------------------------------------------------------------------
+/*UINT64 _fastcall HexStrToNum(char* Str)   // It is a template now
 {
  UINT64 x = 0;
  for(long chv;(chv=CharToHex(*Str++)) >= 0;)x = (x<<4) + chv;  // (<<4) avoids call to __llmul which is big
  return x;
-}
+}*/
 //---------------------------------------------------------------------------
-UINT64 _fastcall HexStrToNumFpu(char* Str) // A little bit faster // NOTE: Need more tests in case it still can lose some precision somtimes
+/*UINT64 _fastcall HexStrToNumFpu(char* Str) // A little bit faster // NOTE: Need more tests in case it still can lose some precision somtimes
 {
  long double x = 0;
  for(long chv;(chv=CharToHex(*Str++)) >= 0;)x = (x*16) + chv;
  return x;
-}
+} */
 //---------------------------------------------------------------------------
 /*char* _fastcall DecNumToStrS(__int64 Val, char* buf, int* Len)     // Template now
 {
@@ -2078,5 +2085,24 @@ HMODULE _stdcall FindModuleByExpName(LPSTR ModuleName)              // For modul
   }
  CloseHandle(hModulesSnap);
  return NULL;
+}
+//---------------------------------------------------------------------------
+bool _stdcall AssignFilePath(LPSTR DstPath, LPSTR BasePath, LPSTR FilePath)
+{
+ if(!FilePath || !FilePath[0])return false;
+ if(FilePath[1] != ':') 
+  {
+   lstrcpy(DstPath, BasePath);
+   LPSTR Ptr = (IsFilePathDelim(FilePath[0]))?(&FilePath[1]):(&FilePath[0]);
+   lstrcat(DstPath, Ptr);
+  }
+   else lstrcpy(DstPath, FilePath);
+ return true;
+}
+//---------------------------------------------------------------------------
+HANDLE WINAPI CreateFileX(PVOID lpFileName,DWORD dwDesiredAccess,DWORD dwShareMode,LPSECURITY_ATTRIBUTES lpSecurityAttributes,DWORD dwCreationDisposition,DWORD dwFlagsAndAttributes,HANDLE hTemplateFile)
+{
+ if(!((PBYTE)lpFileName)[1])return CreateFileW((PWSTR)lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
+ return CreateFileA((LPSTR)lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
 }
 //---------------------------------------------------------------------------
