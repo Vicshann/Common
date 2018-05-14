@@ -46,15 +46,20 @@
 #define LOGTXT(txt,len)
 #define LOGHEX(buf,len)
 #define DBGMSG LOGMSG
+#define DBGTXT LOGTXT
+#define DBGHEX LOGHEX
 #else
 #define LOGMSG(msg,...) LogProc(_PRNM_,msg,__VA_ARGS__)
 #define LOGTXT(txt,len) LogProc((char*)1,txt,len);
 #define LOGHEX(buf,len) LOGMSG(NULL,len,buf)          // TODO: Optionally attach HEX buffer to a message that it and dump go in one sync logging  
-
 #ifdef _DEBUG
 #define DBGMSG LOGMSG
+#define DBGTXT LOGTXT
+#define DBGHEX LOGHEX
 #else
 #define DBGMSG(msg,...)
+#define DBGTXT(txt,len)
+#define DBGHEX(buf,len)
 #endif
 
 #endif
@@ -92,6 +97,8 @@ typedef LONG NTSTATUS;
 #define _L(quote) _L2(quote)
 #define _L2(quote) L##quote
 //====================================================================================
+// RandomInRange function is missing?
+
 bool _stdcall DeleteFolder(LPSTR FolderPath);
 bool _stdcall DeleteFolderW(PWSTR FolderPath);
 bool _stdcall IsAddrInModule(PVOID Addr, PVOID ModBase, UINT ModSize);
@@ -139,6 +146,8 @@ UINT _stdcall GetRandomValue(UINT MinVal, UINT MaxVal);
 HMODULE _stdcall FindModuleByExpName(LPSTR ModuleName);
 bool _stdcall AssignFilePath(LPSTR DstPath, LPSTR BasePath, LPSTR FilePath);
 HANDLE WINAPI CreateFileX(PVOID lpFileName,DWORD dwDesiredAccess,DWORD dwShareMode,LPSECURITY_ATTRIBUTES lpSecurityAttributes,DWORD dwCreationDisposition,DWORD dwFlagsAndAttributes,HANDLE hTemplateFile);
+void _stdcall ReverseBytes(PBYTE Array, UINT Size);
+int _stdcall BinaryPackToBlobStr(LPSTR ApLibPath, LPSTR SrcBinPath, LPSTR OutBinPath, BYTE Key);
 //---------------------------------------------------------------------------
 
 
@@ -393,7 +402,7 @@ template<typename O, typename T> O _fastcall DecStrToNum(T Str, long* Size=nullp
  return x;
 }
 //---------------------------------------------------------------------------
-template<typename O, typename T> O _fastcall HexStrToNum(T Str, long* Size=nullptr)      // Negative values?
+template<typename O, typename T> O _fastcall HexStrToNum(T Str, long* Size=nullptr)   // Stops on a first invlid hex char    // Negative values?
 {
  O x = 0;
  T Old = Str;
@@ -416,8 +425,8 @@ template<typename A, typename B> int GetSubStrOffsSimpleIC(A StrVal, B StrBase, 
  return -1;
 }
 //--------------------------------------------------------------------------- 
-template<typename A, typename B> int IsContainSubStrSimpleIC(B StrBase, A StrVal){return (GetSubStrOffsSimpleIC(StrVal, StrBase) >= 0);}
-template<typename A, typename B> int StrCompareSimpleIC(A StrValA, B StrValB)  // Not exactly standart!
+template<typename A, typename B> bool IsContainSubStrSimpleIC(B StrBase, A StrVal){return (GetSubStrOffsSimpleIC(StrVal, StrBase) >= 0);}
+template<typename A, typename B> int  StrCompareSimpleIC(A StrValA, B StrValB)  // Not exactly standart!
 {
  if(!StrValA || !StrValB)return -1;
  for(int voffs=0;;voffs++)
@@ -565,21 +574,34 @@ template<typename T> T GetCmdLineParam(T CmdLine, T Param, PUINT ParLen=NULL)  /
 template<typename T, typename S> S ConvertToHexStr(T Value, int MaxDigits, S NumBuf, bool UpCase, UINT* Len=0) 
 {
  const int cmax = sizeof(T)*2;      // Number of byte halves (Digits)
- char  HexNums[] = "0123456789ABCDEF0123456789abcdef";
+ char  HexNums[] = {'0','1','2','3','4','5','6','7','8','9','A','B','C','D','E','F','0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f'};     // Must be optimized to PlatLen assignments
  UINT Case = UpCase?0:16;
-
- if(MaxDigits <= 0)MaxDigits = (Value > 0xFFFFFFFF)?(16):((Value > 0xFFFF)?(8):((Value > 0xFF)?(4):(2)));    // Auto set max digits
- S DstPtr = &NumBuf[MaxDigits-1];
- for(int Ctr = 0;DstPtr >= NumBuf;DstPtr--)   // Start from last digit
+ if(Value)
   {
-   if(Ctr < cmax)
+   if(MaxDigits <= 0)              // Auto set max digits
     {
-     *DstPtr = HexNums[(Value & 0x0000000F)+Case];   // From end of buffer
-     Value = Value >> 4;
-     Ctr++;
+     MaxDigits = 0;
+     T tmp = Value;    // Counter needed to limit a signed value        
+     for(int ctr=cmax;tmp && ctr;ctr--,MaxDigits++,tmp >>= 4);    // for(T tmp = Value;tmp;tmp>>=4,MaxDigits++);
+     if(MaxDigits & 1)MaxDigits++;    // Full bytes
+    }         
+   S DstPtr = &NumBuf[MaxDigits-1];
+   for(int Ctr = 0;DstPtr >= NumBuf;DstPtr--)   // Start from last digit
+    {
+     if(Ctr < cmax)
+      {
+       *DstPtr = HexNums[(Value & 0x0000000F)+Case];   // From end of buffer
+       Value = Value >> 4;
+       Ctr++;
+      }
+       else *DstPtr = '0';
     }
-     else *DstPtr = '0';
   }
+   else       // Fast 0
+    {
+     if(MaxDigits <= 0)MaxDigits = 2;
+     for(int ctr=0;ctr < MaxDigits;ctr++)NumBuf[ctr] = '0';
+    }
  if(Len)*Len = MaxDigits;
    else NumBuf[MaxDigits] = 0;
  return NumBuf; 
@@ -645,9 +667,8 @@ inline void DecryptStrSimple(LPSTR SrcStr, LPSTR DstStr, BYTE Key, UINT Size=0)
 template<typename S> UINT BinToBlobArray(S& OutStrm, PBYTE BinPtr, UINT SizeInBytes, BYTE XorKey=0, UINT ESize=sizeof(void*))
 {
  BYTE Line[768];
- OutStrm += "unsigned int BSize = ";            
- OutStrm += (int)SizeInBytes;
- OutStrm += ";\r\n";
+ wsprintfA((LPSTR)&Line,"unsigned int BSize = %u;\r\n",SizeInBytes);
+ OutStrm += (LPSTR)&Line;
  if(ESize == 1)OutStrm += "unsigned char Blob[] = {\r\n";
  else if(ESize == 2)OutStrm += "unsigned short Blob[] = {\r\n";
  else if(ESize == 4)OutStrm += "unsigned long Blob[] = {\r\n";
@@ -781,7 +802,7 @@ public:
  operator   const bool() {return this->IsValid();}
 }; 
 //---------------------------------------------------------------------------
-template<typename T> class CArr
+template<typename T> class CArr          // bool GrowOnly
 {
  T* AData;
 
@@ -791,23 +812,78 @@ public:
  ~CArr(){this->Resize(0);}
  operator  T*() {return this->AData;}    // operator   const T*() {return this->AData;}
  T* Data(void){return this->AData;}
+ T* c_data(void){return this->AData;}   // For name compatibility in a templates
  UINT Count(void){return (this->Size / sizeof(T));}
  UINT Size(void){return ((this->AData)?(((size_t*)this->AData)[-1]):(0));}
- bool Resize(UINT Cnt)
+ UINT Length(void){return this->Size();}
+//----------------------------------------------------------
+ bool Add(T* Elems, UINT Cnt)
+  {
+   return this->Append(Elems, Cnt * sizeof(T));
+  }
+//----------------------------------------------------------
+ bool Append(void* Bytes, UINT Len)     // In Bytes
+  {
+   UINT OldSize = this->Size();
+   if(!this->Resize(OldSize+Len))return false;
+   if(Bytes)memcpy(&((PBYTE)this->AData)[OldSize], Bytes, Len);
+   return true;
+  }
+//----------------------------------------------------------
+ CArr<T>& operator += (const char* str){this->Append((void*)str, lstrlenA(str)); return *this;}
+//----------------------
+ CArr<T>& operator += (const wchar_t* str){this->Append((void*)str, lstrlenW(str)); return *this;}
+//----------------------------------------------------------
+ bool Resize(UINT Cnt)   // In Elements
  {
-  Cnt = (Cnt*sizeof(T))+sizeof(size_t);
+  return this->SetLength(Cnt*sizeof(T));
+ }
+ bool SetLength(UINT Len)    // In bytes!
+  {
   HANDLE hHeap = GetProcessHeap();
   size_t* Ptr = (size_t*)this->AData;
-  if(Cnt && this->AData)Ptr = (size_t*)HeapReAlloc(hHeap,HEAP_ZERO_MEMORY,&Ptr[-1],Cnt);
-	else if(!this->AData)Ptr = (size_t*)HeapAlloc(hHeap,HEAP_ZERO_MEMORY,Cnt);
-	  else if(!Cnt && this->AData){HeapFree(hHeap,0,&Ptr[-1]); this->AData=NULL; return false;}
-  *Ptr = Cnt;
+  if(Len && this->AData)Ptr = (size_t*)HeapReAlloc(hHeap,HEAP_ZERO_MEMORY,&Ptr[-1],Len+sizeof(size_t));
+	else if(!this->AData)Ptr = (size_t*)HeapAlloc(hHeap,HEAP_ZERO_MEMORY,Len+sizeof(size_t));
+	  else if(!Len && this->AData){HeapFree(hHeap,0,&Ptr[-1]); this->AData=NULL; return false;}
+  *Ptr = Len;
   this->AData = (T*)(++Ptr);
   return true;
- }
+
+  }
+//----------------------------------------------------------
+ UINT FromFile(PVOID FileName)
+  {
+   HANDLE hFile;
+   if(!((PBYTE)FileName)[1])hFile = CreateFileW((PWSTR)FileName,GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
+     else hFile = CreateFileA((LPSTR)FileName,GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
+   if(hFile == INVALID_HANDLE_VALUE)return 0;
+   DWORD Result   = 0;
+   DWORD FileSize = GetFileSize(hFile,NULL);
+   UINT  LdCnt    = (FileSize / sizeof(T));
+   this->Resize(LdCnt);
+   if(FileSize)ReadFile(hFile,this->AData,(LdCnt*sizeof(T)),&Result,NULL);
+   CloseHandle(hFile);
+   return (Result / sizeof(T));
+  }
+//----------------------------------------------------------
+ UINT ToFile(LPSTR FileName)       // TODO: Bool Append    // From - To
+  {
+   HANDLE hFile;
+   UINT SavLen = this->Size();
+   if(!SavLen)return 0;   
+   if(!((PBYTE)FileName)[1])hFile = CreateFileW((PWSTR)FileName,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
+     else hFile = CreateFileA((LPSTR)FileName,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
+   if(hFile == INVALID_HANDLE_VALUE)return 0;
+   DWORD Result = 0;
+   WriteFile(hFile,this->AData,SavLen,&Result,NULL);
+   CloseHandle(hFile);
+   return (Result / sizeof(T));
+  }
+//----------------------------------------------------------
+
 }; 
 //---------------------------------------------------------------------------
-template<typename T, int PreAll=0> class CGrowArray
+template<typename T, int PreAll=0> class CGrowArray    
 {
  T* Data;
 

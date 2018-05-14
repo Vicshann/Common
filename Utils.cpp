@@ -393,7 +393,7 @@ static CRITICAL_SECTION csec;
  EnterCriticalSection(&csec);
  if(LogMode & lmCons){if(hConsOut == INVALID_HANDLE_VALUE){hConsOut = GetStdHandle(STD_OUTPUT_HANDLE); SetConsoleTextAttribute(hConsOut,FOREGROUND_YELLOW);}}
  if(LogMode & lmSErr){if(hConsErr == INVALID_HANDLE_VALUE){hConsErr = GetStdHandle(STD_ERROR_HANDLE);}}
- if(LogMode & lmFile)
+ if((LogMode & lmFile) && *LogFilePath)
   {
    if(hLogFile == INVALID_HANDLE_VALUE)
     {
@@ -406,7 +406,7 @@ static CRITICAL_SECTION csec;
    if(LogMode & lmProc)pLogProc(MsgPtr,msglen);
    if(LogMode & lmCons)WriteConsole(hConsOut,MsgPtr,msglen,&Result,NULL);
    if(LogMode & lmSErr)WriteConsole(hConsErr,MsgPtr,msglen,&Result,NULL);
-   if(LogMode & lmFile)WriteFile(hLogFile,MsgPtr,msglen,&Result,NULL);
+   if((LogMode & lmFile)&&(hLogFile != INVALID_HANDLE_VALUE))WriteFile(hLogFile,MsgPtr,msglen,&Result,NULL);
   }
   else if(!Message)     // HEX dump
    {
@@ -425,12 +425,12 @@ static CRITICAL_SECTION csec;
       if(LogMode & lmProc)pLogProc((LPSTR)&Buffer,len);
       if(LogMode & lmCons)WriteConsole(hConsOut,&Buffer,len,&Result,NULL);
       if(LogMode & lmSErr)WriteConsole(hConsErr,&Buffer,len,&Result,NULL);
-      if(LogMode & lmFile)WriteFile(hLogFile,&Buffer,len,&Result,NULL);
+      if((LogMode & lmFile)&&(hLogFile != INVALID_HANDLE_VALUE))WriteFile(hLogFile,&Buffer,len,&Result,NULL);
 	 }
     if(LogMode & lmProc)pLogProc("\r\n",2);
     if(LogMode & lmCons)WriteConsole(hConsOut,"\r\n",2,&Result,NULL);
     if(LogMode & lmSErr)WriteConsole(hConsErr,"\r\n",2,&Result,NULL);
-    if(LogMode & lmFile)WriteFile(hLogFile,"\r\n",2,&Result,NULL);
+    if((LogMode & lmFile)&&(hLogFile != INVALID_HANDLE_VALUE))WriteFile(hLogFile,"\r\n",2,&Result,NULL);
    }
  LeaveCriticalSection(&csec);
  va_end(args);
@@ -650,7 +650,7 @@ BYTE _stdcall CharToLowCase(BYTE CharValue)
  return CharValue;
 }
 //---------------------------------------------------------------------------
-// Outpud WORD can bi directly written to a string with right half-byte ordering
+// Outpud WORD can be directly written to a string with right half-byte ordering  (little endian)
 WORD _fastcall HexToChar(BYTE Value, bool UpCase)   
 {
  WORD Result = 0;
@@ -2106,3 +2106,49 @@ HANDLE WINAPI CreateFileX(PVOID lpFileName,DWORD dwDesiredAccess,DWORD dwShareMo
  return CreateFileA((LPSTR)lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
 }
 //---------------------------------------------------------------------------
+void _stdcall ReverseBytes(PBYTE Array, UINT Size)
+{
+ PBYTE BkPtr = &Array[Size-1];
+ for(;Size > 1;BkPtr--,Array++,Size-=2)
+  {
+   BYTE Val = *BkPtr;
+   *BkPtr = *Array;
+   *Array = Val; 
+  }
+}
+//---------------------------------------------------------------------------
+int _stdcall BinaryPackToBlobStr(LPSTR ApLibPath, LPSTR SrcBinPath, LPSTR OutBinPath, BYTE Key)
+{
+ UINT (_stdcall *aP_pack)(void *source,void *destination,UINT length, void *workmem,PVOID callback, void *cbparam);
+ UINT (_stdcall *aP_workmem_size)(UINT inputsize);
+ UINT (_stdcall *aP_max_packed_size)(UINT inputsize);
+ HMODULE hApLib = LoadLibraryA(ApLibPath);
+ if(!hApLib){LOGMSG("Failed to load ApLib: %s",ApLibPath); return -1;}
+ *(PVOID*)&aP_pack = GetProcAddress(hApLib,"_aP_pack");
+ *(PVOID*)&aP_workmem_size = GetProcAddress(hApLib,"_aP_workmem_size");
+ *(PVOID*)&aP_max_packed_size = GetProcAddress(hApLib,"_aP_max_packed_size");
+
+ CArr<BYTE> SrcFile;
+ CArr<BYTE> DstFile;
+ CArr<BYTE> WrkMem;
+ CArr<BYTE> Packed;
+ SrcFile.FromFile(SrcBinPath);
+ if(SrcFile.Length() <= 0){LOGMSG("Failed to load the Binary: %s", SrcBinPath);}
+ WrkMem.SetLength(aP_workmem_size(SrcFile.Length()));
+ Packed.SetLength(aP_max_packed_size(SrcFile.Length())+sizeof(DWORD));
+ UINT MapModSize = GetImageSize(SrcFile.c_data());
+ UINT OutLen = aP_pack(SrcFile.c_data(), Packed.c_data(), SrcFile.Length(), WrkMem.c_data(), NULL, NULL);
+ if(OutLen == (UINT)-1){LOGMSG("Failed to pack the Binary!"); return -2;}     // APLIB_ERROR
+ *(PDWORD)(&Packed.c_data()[OutLen]) = (MapModSize > OutLen)?(MapModSize):(OutLen);
+ OutLen += sizeof(DWORD);  // Store original size at end of block
+ if(BinToBlobArray(DstFile, Packed.c_data(), OutLen, Key) <= 0){LOGMSG("Failed to convert the Binary!"); return -3;}
+ DstFile.ToFile(OutBinPath);
+ LOGMSG("Saved the Binary blob: %s",OutBinPath);
+ Packed.SetLength(OutLen);
+ BYTE BPath[MAX_PATH];
+ lstrcpyA((LPSTR)&BPath,OutBinPath);
+ lstrcpyA(GetFileExt((LPSTR)&BPath),"bin");
+ Packed.ToFile((LPSTR)&BPath);
+ return 0;
+}
+//------------------------------------------------------------------------------------------------------------

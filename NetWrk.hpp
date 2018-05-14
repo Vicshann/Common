@@ -269,7 +269,7 @@ int GetResponseContent(CMiniStr& Rsp, CMiniStr& Content)    // TODO: Decode Url 
   {
    while(DataOffs < Rsp.Length())
     {
-     UINT CntLen = HexStrToNum((LPSTR)&Rsp.c_data()[DataOffs]);  // Size of Chunk
+     UINT CntLen = HexStrToNum<UINT>((LPSTR)&Rsp.c_data()[DataOffs]);  // Size of Chunk
      if(!CntLen)break;  // End chunk is 0
      int rpos = GetSubStrOffsSimpleIC("\r\n", (LPSTR)Rsp.c_data(), DataOffs, Rsp.Length());
      if(rpos < 0)break;

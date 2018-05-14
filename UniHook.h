@@ -118,7 +118,7 @@ bool SetHook(LPSTR ProcName, LPSTR LibName, UINT Flags=hfFillNop, T HookFunc=NUL
 {
  if(this->IsActive())return false;       // Already set
  HMODULE  hLib  = GetModuleHandleA(LibName);
- if(!hLib)hLib  = LoadLibraryA(LibName);
+ if(!hLib)hLib  = LoadLibraryA(LibName);             // Only with a ForceLoad flag?
  PBYTE ProcAddr = (PBYTE)GetProcAddress(hLib,ProcName);
  if(!ProcAddr)return false;
  return this->SetHook(ProcAddr,hfFillNop,HookFunc);  

@@ -70,12 +70,13 @@ private:
 //--------------
  void Cleanup(bool KeepName=false)
   {
-   if(!KeepName && this->Name){this->Name -= sizeof(DWORD);ReAllocBuf(&this->Name,0);}
+   if(!KeepName && this->Name){this->Name -= sizeof(DWORD);ReAllocBuf(&this->Name,0); this->Name = NULL;}
    if((this->Type == jstString)&&this->Value.StringVal){this->Value.StringVal -= sizeof(DWORD);ReAllocBuf(&this->Value.StringVal,0);}
 	 else if(((this->Type == jstArray)||(this->Type == jstObject))&&this->Value.Items)
 	  {
 	   for(UINT ctr=0;ctr < this->mCount;ctr++)this->Value.Items[ctr].Cleanup();  // Destroy all children items
 	   ReAllocBuf(&this->Value.Items,0);
+       this->Value.Items = NULL;
 	  }
    this->mCount = 0;	  
   }
@@ -85,8 +86,8 @@ private:
    this->Type     = jstEmpty;
    this->mCount   = 0;
    this->Value.Items = NULL;
-   this->Name    = NULL;
-   this->Data    = NULL;
+   this->Name     = NULL;
+   this->Data     = NULL;
 //   this->pParent = NULL;
   }
 //--------------
@@ -197,7 +198,7 @@ static DWORD _fastcall HexStrToDW(LPSTR String, UINT Bytes)   // Fast, but do no
  return Result;
 }      */
 //---------------------------------------------------------------------------
-static LPSTR _fastcall ConvertToHexStr(UINT64 Value, int MaxDigits, LPSTR Number, bool UpCase)
+/*static LPSTR _fastcall ConvertToHexStr(UINT64 Value, int MaxDigits, LPSTR Number, bool UpCase)
 {
  const int cmax = sizeof(UINT64)*2;
  char  HexNums[] = "0123456789ABCDEF0123456789abcdef";
@@ -217,7 +218,7 @@ static LPSTR _fastcall ConvertToHexStr(UINT64 Value, int MaxDigits, LPSTR Number
  if((MaxDigits > cmax) || (MaxDigits == 0))MaxDigits = cmax;
  if((cmax-DgCnt) < MaxDigits)DgCnt = cmax - MaxDigits;
  return (Number + DgCnt);
-}    
+}*/    
 //---------------------------------------------------------------------------
  CJSonItem* DuplicateTmpAt(CJSonItem* Dst)  // Apply this ONLY to a temporary objects (Owner of items` memory will be changed)
   {
@@ -453,7 +454,7 @@ public:
   }
 //--------------
 
- void  Clear(void){ this->Cleanup(false);this->Nullify();}
+ void  Clear(void){ this->Cleanup(true); }     // this->Nullify();}
 
  const LPSTR GetName(void){return this->Name;}
  const UINT  GetNameLen(void){return CountedStrLen(this->Name);}   // {return ((PDWORD)this->Name)[-1];}
@@ -616,8 +617,8 @@ public:
 	  }
 	   else
 		{
-		 if(nhex){this->Value.IntVal = HexStrToDW((LPSTR)&Number,8); this->Type = jstHexInt;}                    // Must support 64 bit
-		   else {this->Value.IntVal = DecStrToDW((LPSTR)&Number); this->Type = jstInt;} //atol((LPSTR)&Number);  // Must support 64 bit
+		 if(nhex){this->Value.IntVal = HexStrToNum<UINT64>((LPSTR)&Number); this->Type = jstHexInt;}                    // Must support 64 bit
+		   else {this->Value.IntVal = DecStrToNum<UINT64>((LPSTR)&Number); this->Type = jstInt;}   // TODO: Test signed numbers
 		 return tknpos+nctr;
 		}
    }         
@@ -666,7 +667,7 @@ public:
 	 case jstHexInt:
 	  {
 	   BYTE Buf[32];
-	   LPSTR Val = ConvertToHexStr(this->Value.IntVal, -1, (LPSTR)&Buf[1], true);
+	   LPSTR Val = ConvertToHexStr((UINT64)this->Value.IntVal, -1, (LPSTR)&Buf[1], true);
 	   Val--;
 	   *Val = '$';
 	   Buf[17] = 0;

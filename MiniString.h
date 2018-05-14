@@ -169,6 +169,14 @@ public:
   return this->cAppend(DecNumToStrS(val, (LPSTR)&Tmpb)); // No signs //this->cAppend((LPSTR)&Tmpb[0]);
  }
 //----------------------
+ LPSTR uAppend(const unsigned int val)
+ {
+  BYTE Tmpb[64];
+ // _ltoa(val,(LPSTR)&Tmpb[0],10);
+  return this->cAppend(DecNumToStrS(val, (LPSTR)&Tmpb)); // No signs //this->cAppend((LPSTR)&Tmpb[0]);
+ }
+//----------------------
+
  LPSTR iAppend(const unsigned long val)
  {
   char Tmpb[64];
@@ -265,6 +273,8 @@ typedef bool (_fastcall *COMPARATOR)(BYTE ChrA, BYTE ChrB);
  CMiniStr& operator += (const PWSTR str){this->cAppend(str);return *this;}
 //----------------------
  CMiniStr& operator += (int val){this->iAppend(val);return *this;}
+//----------------------
+ CMiniStr& operator += (unsigned int val){this->uAppend(val);return *this;}
 //----------------------
  CMiniStr& operator += (unsigned long val){this->iAppend(val);return *this;}
 //----------------------
@@ -455,9 +465,11 @@ int Count(BYTE chr, int from=0)
    return true;
   }
 //----------------------
- bool FromFile(LPSTR File)
+ bool FromFile(PVOID FileName)
   {
-   HANDLE hFile = CreateFile(File,GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
+   HANDLE hFile;
+   if(!((PBYTE)FileName)[1])hFile = CreateFileW((PWSTR)FileName,GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
+     else hFile = CreateFileA((LPSTR)FileName,GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
    if(hFile == INVALID_HANDLE_VALUE)return false;
    DWORD Result   = 0;
    DWORD FileSize = GetFileSize(hFile,NULL);
@@ -467,9 +479,11 @@ int Count(BYTE chr, int from=0)
    return (Result == FileSize);
   }
 //----------------------
- bool ToFile(LPSTR File)
+ bool ToFile(LPSTR FileName)
   {
-   HANDLE hFile = CreateFile(File,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
+   HANDLE hFile;
+   if(!((PBYTE)FileName)[1])hFile = CreateFileW((PWSTR)FileName,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
+     else hFile = CreateFileA((LPSTR)FileName,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
    if(hFile == INVALID_HANDLE_VALUE)return false;
    DWORD Result   = 0;
    WriteFile(hFile,this->Data,this->SLength,&Result,NULL);
@@ -520,7 +534,59 @@ static int _stdcall ReplaceParamXML(CMiniStr& XmlStr, LPCSTR ParName, LPSTR ParV
  return ReplCnt;
 }
 //------------------------------------------------------------------------------------
-
+static bool _fastcall IsCharReservedURI(BYTE chr)
+{
+ BYTE ChArr[] = {'!', '#', '$', '&', '\'', '(', ')', '*', '+', ',', '/', ':', ';', '=', '?', '@', '[', ']', '%'};
+ for(int ctr=0;ctr < sizeof(ChArr);ctr++){if(ChArr[ctr] == chr)return true;}
+ return false;
+}
+//------------------------------------------------------------------------------------
+static void _fastcall EncodeURI(CMiniStr& str)
+{
+ CMiniStr res;
+ int ResLen = 0;
+ int SrcLen = str.Length();
+ res.SetLength(SrcLen*3);   // As if an entire string will be encoded
+ LPSTR Dst  = res.c_str(); 
+ LPSTR Src  = str.c_str(); 
+ for(;SrcLen > 0;SrcLen--,Src++,Dst++,ResLen++)
+  {
+   BYTE Val = *Src;
+   if(IsCharReservedURI(Val))
+    {
+     *(Dst++) = '%';
+     *(PWORD)(Dst++) = HexToChar(Val, false);
+     ResLen  += 2;
+    }
+     else *Dst = Val;
+  }
+ str.cAssign(res.c_str(), ResLen);
+}
+//------------------------------------------------------------------------------------
+static void _fastcall DecodeURI(CMiniStr& str)
+{
+ CMiniStr res;
+ int ResLen = 0;
+ int SrcLen = str.Length();
+ res.SetLength(SrcLen);   // As if an entire string will be encoded
+ LPSTR Dst  = res.c_str(); 
+ LPSTR Src  = str.c_str(); 
+ for(;SrcLen > 0;SrcLen--,Src++,Dst++,ResLen++)
+  {
+   BYTE Val = *Src;
+   if(Val == '%')
+    {
+     int ByteHi  = CharToHex(*(++Src));
+     int ByteLo  = CharToHex(*(++Src));
+     if((ByteHi  < 0)||(ByteLo < 0))Val = 0;  // Not a HEX char!
+     Val = (ByteHi << 4)|ByteLo;
+     SrcLen -= 2;
+    }
+   *Dst = Val;
+  }
+ str.cAssign(res.c_str(), ResLen);
+}
+//------------------------------------------------------------------------------------
 
 //===========================================================================================================
 #endif

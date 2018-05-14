@@ -1114,7 +1114,7 @@ template<typename T> __declspec(noinline) static PVOID _stdcall TFixUpModuleInpl
   }
  WIN_HEADER<T>  *WinHdr = (WIN_HEADER<T>*)&((PBYTE)ModuleBase)[DosHdr->OffsetHeaderPE];
  UINT RetFix = 0;
- if(Flags & fmFixSec)         // A Raw module assumes as input
+ if(Flags & fmFixSec)         // A Raw module assumed as input
   {
    UINT SecArrOffs = DosHdr->OffsetHeaderPE+WinHdr->FileHeader.HeaderSizeNT+sizeof(FILE_HEADER)+sizeof(DWORD);
    UINT SecsNum    = WinHdr->FileHeader.SectionsNumber;

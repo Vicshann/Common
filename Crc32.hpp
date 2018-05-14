@@ -5,7 +5,7 @@
 #define CRC32H
 
 //---------------------------------------------------------------------------
-class CCRC32
+struct CCRC32
 {
 static UINT32 Table(UINT8 Idx)
 {
@@ -46,8 +46,6 @@ static const UINT32  crc_table[256] = {
  return crc_table[Idx];
 }
 //------------------------------------------------------------------------------
-
-public:
 static UINT32 ByteCRC32(UINT32 crc, UINT8 val)
 {
  return Table((UINT8)crc ^ val) ^ (crc >> 8);

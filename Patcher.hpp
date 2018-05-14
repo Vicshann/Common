@@ -29,13 +29,42 @@ enum EPOp {poDat=0x00,     // Next byte is a single raw byte    // Low half can 
 enum ESigFlg {sfNone,sfBinary=1,sfBackward=2};
 
 private:
+struct SAddrLst
+{
+ SIZE_T* AddrLst;
+
+ ULONG Count(){return (this->AddrLst?(this->AddrLst[-1]):(0));}
+ ULONG Capacity(){return (this->AddrLst?(this->AddrLst[-2]):(0));}
+ PVOID Get(UINT Idx){return (this->AddrLst && (Idx < this->AddrLst[-1])?((PVOID)this->AddrLst[Idx]):(nullptr));}
+//---------------------------------------------------------------------------
+void  Realloc(UINT Elems)     // Sets a new capacity, no shrinking supported
+{
+ if(!Elems){if(this->AddrLst)HeapFree(GetProcessHeap(),0,&this->AddrLst[-2]); this->AddrLst=nullptr;}
+ if(!this->AddrLst)this->AddrLst = (SIZE_T*)HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,(Elems+2)*sizeof(PVOID));    // malloc?
+   else this->AddrLst = (SIZE_T*)HeapReAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,&this->AddrLst[-2],(Elems+2)*sizeof(PVOID));   //   realloc?
+ this->AddrLst += 2;
+ this->AddrLst[-2] = Elems;
+}
+//---------------------------------------------------------------------------
+void Add(PVOID Addr)
+{
+ UINT Cnt = this->Count();
+ if(Cnt == this->Capacity())this->Realloc((Cnt+1) * 2);
+ this->AddrLst[Cnt] = (SIZE_T)Addr;
+ this->AddrLst[-1]++;
+}
+//---------------------------------------------------------------------------
+};
+
+
 struct SSigRec
 {
- PVOID    FoundAddr;
+ SAddrLst FndAddrLst;
  PBYTE    SigData;    // Signatures stored externally
  char*    SigName;    // Stored externally, if needed
- long     BoundIdx;   // If set then this signature tested only after resolved a sighature which it is bound to
  SSigRec* BoundPtr;   // Resolved from BoundIdx only while searching
+ long     BoundIdx;   // If set then this signature tested only after resolved a sighature which it is bound to
+ UINT32   MatchCtr;   // From MatchIdx
  UINT32   MatchIdx;
  UINT16   SigSize;
  UINT16   Flags;
@@ -60,7 +89,7 @@ SSigRec* AddSigRec(void)    // These two isolates templateness to prevent code b
 SSigRec* GetSigRec(UINT Idx)
 {
  if(Idx >= this->GetSigCount())return nullptr;
- if(Idx < this->StSigNum)return &this->StSigArr[Idx];
+ if(Idx <  this->StSigNum)return &this->StSigArr[Idx];
  Idx -= this->StSigNum;
  return &this->DySigArr[Idx];
 }
@@ -75,39 +104,46 @@ CSigScan(void)
 //---------------------------------------------------------------------------
 ~CSigScan()
 {
+ for(UINT ctr=0;;ctr++)
+  {
+   SSigRec* rec = this->GetSigRec(ctr);
+   if(!rec)break;
+   rec->FndAddrLst.Realloc(0);
+  }
  if(this->DySigArr)HeapFree(GetProcessHeap(),0,this->DySigArr);      // TODO: MiniRTL malloc/free ?
 }
 //---------------------------------------------------------------------------
 UINT  GetSigCount(void){return this->StSigNum + this->DySigNum;}
 //---------------------------------------------------------------------------
-PVOID GetSigAddr(char* SigName, UINT Idx)    // By tag or just by index
+PVOID GetSigAddr(char* SigName, UINT SigIdx, UINT AddrIdx)    // By tag or just by index
 {
  if(SigName)  // Idx is for same Tag only
   {
-   if(!Idx)Idx++;   // From 1
+   if(!SigIdx)SigIdx++;   // From 1
    for(UINT ctr=0;;ctr++)
     {
      SSigRec* Rec = this->GetSigRec(ctr); 
      if(!Rec)return nullptr;
-     if(!StrCompareSimple(SigName,Rec->SigName) && !--Idx)return Rec->FoundAddr;
+     if(!StrCompareSimple(SigName,Rec->SigName) && !--SigIdx)return Rec->FndAddrLst.Get(AddrIdx);
     }
   }
- SSigRec* Rec = this->GetSigRec(Idx); 
- return (Rec)?(Rec->FoundAddr):(nullptr);
+ SSigRec* Rec = this->GetSigRec(SigIdx); 
+ return (Rec)?(Rec->FndAddrLst.Get(AddrIdx)):(nullptr);
 }
 //---------------------------------------------------------------------------
-void AddSignature(PBYTE SigData, UINT SigSize, long BoundIdx=-1, UINT MatchIdx=1, char* SigName=nullptr, UINT16 Flags=0)
+void AddSignature(PBYTE SigData, UINT SigSize, UINT16 Flags=0, UINT MatchIdx=1, UINT MatchCtr=-1, long BoundIdx=-1, char* SigName=nullptr)   // MatchIdx=-1: Until end From MatchIdx(Just a very big number)
 {
  if(BoundIdx >= this->GetSigCount())BoundIdx = -1;
  SSigRec* Rec = this->AddSigRec();
- if(!MatchIdx)MatchIdx = 1;   // From 1
- Rec->FoundAddr = nullptr;
- Rec->SigData   = SigData;    // Signatures stored externally
- Rec->MatchIdx  = MatchIdx;
- Rec->BoundIdx  = BoundIdx;
- Rec->SigName   = SigName;
- Rec->SigSize   = SigSize;
- Rec->Flags     = Flags;
+ if(!MatchCtr)MatchCtr = -1;    // 0 is useless here
+ Rec->FndAddrLst.AddrLst = nullptr;
+ Rec->SigData    = SigData;    // Signatures stored externally
+ Rec->MatchIdx   = MatchIdx;
+ Rec->BoundIdx   = BoundIdx;
+ Rec->MatchCtr   = MatchCtr;
+ Rec->SigName    = SigName;
+ Rec->SigSize    = SigSize;
+ Rec->Flags      = Flags;
 }
 //---------------------------------------------------------------------------
 // Backward('R') sigs are useless and unsafe for a range search?
@@ -117,23 +153,19 @@ UINT FindSignatures(PBYTE AddrLo, PBYTE AddrHi, long Step, bool SkipUnreadable=f
  if(!Step)Step = 1;                // Support backwards?
  UINT FoundCtr = 0;
  UINT TotalSig = this->GetSigCount();
-        //         PBYTE TestAddr = AddrLo + 0x002F12C8 - 0x1000;
  while(AddrLo < AddrHi)
   {
-//    if(AddrLo == TestAddr)
-//      Sleep(100);
-
    UINT RdFail = 0;
-   SIZE_T Size = AddrHi - AddrLo; 
+   SIZE_T Size = AddrHi - AddrLo;   
    for(UINT Idx=0;;Idx++)
     {
      SSigRec* Rec = this->GetSigRec(Idx); 
      if(!Rec)break;    // No more signatures
-     if(Rec->FoundAddr)continue;  // Already found
+//     if(Rec->FoundAddr)continue;  // Already found    // Now there may me more tan one addr
      if(Rec->BoundIdx >= 0)
       {
        if(!Rec->BoundPtr)Rec->BoundPtr = this->GetSigRec(Rec->BoundIdx);
-       if(!Rec->BoundPtr->FoundAddr)continue;  // Parent is not yet found
+       if(!Rec->BoundPtr->FndAddrLst.Count())continue;  // Parent is not yet found     // ????????  if(!Rec->BoundPtr->FoundAddr)continue;  
       }
 #ifdef SIGSCANSAFE
      __try
@@ -142,7 +174,18 @@ UINT FindSignatures(PBYTE AddrLo, PBYTE AddrHi, long Step, bool SkipUnreadable=f
        int Match = 0;
        if(Rec->Flags & sfBinary)Match = IsSignatureMatchBin(AddrLo, Size, Rec->SigData, Rec->SigSize, Rec->Flags & sfBackward);
          else Match = IsSignatureMatchStr(AddrLo, Size, (LPSTR)Rec->SigData, Rec->SigSize);
-       if((Match == 1) && !--Rec->MatchIdx){FoundCtr++; Rec->FoundAddr = AddrLo; DBGMSG("Address is %p for %u: %s",AddrLo,Idx,(Rec->SigName)?(Rec->SigName):(""));}
+       if(Match == 1) 
+        {
+         if(Rec->MatchIdx)Rec->MatchIdx--;
+         if(!Rec->MatchIdx && Rec->MatchCtr)        // break on match ctr
+          {
+           FoundCtr += !(bool)Rec->FndAddrLst.Count();       // Count all matches in separate counter?   // May be more than one!  // Add validation of exact number of matches?  // Now it is just that an one match found is counted
+           if(Rec->MatchCtr != (UINT)-1)Rec->MatchCtr--;
+           Rec->FndAddrLst.Add(AddrLo);     
+           DBGMSG("Address is %p for %u: %s",AddrLo,Idx,(Rec->SigName)?(Rec->SigName):(""));
+           if(!Rec->MatchCtr)break;
+          }
+        }
 #ifdef SIGSCANSAFE
       }
       __except(EXCEPTION_EXECUTE_HANDLER)
@@ -175,19 +218,19 @@ static int IsSignatureMatchBin(PBYTE Address, SIZE_T Size, PBYTE BinSig, long Si
    if(SigLen <= 0)return 1;   // End of signature without any mismatch
    BYTE Val = *BinSig; 
    BinSig++; SigLen--;           
-   if(!(Val & 0xF0))  // poDat         // Conditions are sorted by Bit Order
+   if(!(Val & 0xF0))      // poDat         // Conditions are sorted by Bit Order
     {
-     if(*Data != Val)return 0;
+     if(*Data != *BinSig)return 0;
      Size--; Data+=DataDir; BinSig++; SigLen--;
     }
-   else if(Val & poSkp)  // poSkp   // Must come before poRaw (Bit ordering)
+   else if(Val & poSkp)   // poSkp   // Must come before poRaw (Bit ordering)
     { 
      SIZE_T Len = (Val == 0xFF)?(((UINT)*(BinSig++) << 7)|0x7F):(Val & 0x7F);   // If the small counter is full then use an extended one
      if(Len > Size)return -1;   // Out of buffer
      Size -= Len;     
      Data += (DataDir * Len);
     }
-   else if(Val & poRaw)  // poRaw
+   else if(Val & poRaw)   // poRaw
     {
      SIZE_T Len = (Val == 0xFF)?(((UINT)*(BinSig++) << 7)|0x7F):(Val & 0x7F);   // If the small counter is full then use an extended one
      if((Len > Size)||((long)Len > SigLen))return -1;   // Out of buffer
@@ -225,7 +268,7 @@ static int IsSignatureMatchStr(PVOID Address, SIZE_T Size, LPSTR Signature, UINT
   {
    if(!Size)return -1;  // Out of buffer
    if(*Signature == ' ')continue;   // Skip spaces
-   if(*Signature == ';')return 1;      // Start of a comments
+   if(*Signature == ';')return 1;   // Start of a comments
    if(*Signature == '*')            // *SkipNum*    
     {
      UINT Len = 0;
@@ -278,14 +321,14 @@ struct SCodeBlk
 
 struct SPatchRec   // Must be initialized statically!   // Derive from it to save an original data?   
 {
- PBYTE    Addr;   
+// PBYTE    Addr;   
  int      SigIdx;     // -1 if DirectBase
  LONG_PTR Offset;
  long     BoundIdx;
  UINT     FullSize;   // Useful for reallocation
  UINT     CodeBlkNum;
  BYTE     Name[64];
- BYTE     Data[0];  // Array of SCodeBlk
+ BYTE     Data[0];    // Array of SCodeBlk
 };
 
  UINT BrdLo;
@@ -320,30 +363,30 @@ void SetBorders(UINT Lower, UINT Upper)
  this->BrdHi = Upper;
 }
 //---------------------------------------------------------------------------
-UINT AddPatch(char* Name, LONG_PTR Offset, long BoundIdx=-1)   // Negative is from end of data
+UINT AddPatch(LONG_PTR Offset, long BoundIdx=-1, char* Name=nullptr)   // Negative is from end of data
 {
  if(BoundIdx >= this->GetPatchCount())BoundIdx = -1;
  this->PatchCnt++;
  if(!this->Patches)this->Patches = (SPatchRec**)HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,this->PatchCnt*sizeof(PVOID));    // malloc(this->DySigNum*sizeof(SSigRec));
    else this->Patches = (SPatchRec**)HeapReAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,this->Patches,this->PatchCnt*sizeof(PVOID));   //   realloc(DySigArr,this->DySigNum*sizeof(SSigRec));
  SPatchRec*  Patch = (SPatchRec*)HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,sizeof(SPatchRec));   // No code blocks for now
- Patch->Addr       = nullptr;
+// Patch->Addr       = nullptr;
  Patch->Offset     = Offset;
  Patch->BoundIdx   = BoundIdx;
  Patch->SigIdx     = -1;     // -1 if DirectBase
  Patch->FullSize   = sizeof(SPatchRec);   // Useful for reallocation
  Patch->CodeBlkNum = 0;
  UINT NLen = 0;
- for(;Name[NLen] && (NLen < (sizeof(Patch->Name)-1));NLen++)Patch->Name[NLen] = Name[NLen];
+ if(Name){for(;Name[NLen] && (NLen < (sizeof(Patch->Name)-1));NLen++)Patch->Name[NLen] = Name[NLen];}
  Patch->Name[NLen] = 0;
  this->Patches[this->PatchCnt-1] = Patch;
  return this->PatchCnt-1;
 }
 //---------------------------------------------------------------------------
-UINT AddPatch(char* Name, PBYTE SigData, UINT SigSize, UINT SigMIdx=1, long BoundIdx=-1, UINT16 SigFlags=0)
+UINT AddPatch(PBYTE SigData, UINT SigSize, UINT16 SigFlags=0, UINT SigMIdx=1, UINT SigMCtr=-1, long BoundIdx=-1, char* Name=nullptr)   // TODO: Match range(From, To)
 {
  if(BoundIdx >= this->GetPatchCount())BoundIdx = -1;
- UINT PatchIdx = this->AddPatch(Name, 0, BoundIdx);
+ UINT PatchIdx = this->AddPatch(0, BoundIdx, Name);
  SPatchRec* Patch = this->Patches[PatchIdx];
  Patch->SigIdx = this->SigList.GetSigCount();
  if(BoundIdx >= 0)
@@ -351,11 +394,11 @@ UINT AddPatch(char* Name, PBYTE SigData, UINT SigSize, UINT SigMIdx=1, long Boun
    SPatchRec* BPatch = this->Patches[BoundIdx];
    BoundIdx = BPatch->SigIdx;    // Not have to be present   // ???????????????????????????????
   }
- this->SigList.AddSignature(SigData, SigSize, BoundIdx, SigMIdx, (char*)&Patch->Name, SigFlags);
+ this->SigList.AddSignature(SigData, SigSize, SigFlags, SigMIdx, SigMCtr, BoundIdx, (char*)&Patch->Name);
  return PatchIdx;
 }
 //---------------------------------------------------------------------------
-PVOID AddCodeBlock(UINT PatchIdx, long Offset, PVOID Data, UINT Size)
+PVOID AddCodeBlock(UINT PatchIdx, PVOID Data, UINT Size, long Offset=0)
 {
  if(PatchIdx >= this->PatchCnt)return nullptr;
  UINT ExSize = Size + sizeof(SCodeBlk);
@@ -382,35 +425,38 @@ int ApplyPatches(PVOID Data, SIZE_T Size, long Step=1, UINT Flags=0)        // b
  for(UINT ctr=0;ctr < this->PatchCnt;ctr++)
   {
    SPatchRec* Patch = this->Patches[ctr];
-   if(!Patch->Addr) 
+   for(UINT ACtr=0;;ACtr++)
     {
+     PBYTE PAddr = nullptr;
      if(Patch->SigIdx < 0)
       {
-       if(Patch->Offset < 0)Patch->Addr = &((PBYTE)Data)[(LONG_PTR)Size + Patch->Offset];      // Use bound values?
-         else Patch->Addr = &((PBYTE)Data)[Patch->Offset];
+       if(Patch->Offset < 0)PAddr = &((PBYTE)Data)[(LONG_PTR)Size + Patch->Offset];      // Use bound values?
+         else PAddr = &((PBYTE)Data)[Patch->Offset];
       }
-       else Patch->Addr = (PBYTE)this->SigList.GetSigAddr(nullptr,Patch->SigIdx);   // By signature
-    }
-   LOGMSG("Record %p [%p]: %s",Patch->Addr,(Patch->Addr-(PBYTE)Data),&Patch->Name);
-   if(!Patch->Addr)continue;  // Not found
-   SCodeBlk* Blk = (SCodeBlk*)&Patch->Data;
-   for(UINT Idx=0;Idx < Patch->CodeBlkNum;Idx++)   // CodeBlkNum may be 0 if this is just a bound point
-    {
-     PBYTE Addr = &Patch->Addr[Blk->Offset];   // Positive or negative, no validation
-     DWORD PrevProt = 0;
-     LOGMSG("  Patch %u: %p [%p], %08X",Idx,Addr,(Addr-(PBYTE)Data),Blk->Size);
-     if(Flags & pfProtMem){if(!VirtualProtectEx(GetCurrentProcess(),Addr,Blk->Size,PAGE_READWRITE,&PrevProt))return -4;}  
-     memcpy(Addr,&Blk->Data,Blk->Size);
-     if(Flags & pfProtMem){if(!VirtualProtectEx(GetCurrentProcess(),Addr,Blk->Size,PrevProt,&PrevProt))return -5;}  
-     Blk = (SCodeBlk*)((PBYTE)Blk + Blk->Size + sizeof(SCodeBlk));
+       else PAddr = (PBYTE)this->SigList.GetSigAddr(nullptr,Patch->SigIdx, ACtr);   // By signature
+    
+     LOGMSG("Record %p [%p]: %s",PAddr,(PAddr-(PBYTE)Data),&Patch->Name);
+     if(!PAddr)break;  // Not found
+     SCodeBlk* Blk = (SCodeBlk*)&Patch->Data;
+     for(UINT Idx=0;Idx < Patch->CodeBlkNum;Idx++)   // CodeBlkNum may be 0 if this is just a bound point
+      {
+       PBYTE Addr = &PAddr[Blk->Offset];   // Positive or negative, no validation
+       DWORD PrevProt = 0;
+       LOGMSG("  Patch %u: %p [%p], %08X",Idx,Addr,(Addr-(PBYTE)Data),Blk->Size);
+       if(Flags & pfProtMem){if(!VirtualProtectEx(GetCurrentProcess(),Addr,Blk->Size,PAGE_READWRITE,&PrevProt))return -4;}  
+       memcpy(Addr,&Blk->Data,Blk->Size);
+       if(Flags & pfProtMem){if(!VirtualProtectEx(GetCurrentProcess(),Addr,Blk->Size,PrevProt,&PrevProt))return -5;}  
+       Blk = (SCodeBlk*)((PBYTE)Blk + Blk->Size + sizeof(SCodeBlk));
+      }
+     if(Patch->SigIdx < 0)break;   
     }
   } 
  return 0;
 }
 //--------------------------------------------------------------------------- 
-int LoadPatchScript(LPSTR Script, UINT ScriptSize=0)
+int LoadPatchScript(LPSTR Script, UINT ScriptSize=0)          // TODO: SigMCtr
 {
- enum EParState {psNone, psComment, psBordNum, psOffsNum, psCodeBlk, psPatchName, psSigIndex, psPatchBase, psPatchData, psPatchSig};
+ enum EParState {psNone, psComment, psBordNum, psOffsNum, psCodeBlk, psPatchName, psSigIndex, psSigCount, psPatchBase, psPatchData, psPatchSig};
 
  if(this->ScBuf)HeapFree(GetProcessHeap(),0,this->ScBuf); 
  if(!ScriptSize)ScriptSize = lstrlenA(Script);
@@ -423,6 +469,7 @@ int LoadPatchScript(LPSTR Script, UINT ScriptSize=0)
  bool BoundPtch = false;
  long CodeOffs  = 0;
  UINT SigIdx    = 0;
+ UINT SigCtr    = -1;
  UINT Bord[2]   = {0,0};  // +, -
  BYTE Name[64];
  for(;;)
@@ -469,10 +516,11 @@ int LoadPatchScript(LPSTR Script, UINT ScriptSize=0)
      case psCodeBlk:     // Usual Str signature
        {
         UINT CodeLen = 0;
-        for(;(ScBuf[CodeLen] >= ' ') && (ScBuf[CodeLen] != ';');CodeLen++);
+        UINT ByteLen = 0;
+        for(;(ScBuf[CodeLen] >= ' ') && (ScBuf[CodeLen] != ';');CodeLen++)ByteLen += (ScBuf[CodeLen] != ' ');
         while(ScBuf[CodeLen-1] == ' ')CodeLen--;
-        UINT ByteLen = CodeLen / 2;  // In bytes
-        PBYTE Code = (PBYTE)this->AddCodeBlock(CurPatch, CodeOffs, nullptr, ByteLen);
+        ByteLen = ByteLen / 2;  // In bytes
+        PBYTE Code = (PBYTE)this->AddCodeBlock(CurPatch, nullptr, ByteLen, CodeOffs);
         HexStrToByteArray(Code, (LPSTR)ScBuf, ByteLen);
         ScBuf += CodeLen;
         State  = psNone;
@@ -497,6 +545,18 @@ int LoadPatchScript(LPSTR Script, UINT ScriptSize=0)
         long Size = 0;
         SigIdx = DecStrToNum<UINT>((LPSTR)ScBuf, &Size);
         ScBuf += Size;
+        while(*ScBuf && (*ScBuf == ' '))Size++;
+        if(*ScBuf == '-'){ScBuf++; State = psSigCount; break;}
+        while(*ScBuf && (*ScBuf != ':'))Size++;
+        ScBuf++;
+        State  = psPatchSig;
+       }
+      break;
+     case psSigCount:
+       {
+        long Size = 0;
+        SigCtr = DecStrToNum<UINT>((LPSTR)ScBuf, &Size);
+        ScBuf += Size;
         while(*ScBuf && (*ScBuf != ':'))Size++;
         ScBuf++;
         State  = psPatchSig;
@@ -511,7 +571,7 @@ int LoadPatchScript(LPSTR Script, UINT ScriptSize=0)
         if(*ScBuf == '$'){ScBuf++; Offset = HexStrToNum<LONG_PTR>((LPSTR)ScBuf, &Size);}
           else Offset = DecStrToNum<LONG_PTR>((LPSTR)ScBuf, &Size);
         Offset  *= Mult;
-        CurPatch = this->AddPatch((char*)&Name, Offset, (BoundPtch?((int)this->GetPatchCount()-1):(-1))); 
+        CurPatch = this->AddPatch(Offset, (BoundPtch?((int)this->GetPatchCount()-1):(-1)), (char*)&Name); 
         ScBuf   += Size;
         State    = psNone;      
        }
@@ -528,7 +588,7 @@ int LoadPatchScript(LPSTR Script, UINT ScriptSize=0)
         UINT SigLen = 0;
         for(;(ScBuf[SigLen] >= ' ') && (ScBuf[SigLen] != ';');SigLen++);
         while(ScBuf[SigLen-1] == ' ')SigLen--;
-        CurPatch = this->AddPatch((char*)&Name, ScBuf, SigLen, SigIdx, (BoundPtch?((int)this->GetPatchCount()-1):(-1)));    // Set Patch Index for next code blocks
+        CurPatch = this->AddPatch(ScBuf, SigLen, 0, SigIdx, SigCtr, (BoundPtch?((int)this->GetPatchCount()-1):(-1)), (char*)&Name);    // Set Patch Index for next code blocks    // Flags is STRING signatures
         ScBuf   += SigLen;
         State    = psNone;
        }

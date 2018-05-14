@@ -136,12 +136,13 @@ public:
 #ifndef ctNoProtStack
 __forceinline ~ctCplEncryptedString()
 {
- for(UINT32 t = 0; t < sizeof...(Idx); t++)this->Array[t] = ~(Key * (ExKey * (t+1)));         // Clear stack 
- volatile UINT tmp = this->Array[0];  // The only way to not let it be thrown out by optimizer
+ for(volatile UINT32 t = 0; t < sizeof...(Idx); t++)this->Array[t] = 0;  // Zeroes look less suspicious on stack and this simple fill is much faster with some vrtualizing protector          
+// for(volatile UINT32 t = 0; t < sizeof...(Idx); t++)this->Array[t] = ((Key * (UINT)((short)this)) >> ((t * ExKey) & 7));         // Clear stack     // 'for(UINT32 t = 0; t < sizeof...(Idx); t++)this->Array[t] = ~(Key * (ExKey * (t+1)));'  produces an overcomplicated SSE2 usage!
+// volatile UINT tmp = this->Array[0];  // The only way to not let it be thrown out by optimizer
 }
 #endif
 //------------------------------		
-C* Decrypt(void)  // Run-time decryption   // There will be a copy of this function(CALL) for each encrypted string
+__forceinline C* Decrypt(void)  // Run-time decryption   // There will be a copy of this function(CALL) for each encrypted string
 {
  for(UINT32 t = 0; t < sizeof...(Idx); t++)this->Array[t] = ctCplDecryptCharBlk(this->Array[t], t);   // Decrypt blocks of chars           
 // ((C*)&this->Value)[(((sizeof...(Idx))*sizeof(void*)) / sizeof(C))-1] = 0; // Force a terminating NULL (In case of failed decryption)
@@ -163,7 +164,7 @@ C* Decrypt(void)  // Run-time decryption   // There will be a copy of this funct
 #define ctCENCSW(Str) ctCplEncryptedString<wchar_t, sizeof(Str)/sizeof(wchar_t), ctEncKey, ctEncKeyEx, ctCplIndexes<ctAlignAsPtr(sizeof(Str))>::Result>(Str)   // Str size includes a terminating NULL
 
 #define ctENCSA(Str) (ctCENCSA(Str).Decrypt())   // Str size includes a terminating NULL   
-#define ctENCSW(Str) (ctENCSW(Str).Decrypt())    // Str size includes a terminating NULL
+#define ctENCSW(Str) (ctCENCSW(Str).Decrypt())   // Str size includes a terminating NULL
 #else
 #define ctOENCSA(Str, Name) ctStrHldr<char, ctCplIndexes<sizeof(Str)>::Result> Name(Str)   
 #define ctOENCSW(Str, Name) ctStrHldr<wchar_t, ctCplIndexes<sizeof(Str)/sizeof(wchar_t)>::Result> Name(Str)   
