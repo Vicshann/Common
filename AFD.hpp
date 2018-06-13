@@ -185,5 +185,23 @@ struct SAFD_INFO_CONN      // 0x28(Two addr?) - This structure is in InputBuffer
  UCHAR  AddrLst[0];   // PH,PH,A0,A1,A2,A3
 };
 
+struct SAFD_WSABUF
+{
+ SIZE_T Size;
+ PBYTE  Data;
+};
+
+struct SAFD_INFO_BUFF   // PTR, 8, 8 on x64
+{
+/* PVOID Array;
+ SIZE_T BufCnt;
+ SIZE_T Flags;  */
+ SAFD_WSABUF* BufArray;
+ DWORD BufCnt;
+ DWORD AfdFlags;
+ DWORD TdiFlags;
+ DWORD Unk;
+};
+
 #pragma pack(pop)
 //=====================================================================================================================

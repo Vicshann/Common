@@ -1,4 +1,6 @@
 
+#pragma once
+
 #ifndef SHA1H
 #define SHA1H
 
@@ -54,17 +56,10 @@ static UINT_8 HalfToHex(UINT_8 Half, bool UpCase)
  return ((int)!UpCase * 0x20) + 0x41 + (Half - 10);
 }
 //------------------------------------------------------------------------------
-static void mcopy(void* dst, void* src, unsigned int len)
-{
- for(unsigned int ctr=0,tot=len/sizeof(void*);ctr < tot;ctr++,((void**&)dst)++,((void**&)src)++)*((void**)dst) = *((void**)src);
- for(unsigned int ctr=0,tot=len%sizeof(void*);ctr < tot;ctr++,((char*&)dst)++,((char*&)src)++)*((char*)dst) = *((char*)src);
-}
-//------------------------------------------------------------------------------
 void Transform(UINT_32* pState, UINT_8* pBuffer)
 {
  UINT_32 a = pState[0], b = pState[1], c = pState[2], d = pState[3], e = pState[4];
-
- CSHA1::mcopy(&m_block.c, pBuffer, 64);
+ memcpy(&m_block.c, pBuffer, 64);
 
  // 4 rounds of 20 operations each, loop unrolled
  S_R0(a,b,c,d,e, 0); S_R0(e,a,b,c,d, 1); S_R0(d,e,a,b,c, 2); S_R0(c,d,e,a,b, 3);
@@ -124,13 +119,13 @@ void Update(unsigned char* pbData, unsigned int uLen)
  if((j + uLen) > 63)
   {
    i = 64 - j;
-   CSHA1::mcopy(&m_buffer[j], pbData, i);
+   memcpy(&m_buffer[j], pbData, i);
    this->Transform(m_state, m_buffer);
    for(;(i + 63) < uLen; i += 64)this->Transform(m_state, &pbData[i]);
    j = 0;
   }
    else i = 0;
- if((uLen - i) != 0)CSHA1::mcopy(&m_buffer[j], &pbData[i], uLen - i);
+ if((uLen - i) != 0)memcpy(&m_buffer[j], &pbData[i], uLen - i);
 }
 //------------------------------------------------------------------------------
 void Final(void)
@@ -149,7 +144,7 @@ void GetHashStr(char* str, bool UpCase) // str size must be >= 65 bytes!
 {
  for(int ctr =0;ctr < HashSize;ctr++,str+=2)
   {
-   BYTE val = m_digest[ctr];
+   UINT_8 val = m_digest[ctr];
    str[1] = HalfToHex(val & 0x0F, UpCase);
    str[0] = HalfToHex(val >> 4, UpCase);
   }

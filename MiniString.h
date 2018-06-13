@@ -152,13 +152,14 @@ public:
 //----------------------
  LPSTR cAppend(const char* str, int Len=0)
  {
-  if(!str /*|| !str[0]*/)return NULL; // str[0] - Allow for: str = "";
-  if(!Len)Len = lstrlen(str);      // Will compiler inline this function and remove this condition if it known true (when default used)?
+  if(!Len && str)Len = lstrlen(str);      // Will compiler inline this function and remove this condition if it known true (when default used)?
+  if(!Len)return this->Data; 
   if(!this->ResizeFor(Len+this->SLength))return NULL;
-  memcpy(&this->Data[this->SLength],str,Len);    //       strcpy(&this->Data[this->SLength],str);
+  LPSTR Dst = &this->Data[this->SLength];
+  if(str)memcpy(Dst,str,Len);    //       strcpy(&this->Data[this->SLength],str);
   this->SLength += Len;
   this->Data[this->SLength] = 0;
-  return this->Data;
+  return Dst;    // Returns ptr to beginning of an appended string
  }
 //----------------------
 
@@ -195,13 +196,14 @@ public:
  LPSTR cInsert(const char* str, UINT Pos, UINT Len=0)
  {
   if(Pos >= this->SLength)return this->cAppend(str, Len);   // Or just return a NULL instead?
-  if(!str /*|| !str[0]*/)return NULL; // str[0] - Allow for: str = "";
-  if(!Len)Len = lstrlen(str);      // Will compiler inline this function and remove this condition if it known true (when default used)?
+  if(!Len && str)Len = lstrlen(str);      // Will compiler inline this function and remove this condition if it known true (when default used)?
+  if(!Len)return this->Data; 
   if(!this->ResizeFor(Len+this->SLength))return NULL;
   movemem((PBYTE)&this->Data[Pos+Len],(PBYTE)&this->Data[Pos],(this->SLength-Pos)+1);  // +1 for a Zero term char   // memmove
-  memmove(&this->Data[Pos],str,Len);
+  LPSTR Dst = &this->Data[Pos];
+  if(str)memmove(Dst,str,Len);
   this->SLength += Len;
-  return this->Data;
+  return Dst;  // Returns ptr to beginning of an inserted string
  }
 //----------------------
  bool Equal(const CMiniStr &str)
@@ -304,31 +306,15 @@ const CMiniStr& SetLength(UINT NewLen, char fill=0x20)   // NOTE: Generates a hu
 //----------------------
 const CMiniStr& AddChars(char val, int Count=1)     // return CONST?
 {
- BYTE sadd[256];       // A little buffer :)
- //if(Count < 0)Count = -Count;  // Allow negative (Some delta, without Min or Max) ?
- while(Count > 0)
-  {
-   int Idx   = 0;
-   for(;Count && (Idx < (sizeof(sadd)-1));Idx++,Count--)sadd[Idx] = val;
-   sadd[Idx] = 0;
-   this->cAppend((LPSTR)&sadd,Idx);  // Do not check if 'sadd' is empty?
-  }
- if(this->Data)this->Data[this->SLength] = 0;
+ LPSTR str = this->cAppend(LPSTR(0), Count);
+ memset(str,val,Count);
  return *this;
 }
 //----------------------
 const CMiniStr& InsertChars(char val, int Pos, int Count=1)     // return CONST?
 {
- BYTE sadd[256];       // A little buffer :)
- //if(Count < 0)Count = -Count;  // Allow negative (Some delta, without Min or Max) ?
- while(Count > 0)
-  {
-   int Idx   = 0;
-   for(;Count && (Idx < (sizeof(sadd)-1));Idx++,Count--)sadd[Idx] = val;
-   sadd[Idx] = 0;
-   this->cInsert((LPSTR)&sadd,Pos,Idx);  // Do not check if 'sadd' is empty?
-  }
- if(this->Data)this->Data[this->SLength] = 0;
+ LPSTR str = this->cInsert(LPSTR(0), Pos, Count);
+ memset(str,val,Count);
  return *this;
 }
 //----------------------
@@ -479,7 +465,7 @@ int Count(BYTE chr, int from=0)
    return (Result == FileSize);
   }
 //----------------------
- bool ToFile(LPSTR FileName)
+ bool ToFile(PVOID FileName)
   {
    HANDLE hFile;
    if(!((PBYTE)FileName)[1])hFile = CreateFileW((PWSTR)FileName,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);

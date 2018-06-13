@@ -11,6 +11,10 @@
 #pragma warning(push)
 #pragma warning(disable:4200)     // Overflow in a key transformation is expected
 #pragma warning(disable:4244) 
+#pragma warning(disable:4311)     // Type cast (WinAPI compatibility)
+#pragma warning(disable:4312)     // Type cast (WinAPI compatibility)
+#pragma warning(disable:4302)     // Type cast (WinAPI compatibility)
+#pragma warning(disable:4244)     // Type cast (WinAPI compatibility)
 
 #define PLATMEMALIGN    0x00001000
 #define PLATMEMALIGNMSK ~(PLATMEMALIGN-1)     // TODO: Move to 'platform.hpp'
@@ -661,7 +665,7 @@ template<typename T> static bool _stdcall TFindImportRecord(PBYTE ModuleBase, LP
  for(DWORD tctr=0;Import[tctr].AddressTabRVA;tctr++)
   {
    LPSTR ModName = (LPSTR)&ModuleBase[(Raw)?(TRvaToFileOffset<T>(ModuleBase,Import[tctr].ModuleNameRVA)):(Import[tctr].ModuleNameRVA)];
-   if(!IsNamesEqualIC(ModName,LibName))continue;
+   if(LibName && !IsNamesEqualIC(ModName,LibName))continue;     // Can search for a proc of any module  
    SImportThunk<T>* Table = (SImportThunk<T>*)&((BYTE*)ModuleBase)[(Raw)?(TRvaToFileOffset<T>(ModuleBase,Import[tctr].LookUpTabRVA)):(Import[tctr].LookUpTabRVA)];
    SImportThunk<T>* LtRVA = (SImportThunk<T>*)&((BYTE*)ModuleBase)[(Raw)?(TRvaToFileOffset<T>(ModuleBase,Import[tctr].AddressTabRVA)):(Import[tctr].AddressTabRVA)];
    if(ProcName == LibName)    // Secret :)   // If we need just any address inside that module
@@ -756,6 +760,7 @@ template<typename T, bool Raw=false> static PVOID _stdcall TGetProcedureAddress(
 //---------------------------------------------------------------------------
 static PVOID _stdcall GetProcedureAddress(PVOID ModuleBase, LPSTR ApiName, LPSTR* Forwarder=NULL, PVOID* ProcEntry=NULL) 
 {
+// DBGMSG("ApiName: %s",ApiName);
  if(!IsValidPEHeader(ModuleBase))return NULL;
  if(IsValidModuleX64(ModuleBase))return TGetProcedureAddress<PETYPE64>((PBYTE)ModuleBase,ApiName,Forwarder,ProcEntry); 
  return TGetProcedureAddress<PETYPE32>((PBYTE)ModuleBase,ApiName,Forwarder,ProcEntry); 
@@ -1194,7 +1199,31 @@ template<typename T> static int _stdcall TSectionsProtectRW(PBYTE ModuleBase, bo
  return 0;
 }
 //---------------------------------------------------------------------------
+static DWORD _stdcall CalcChecksumPE(PBYTE ModuleBase, UINT Size)
+{
+ DOS_HEADER *DosHdr = (DOS_HEADER*)ModuleBase;
+ WIN_HEADER<PECURRENT> *WinHdr = (WIN_HEADER<PECURRENT>*)&(((BYTE*)ModuleBase)[DosHdr->OffsetHeaderPE]);
 
+ unsigned long long checksum = 0;
+ unsigned long long top = 0xFFFFFFFF;
+ top++;
+
+ DWORD CSimOffs = (PBYTE)&WinHdr->OptionalHeader.FileCheckSum - ModuleBase;
+ PDWORD DataPtr = (PDWORD)ModuleBase;
+ for(UINT idx=0;idx < Size;idx += 4)
+  {
+   if(idx == CSimOffs)continue;   //Skip "CheckSum" DWORD		
+   checksum = (checksum & 0xffffffff) + *(PDWORD)&ModuleBase[idx] + (checksum >> 32);     // Calculate checksum
+   if(checksum > top)checksum = (checksum & 0xffffffff) + (checksum >> 32);               // TODO: Without 64bit shift
+  }
+ //Finish checksum
+ checksum  = (checksum & 0xffff) + (checksum >> 16);
+ checksum  = checksum + (checksum >> 16);
+ checksum  = checksum & 0xffff;
+ checksum += Size;
+ return checksum;
+}
+//---------------------------------------------------------------------------
 
 /*UINT  _stdcall GetEntryPoint(PVOID Header);
 void  _stdcall SetEntryPoint(PVOID Header, UINT Entry);

@@ -33,11 +33,11 @@ void (_cdecl *pLogProc)(LPSTR, UINT) = DummyLogProc;
 //---------------------------------------------------------------------------
 void*  __cdecl memmove(void* _Dst, const void* _Src, size_t _Size)
 {
-  if((char*)_Dst <= (char*)_Src)return memcpy(_Dst,_Src,_Size);
-  size_t ALen = _Size/sizeof(size_t);
-  size_t BLen = _Size%sizeof(size_t);
-  for(size_t ctr=_Size-1;BLen > 0;ctr--,BLen--)((char*)_Dst)[ctr] = ((char*)_Src)[ctr]; 
-  for(size_t ctr=ALen-1;ALen > 0;ctr--,ALen--) ((size_t*)_Dst)[ctr] = ((size_t*)_Src)[ctr];  
+ if((char*)_Dst <= (char*)_Src)return memcpy(_Dst,_Src,_Size);
+ size_t ALen = _Size/sizeof(size_t);
+ size_t BLen = _Size%sizeof(size_t);
+ for(size_t ctr=_Size-1;BLen > 0;ctr--,BLen--)((char*)_Dst)[ctr] = ((char*)_Src)[ctr]; 
+ for(size_t ctr=ALen-1;ALen > 0;ctr--,ALen--) ((size_t*)_Dst)[ctr] = ((size_t*)_Src)[ctr];  
  return _Dst;
 } 
 //---------------------------------------------------------------------------
@@ -50,9 +50,13 @@ void*  __cdecl memcpy(void* _Dst, const void* _Src, size_t _Size)
  return _Dst;
 } 
 //---------------------------------------------------------------------------
-void*  __cdecl memset(void* _Dst, int _Val, size_t _Size)
+void*  __cdecl memset(void* _Dst, int _Val, size_t _Size)      // TODO: Aligned, SSE by MACRO
 {
- for(size_t ctr=0;ctr<_Size;ctr++)((PBYTE)_Dst)[ctr] = _Val;
+ size_t ALen = _Size/sizeof(size_t);
+ size_t BLen = _Size%sizeof(size_t);
+ size_t DVal = (size_t)_Val * 0x0101010101010101;         // Multiply by 0x0101010101010101 to copy the lowest byte into all other bytes
+ for(size_t ctr=0;ctr < ALen;ctr++)((size_t*)_Dst)[ctr] = DVal; 
+ for(size_t ctr=(ALen*sizeof(size_t));ctr < _Size;ctr++)((char*)_Dst)[ctr] = DVal;  
  return _Dst;
 } 
 //---------------------------------------------------------------------------
@@ -60,11 +64,14 @@ int    __cdecl memcmp(const void* _Buf1, const void* _Buf2, size_t _Size) // '(*
 {
  unsigned char* BufA = (unsigned char*)_Buf1;
  unsigned char* BufB = (unsigned char*)_Buf2; 
- for(;_Size >= sizeof(size_t); _Size-=sizeof(size_t), BufA+=sizeof(size_t), BufB+=sizeof(size_t)){if(*((size_t*)BufA) != *((size_t*)BufB))return (*((size_t*)BufA) - *((size_t*)BufB));}  // Enters here only if Size >= sizeof(ULONG)
- for(;_Size > 0; _Size--, BufA++, BufB++)
+ for(;_Size >= sizeof(size_t); _Size-=sizeof(size_t), BufA+=sizeof(size_t), BufB+=sizeof(size_t))  // Enters here only if Size >= sizeof(ULONG)
+  {
+   if(*((size_t*)BufA) != *((size_t*)BufB))return (*((size_t*)BufA) - *((size_t*)BufB));
+  }  
+ for(;_Size > 0; _Size--, BufA++, BufB++)  // Enters here only if Size > 0
   {
    if(*((unsigned char*)BufA) != *((unsigned char*)BufB)){return (*((unsigned char*)BufA) - *((unsigned char*)BufB));}
-  }			   // Enters here only if Size > 0
+  }			   
  return 0; 
 } 
 //---------------------------------------------------------------------------
@@ -2087,7 +2094,7 @@ HMODULE _stdcall FindModuleByExpName(LPSTR ModuleName)              // For modul
  return NULL;
 }
 //---------------------------------------------------------------------------
-bool _stdcall AssignFilePath(LPSTR DstPath, LPSTR BasePath, LPSTR FilePath)
+bool _stdcall AssignFilePath(LPSTR DstPath, LPSTR BasePath, LPSTR FilePath)  // TODO: Should return length
 {
  if(!FilePath || !FilePath[0])return false;
  if(FilePath[1] != ':') 
@@ -2150,5 +2157,33 @@ int _stdcall BinaryPackToBlobStr(LPSTR ApLibPath, LPSTR SrcBinPath, LPSTR OutBin
  lstrcpyA(GetFileExt((LPSTR)&BPath),"bin");
  Packed.ToFile((LPSTR)&BPath);
  return 0;
+}
+//------------------------------------------------------------------------------------------------------------
+// Returns offset to a next Element
+UINT _stdcall NextItemASN1(PBYTE DataPtr, PBYTE* Body, PBYTE Type, UINT* Size)
+{
+ if(!*DataPtr)return 0;    // No more items
+ *Body = DataPtr;
+ *Type = *(DataPtr++);
+ UINT Len = *(DataPtr++);
+ if(Len & 0x80)
+  {
+   int ctr = Len & 0x7F;
+   for(Len = 0;ctr > 0;ctr--)Len = (Len << 8) | *(DataPtr++);
+  }
+ UINT Res = (DataPtr - *Body) + Len;
+ *Size = Len;
+ *Body = DataPtr;
+ return Res;
+}
+//------------------------------------------------------------------------------------------------------------
+int _stdcall FormatDateForHttp(SYSTEMTIME* st, LPSTR DateStr)
+{
+ LCID lcidEnUs = MAKELCID(MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US), SORT_DEFAULT);
+ int olen = GetDateFormatA(lcidEnUs, 0, st, "ddd, dd MMM yyyy", DateStr, MAX_PATH);     // Wed, 27 Sep 2017 14:55:07 GMT
+ DateStr[--olen] = 0x20;
+ olen += GetTimeFormatA(lcidEnUs, 0, st, "HH:mm:ss", &DateStr[++olen], MAX_PATH); 
+ lstrcatA(DateStr, " GMT");
+ return olen+4;
 }
 //------------------------------------------------------------------------------------------------------------

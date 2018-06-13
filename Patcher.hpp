@@ -225,7 +225,8 @@ static int IsSignatureMatchBin(PBYTE Address, SIZE_T Size, PBYTE BinSig, long Si
     }
    else if(Val & poSkp)   // poSkp   // Must come before poRaw (Bit ordering)
     { 
-     SIZE_T Len = (Val == 0xFF)?(((UINT)*(BinSig++) << 7)|0x7F):(Val & 0x7F);   // If the small counter is full then use an extended one
+     SIZE_T Len = (Val == 0xFF)?(((UINT)*(BinSig++) << 7)|0x7F):(Val & 0x7F);   // If the small counter is full then use an extended one  
+     Len++;   // No zero Counter
      if(Len > Size)return -1;   // Out of buffer
      Size -= Len;     
      Data += (DataDir * Len);
@@ -233,6 +234,7 @@ static int IsSignatureMatchBin(PBYTE Address, SIZE_T Size, PBYTE BinSig, long Si
    else if(Val & poRaw)   // poRaw
     {
      SIZE_T Len = (Val == 0xFF)?(((UINT)*(BinSig++) << 7)|0x7F):(Val & 0x7F);   // If the small counter is full then use an extended one
+     Len++;   // No zero Counter
      if((Len > Size)||((long)Len > SigLen))return -1;   // Out of buffer
      for(;Len;Len--,Size--,BinSig++,SigLen--,Data+=DataDir){if(*Data != *BinSig)return 0;}
     }

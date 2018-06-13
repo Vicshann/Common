@@ -47,7 +47,7 @@ BYTE Flags;
 
 class CJSonItem     // OPTIMIZE: Align Name sizes to CPU data size (x86/x64) and compare ad these data blocks
 {
-static const DWORD BINSIG = '\0NSB';
+static const DWORD BINSIG = 'NSIB';   // '\0NSB'
 union CJSonVal
 {
  bool 		BoolVal;
@@ -115,14 +115,28 @@ private:
    (*str)[Len] = 0;
   }
 //--------------
- static void EncryptDecrypt(PBYTE data, UINT Size)
+ static void BinEncrypt(PBYTE data, UINT Size, BYTE Key)
   {
-   DWORD eval = BINSIG;
+   BYTE Key2 = (Size & 0xFF) * ((Size >> 8) & 0xFF);
    for(UINT ctr=0;ctr<Size;ctr++)
 	{
+     BYTE VSu = ((ctr & 0x7E) * Key2)+ctr;
 	 BYTE val = data[ctr];
-	 val  = ~val;
-	 val ^= ((PBYTE)&eval)[ctr % 3];
+	 val  = ~(val+Key) ^ Key2;
+     val  = (ctr & 1)?(val-VSu):(val+VSu);
+	 data[ctr] = val;
+	}
+  }
+//--------------
+ static void BinDecrypt(PBYTE data, UINT Size, BYTE Key)
+  {
+   BYTE Key2 = (Size & 0xFF) * ((Size >> 8) & 0xFF);
+   for(UINT ctr=0;ctr<Size;ctr++)
+	{
+     BYTE VSu = ((ctr & 0x7E) * Key2)+ctr;
+	 BYTE val = data[ctr];
+     val  = (ctr & 1)?(val+VSu):(val-VSu);
+     val  = ~(val ^ Key2) - Key;
 	 data[ctr] = val;
 	}
   }
@@ -626,7 +640,7 @@ public:
   }
 
 //--------------
- int FromString(const CMiniStr &str, UINT Flags=coNone)
+ int FromString(const CMiniStr &str, UINT Flags=coNone, BYTE DecKey=0)
   {
    if(str.Length() < 3)return -1;
    this->Cleanup(true);
@@ -634,7 +648,7 @@ public:
    int btype = IsBinaryEncrypted(str.c_data());
    if(btype >= 0)
 	{
-	 if(btype == 1)EncryptDecrypt(&str.c_data()[4], str.Length()-4); // NOTE: Decrypts until end of the string
+	 if(btype == 1)BinDecrypt(&str.c_data()[4], str.Length()-4, DecKey); // NOTE: Decrypts until end of the string
      soffs = EntityFromBinary(*(CMiniStr*)&str, 4);            // Const hack!
 	}
 	 else soffs = -this->EntityFromString(*(CMiniStr*)&str, Flags, 0);  // Const hack!
@@ -736,13 +750,8 @@ public:
 //---------------------------------------------------------------------------
  static int _fastcall IsBinaryEncrypted(PBYTE bindat)  // -1 = , 0 = Not Encrypted
   {
-   DWORD Flg = *((PDWORD)bindat);
-   BYTE  Enc = (Flg >> 24);
-   if(((Flg & 0x00FFFFFF) == BINSIG)&&(Enc < 2))
-	{
-	 if(Enc == 1)return 1;    // Encrypted
-	 return 0;   // Not encrypted
-	}
+   if(*((PDWORD)bindat) == BINSIG)return 0;   // Not encrypted
+   if((*((PDWORD)bindat) & 0x80808080)==0x80808080)return 1;  // Encrypted
    return -1; // Not a Binary
   }
 //---------------------------------------------------------------------------
@@ -1074,17 +1083,17 @@ static CMiniStr _fastcall NormalStrToJsonStr(LPCSTR str, int len=0, bool nouc=fa
    return offset;
   }
 //--------------
- UINT ToBinary(CMiniStr &str, bool encrypt=false)
+ UINT ToBinary(CMiniStr &str, BYTE EncKey=0)
   {
    UINT cptr = str.Length();
    str.AddChars(0,4);
    *((PDWORD)&str.c_data()[cptr]) = BINSIG;
    UINT FullSize = this->EntityToBinary(str, str.Length());
-   if(encrypt)
+   if(EncKey)
 	{
 	 PBYTE dptr = str.c_data();
-	 dptr[cptr+3] = 1;  // Encryption flag
-	 EncryptDecrypt(&dptr[cptr+4], str.Length()-cptr+4);
+	 *(PDWORD)&dptr[cptr] = (DWORD)this | 0x80808080;  // Encryption flag on a random Signature
+	 BinEncrypt(&dptr[cptr+4], str.Length()-(cptr+4), EncKey);
 	}
    return FullSize;
   }

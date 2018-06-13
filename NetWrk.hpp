@@ -28,6 +28,7 @@
 #include "gzip.h"
 #endif
 //#include "sha.h"
+#include "StrUtils.hpp"
 #include "Utils.h"
 #include "MiniString.h"
 #include "Json.h"
@@ -257,7 +258,7 @@ int GetResponse(CMiniStr& Rsp)
 int GetResponseContent(CMiniStr& Rsp, CMiniStr& Content)    // TODO: Decode Url encoded content?
 {
  Content.Clear();
- if((Rsp.Length() < 5) || (StrCompareSimpleIC("HTTP/", Rsp.c_str()) != 0)){Content = Rsp; return 1;}
+ if((Rsp.Length() < 5) || (StrCompareSimpleIC("HTTP/", Rsp.c_str()) >= 0)){Content = Rsp; return 1;}
  int epos = GetSubStrOffsSimpleIC("\r\n\r\n", (CHAR*)Rsp.c_data(), 0, Rsp.Length());
 // int rpos = GetSubStrOffsSimpleIC("200 OK", (CHAR*)Rsp.c_data(), 0, (epos > 0)?(epos):(Rsp.Length()));
 // if(rpos < 0){LOGMSG("No '200 OK' in HTTP response header(Size=%u)!",Rsp.Length());}

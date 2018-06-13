@@ -32,6 +32,9 @@
 //#include "crc32.h"
 //#include "sha256.h"
 
+#pragma warning(push)
+#pragma warning(disable:4244)     // Type cast (WinAPI compatibility)
+
 //---------------------------------------------------------------------------
 #define PATHDLMR 0x2F
 #define PATHDLML 0x5C
@@ -148,6 +151,8 @@ bool _stdcall AssignFilePath(LPSTR DstPath, LPSTR BasePath, LPSTR FilePath);
 HANDLE WINAPI CreateFileX(PVOID lpFileName,DWORD dwDesiredAccess,DWORD dwShareMode,LPSECURITY_ATTRIBUTES lpSecurityAttributes,DWORD dwCreationDisposition,DWORD dwFlagsAndAttributes,HANDLE hTemplateFile);
 void _stdcall ReverseBytes(PBYTE Array, UINT Size);
 int _stdcall BinaryPackToBlobStr(LPSTR ApLibPath, LPSTR SrcBinPath, LPSTR OutBinPath, BYTE Key);
+UINT _stdcall NextItemASN1(PBYTE DataPtr, PBYTE* Body, PBYTE Type, UINT* Size);
+int _stdcall FormatDateForHttp(SYSTEMTIME* st, LPSTR DateStr);
 //---------------------------------------------------------------------------
 
 
@@ -411,40 +416,6 @@ template<typename O, typename T> O _fastcall HexStrToNum(T Str, long* Size=nullp
  return x;
 }
 //---------------------------------------------------------------------------
-
-
-static _inline BYTE _fastcall CharLowSimple(BYTE val){return (((val >= 'A')&&(val <= 'Z'))?(val + 0x20):(val));}    // TODO: Use lambda in template (But no BDS 2006 then :( )
-template<typename A, typename B> int GetSubStrOffsSimpleIC(A StrVal, B StrBase, UINT Offs=0, UINT Len=0)   // NOTE: Keep usage of WinAPI to a minimum and try to support both CHAR and WCHAR
-{
- if(!StrBase || !StrVal || !*StrVal || (Offs > Len))return -2;
- for(int voffs=0;StrBase[Offs];Offs++)
-  {
-   if(CharLowSimple(StrBase[Offs]) != CharLowSimple(StrVal[voffs]))voffs = 0;  // Reset scan
-    else { voffs++; if(!StrVal[voffs])return Offs-voffs+1; }  // Exit if Full sub str match found        
-  }
- return -1;
-}
-//--------------------------------------------------------------------------- 
-template<typename A, typename B> bool IsContainSubStrSimpleIC(B StrBase, A StrVal){return (GetSubStrOffsSimpleIC(StrVal, StrBase) >= 0);}
-template<typename A, typename B> int  StrCompareSimpleIC(A StrValA, B StrValB)  // Not exactly standart!
-{
- if(!StrValA || !StrValB)return -1;
- for(int voffs=0;;voffs++)
-  {
-   if(!StrValA[voffs])return 0;     
-   if(CharLowSimple(StrValA[voffs]) != CharLowSimple(StrValB[voffs]))return voffs+1;
-  }
-}
-template<typename A, typename B> int StrCompareSimple(A StrValA, B StrValB)  // Not exactly standart!
-{
- if(!StrValA || !StrValB)return -1;
- for(int voffs=0;;voffs++)
-  {
-   if(!StrValA[voffs])return 0;     
-   if(StrValA[voffs] != StrValB[voffs])return voffs+1;
-  }
-}
-//--------------------------------------------------------------------------- 
 template<typename T> int _stdcall GetSubStrOffs(T* Str, T* SubStr, int Length=0, bool CaseSens=false)   // if constexpr (...)   // Zero-Terminated strings only! - Fix this
 {
  Length = lstrlen(SubStr);
@@ -549,20 +520,21 @@ template<typename T> T IncrementFileName(T FileName)
  return CmdLine; 
 }*/
 //---------------------------------------------------------------------------
-template<typename T> T GetCmdLineParam(T CmdLine, T Param, PUINT ParLen=NULL)  //, unsigned int ParLen)  // Return size of Param string? // May overflow without 'ParLen'
+template<typename T> T GetCmdLineParam(T CmdLine, T Param, unsigned short Scope='\"\"', PUINT ParLen=NULL)  //, unsigned int ParLen)  // Return size of Param string? // May overflow without 'ParLen'
 {
- char SFch = '"';
+ char SFchB = Scope >> 8;
+ char SFchE = Scope;
  while(*CmdLine && (*CmdLine <= 0x20))CmdLine++;  // Skip any spaces before
- if(*CmdLine == SFch)CmdLine++;  // Skip opening quote
-   else SFch = 0x20;             // No quotes, scan until a first space
+ if(*CmdLine == SFchB)CmdLine++;  // Skip opening quote
+   else SFchE = 0x20;             // No quotes, scan until a first space
  T ParBeg = CmdLine;
  if(Param)
   {
    UINT MaxLen = (ParLen)?(*ParLen):(-1);  // -1 is MaxUINT
-   while(*CmdLine && (*CmdLine != SFch) && MaxLen--)*(Param++) = *(CmdLine++); 
+   while(*CmdLine && (*CmdLine != SFchE) && MaxLen--)*(Param++) = *(CmdLine++); 
    *Param = 0;
   }
-  else {while(*CmdLine && (*CmdLine != SFch))CmdLine++;}
+  else {while(*CmdLine && (*CmdLine != SFchE))CmdLine++;}
  if(ParLen)*ParLen = CmdLine - ParBeg;  // In Chars
  if(*CmdLine)CmdLine++;  // Skip last Quote or Space
 // while(*CmdLine && (*CmdLine <= 0x20))CmdLine++; // Skip any spaces after 
@@ -607,7 +579,7 @@ template<typename T, typename S> S ConvertToHexStr(T Value, int MaxDigits, S Num
  return NumBuf; 
 }
 //---------------------------------------------------------------------------
-template<typename T> T _fastcall CharLowSimple(T val) {return (((val >= 'A') && (val <= 'Z')) ? (val + 0x20) : (val));}
+//template<typename T> T _fastcall CharLowSimple(T val) {return (((val >= 'A') && (val <= 'Z')) ? (val + 0x20) : (val));}
 
 template<typename T> bool _fastcall IsStrEqSimpleIC(T StrA, T StrB, int MaxLen=-1)
 {
@@ -623,7 +595,7 @@ template<typename T, typename S> S DecNumToStrS(T Val, S buf, UINT* Len=0)
 {
  if(Val == 0){if(Len)*Len = 1; *buf = '0'; buf[1] = 0; return buf;}
  bool isNeg = (Val < 0);
- if(isNeg) Val = -Val;
+ if(isNeg) Val = -Val;       // warning C4146: unary minus operator applied to unsigned type, result still unsigned
  buf  = &buf[20];
  *buf = 0;
  S end = buf;
@@ -1073,4 +1045,6 @@ template<int Ctr, int MIdx, typename T> constexpr __forceinline PBYTE _stdcall A
 //---------------------------------------------------------------------------
 
 //---------------------------------------------------------------------------
+#pragma warning(pop)
+
 #endif

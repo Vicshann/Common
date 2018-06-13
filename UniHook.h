@@ -126,7 +126,8 @@ bool SetHook(LPSTR ProcName, LPSTR LibName, UINT Flags=hfFillNop, T HookFunc=NUL
 //------------------------------------------------------------------------------------
 bool SetHook(PBYTE ProcAddr=NULL, UINT Flags=hfFillNop, T HookFunc=NULL)   // Can be reused with same ProcAddr after 'Remove'  // Do not refer to 'T' from here or this function may be duplicated
 {
- if(this->IsActive())return false;
+ if(!ProcAddr || this->IsActive())return false;
+// DBGMSG("Hooking: %p",ProcAddr);
 #ifdef _AMD64_
  HDE64 dhde;
 #else
