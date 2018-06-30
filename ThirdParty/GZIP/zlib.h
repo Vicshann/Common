@@ -865,6 +865,9 @@ ZEXTERN int    ZEXPORT    gzbufclose  OF((gzFile handle));
 
 ZEXTERN uLong  ZEXPORT    gzget_crc32 OF((gzFile handle));
 
+ZEXTERN uLong  ZEXPORT    gzget_TotalIn OF((gzFile handle));
+
+
 
                         /* various hacks, don't look :) */
 

@@ -45,6 +45,26 @@ struct my_tcp_keepalive {
 //------------------------------------------------------------------------------------------------------------
 enum ENetReqType {rtNONE, rtGET, rtPOST};
 
+/*struct SMsgAddress
+{
+ LPSTR  Host;
+ LPSTR  Address;
+ USHORT Port;
+};
+struct SConData
+{
+ int    TabIdx;
+ bool   Listen;
+ SOCKET cSock;
+ USHORT port;
+
+// SConData(void){Listen=false;TabIdx=-1;cSock=NULL;port=0;}  // In glabal space these will require _atexit from RTL
+// ~SConData(){this->CloseConn();}
+
+ void ResetConn(void){Listen=false;TabIdx=-1;cSock=NULL;port=0;}
+ void CloseConn(void){Listen=false;closesocket(cSock);}
+};*/
+
 class CNetWrk
 {
  SOCKET   soc;

@@ -967,7 +967,7 @@ uLong ZEXPORT gzbufread (handle, buf, len)
 	 {
 		if (s->stream.avail_in == 0 && !s->z_eof)
 		 {
-		  errno = 0;
+//		  errno = 0;       // Useless
 		  if(s->startpos >= Z_BUFSIZE)CurBlk = Z_BUFSIZE;
 			else CurBlk = s->startpos;
 		  s->stream.avail_in = CurBlk;
@@ -1076,4 +1076,11 @@ uLong ZEXPORT gzget_crc32 (handle)
 {
  gz_stream *s = (gz_stream*)handle;
  return s->crc;
+}
+
+uLong ZEXPORT gzget_TotalIn (handle)
+	gzFile handle;
+{
+ gz_stream *s = (gz_stream*)handle;
+ return s->stream.total_in;
 }

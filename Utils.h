@@ -118,6 +118,7 @@ int   _stdcall ByteArrayToHexStr(PBYTE Buffer, LPSTR DstStr, UINT HexByteCnt, bo
 int _stdcall HexStrToByteArray(PBYTE Buffer, LPSTR SrcStr, UINT HexByteCnt=0);
 //UINT  _stdcall TrimFilePath(LPSTR FullPath);
 void _stdcall CreateDirectoryPath(LPSTR Path);
+void _stdcall CreateDirectoryPathW(PWSTR Path);
 SIZE_T _stdcall GetRealModuleSize(PVOID ModuleBase);
 __int64   _stdcall GetTime64(bool Local=false);
 bool  _stdcall IsValidAsciiString(PBYTE Ptr, UINT MinLen, UINT MaxLen);
@@ -439,29 +440,6 @@ template<typename T> UINT TrimFilePath(T Path)
  return SLast;
 }
 //---------------------------------------------------------------------------
-template<typename T> UINT StrLen(T Path)
-{
- UINT len = 0;
- for(;Path[len];len++);
- return len;
-}
-//---------------------------------------------------------------------------
-template<typename D, typename S> UINT StrCopy(D Dst, S Src)
-{
- UINT len = 0;
- for(;Src[len];len++)Dst[len] = Src[len];
- Dst[len] = 0;
- return len;
-}
-//---------------------------------------------------------------------------
-template<typename D, typename S> UINT StrCopy(D Dst, S Src, UINT MaxLen)
-{
- UINT len = 0;
- for(;Src[len] && (len < MaxLen);len++)Dst[len] = Src[len];
- Dst[len] = 0;
- return len;
-}
-//---------------------------------------------------------------------------
 template<typename T> T GetFileName(T FullPath)    // TODO: Just scan forward, no StrLen and backward scan  // Set constexpr 'IF' in case a T is a str obj an its size is known?
 {
  int LastDel = -1; 
@@ -483,7 +461,7 @@ template<typename T> bool IsFileExists(T FilePath)
  return !(((sizeof(*FilePath) > 1)?(GetFileAttributesW((PWSTR)FilePath)):(GetFileAttributesA((LPSTR)FilePath))) == INVALID_FILE_ATTRIBUTES);
 }
 //---------------------------------------------------------------------------
-template<typename T> int NormalizeFileName(T FileName, char rep='_')  // Use counter that T may be an object with [] operator
+template<typename T> int NormalizeFileName(T FileName, char rep='_')  // Use counter because T may be an object with [] operator
 {
  int Total = 0;
  for(int ctr=0;BYTE val=FileName[ctr];ctr++)
@@ -498,7 +476,7 @@ template<typename T> T IncrementFileName(T FileName)
  if(!IsFileExists(FileName))return FileName;
  BYTE Buf[32];
  T ExtPtr = GetFileExt(FileName);
- StrCopy((T)&Buf, &ExtPtr[-1]);
+ NSTR::StrCopy((T)&Buf, &ExtPtr[-1]);
  for(UINT ctr=0;;ctr++) 
   {
    if(sizeof(*FileName) > 1)wsprintfW((PWSTR)ExtPtr,L"%u%ls",ctr,&Buf);   // TODO: Use own templated NumToStr function

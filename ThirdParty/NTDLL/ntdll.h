@@ -487,6 +487,175 @@ typedef struct _MEMORY_REGION_INFORMATION
     SIZE_T CommitSize;
 } MEMORY_REGION_INFORMATION, *PMEMORY_REGION_INFORMATION;
 
+// private
+typedef struct _MEMORY_WORKING_SET_EX_BLOCK
+{
+	union
+	{
+		struct
+		{
+			ULONG_PTR Valid : 1;
+			ULONG_PTR ShareCount : 3;
+			ULONG_PTR Win32Protection : 11;
+			ULONG_PTR Shared : 1;
+			ULONG_PTR Node : 6;
+			ULONG_PTR Locked : 1;
+			ULONG_PTR LargePage : 1;
+			ULONG_PTR Priority : 3;
+			ULONG_PTR Reserved : 3;
+			ULONG_PTR SharedOriginal : 1;
+			ULONG_PTR Bad : 1;
+#ifdef _WIN64
+			ULONG_PTR ReservedUlong : 32;
+#endif
+		};
+		struct
+		{
+			ULONG_PTR Valid : 1;
+			ULONG_PTR Reserved0 : 14;
+			ULONG_PTR Shared : 1;
+			ULONG_PTR Reserved1 : 5;
+			ULONG_PTR PageTable : 1;
+			ULONG_PTR Location : 2;
+			ULONG_PTR Priority : 3;
+			ULONG_PTR ModifiedList : 1;
+			ULONG_PTR Reserved2 : 2;
+			ULONG_PTR SharedOriginal : 1;
+			ULONG_PTR Bad : 1;
+#ifdef _WIN64
+			ULONG_PTR ReservedUlong : 32;
+#endif
+		} Invalid;
+	};
+} MEMORY_WORKING_SET_EX_BLOCK, *PMEMORY_WORKING_SET_EX_BLOCK;
+
+// private
+typedef struct _MEMORY_WORKING_SET_EX_INFORMATION
+{
+	PVOID VirtualAddress;
+	union
+	{
+		MEMORY_WORKING_SET_EX_BLOCK VirtualAttributes;
+		ULONG_PTR Long;
+	} u1;
+} MEMORY_WORKING_SET_EX_INFORMATION, *PMEMORY_WORKING_SET_EX_INFORMATION;
+
+// private
+typedef struct _MEMORY_SHARED_COMMIT_INFORMATION
+{
+	SIZE_T CommitSize;
+} MEMORY_SHARED_COMMIT_INFORMATION, *PMEMORY_SHARED_COMMIT_INFORMATION;
+
+// private
+typedef struct _MEMORY_IMAGE_INFORMATION
+{
+	PVOID ImageBase;
+	SIZE_T SizeOfImage;
+	union
+	{
+		ULONG ImageFlags;
+		struct
+		{
+			ULONG ImagePartialMap : 1;
+			ULONG ImageNotExecutable : 1;
+			ULONG Reserved : 30;
+		};
+	};
+} MEMORY_IMAGE_INFORMATION, *PMEMORY_IMAGE_INFORMATION;
+
+#define MMPFNLIST_ZERO 0
+#define MMPFNLIST_FREE 1
+#define MMPFNLIST_STANDBY 2
+#define MMPFNLIST_MODIFIED 3
+#define MMPFNLIST_MODIFIEDNOWRITE 4
+#define MMPFNLIST_BAD 5
+#define MMPFNLIST_ACTIVE 6
+#define MMPFNLIST_TRANSITION 7
+
+#define MMPFNUSE_PROCESSPRIVATE 0
+#define MMPFNUSE_FILE 1
+#define MMPFNUSE_PAGEFILEMAPPED 2
+#define MMPFNUSE_PAGETABLE 3
+#define MMPFNUSE_PAGEDPOOL 4
+#define MMPFNUSE_NONPAGEDPOOL 5
+#define MMPFNUSE_SYSTEMPTE 6
+#define MMPFNUSE_SESSIONPRIVATE 7
+#define MMPFNUSE_METAFILE 8
+#define MMPFNUSE_AWEPAGE 9
+#define MMPFNUSE_DRIVERLOCKPAGE 10
+#define MMPFNUSE_KERNELSTACK 11
+
+// private
+typedef struct _MEMORY_FRAME_INFORMATION
+{
+	ULONGLONG UseDescription : 4; // MMPFNUSE_*
+	ULONGLONG ListDescription : 3; // MMPFNLIST_*
+	ULONGLONG Reserved0 : 1; // reserved for future expansion
+	ULONGLONG Pinned : 1; // 1 - pinned, 0 - not pinned
+	ULONGLONG DontUse : 48; // *_INFORMATION overlay
+	ULONGLONG Priority : 3; // rev
+	ULONGLONG Reserved : 4; // reserved for future expansion
+} MEMORY_FRAME_INFORMATION;
+
+// private
+typedef struct _FILEOFFSET_INFORMATION
+{
+	ULONGLONG DontUse : 9; // MEMORY_FRAME_INFORMATION overlay
+	ULONGLONG Offset : 48; // mapped files
+	ULONGLONG Reserved : 7; // reserved for future expansion
+} FILEOFFSET_INFORMATION;
+
+// private
+typedef struct _PAGEDIR_INFORMATION
+{
+	ULONGLONG DontUse : 9; // MEMORY_FRAME_INFORMATION overlay
+	ULONGLONG PageDirectoryBase : 48; // private pages
+	ULONGLONG Reserved : 7; // reserved for future expansion
+} PAGEDIR_INFORMATION;
+
+// private
+typedef struct _UNIQUE_PROCESS_INFORMATION
+{
+	ULONGLONG DontUse : 9; // MEMORY_FRAME_INFORMATION overlay
+	ULONGLONG UniqueProcessKey : 48; // ProcessId
+	ULONGLONG Reserved : 7; // reserved for future expansion
+} UNIQUE_PROCESS_INFORMATION, *PUNIQUE_PROCESS_INFORMATION;
+
+// private
+typedef struct _MMPFN_IDENTITY
+{
+	union
+	{
+		MEMORY_FRAME_INFORMATION e1; // all
+		FILEOFFSET_INFORMATION e2; // mapped files
+		PAGEDIR_INFORMATION e3; // private pages
+		UNIQUE_PROCESS_INFORMATION e4; // owning process
+	} u1;
+	ULONG_PTR PageFrameIndex; // all
+	union
+	{
+		struct
+		{
+			ULONG_PTR Image : 1;
+			ULONG_PTR Mismatch : 1;
+		} e1;
+		struct
+		{
+			ULONG_PTR CombinedPage;
+		} e2;
+		PVOID FileObject; // mapped files
+		PVOID UniqueFileObjectKey;
+		PVOID ProtoPteAddress;
+		PVOID VirtualAddress;  // everything else
+	} u2;
+} MMPFN_IDENTITY, *PMMPFN_IDENTITY;
+
+typedef struct _MMPFN_MEMSNAP_INFORMATION
+{
+	ULONG_PTR InitialPageFrameIndex;
+	ULONG_PTR Count;
+} MMPFN_MEMSNAP_INFORMATION, *PMMPFN_MEMSNAP_INFORMATION;
+
 typedef struct _SECTION_BASIC_INFORMATION
 {
     PVOID BaseAddress;

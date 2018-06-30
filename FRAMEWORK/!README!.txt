@@ -1,0 +1,1 @@
+Should be compatible with Windows, MacOS, Linux, Android

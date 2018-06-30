@@ -15,9 +15,10 @@
 */
 
 //---------------------------------------------------------------------------
-namespace NStr
+namespace NSTR        // TODO: Goes to FRAMEWORK
 {
-
+// #define haszero(v) (((v) - 0x01010101UL) & ~(v) & 0x80808080UL)
+// #define hasvalue(x,n) \ (haszero((x) ^ (~0UL/255 * (n))))
 //
 // These templates should work on ANY input strings, built in ones or some classes 
 // NUL char is always terminates but strings not have to be NUL terminated
@@ -62,8 +63,47 @@ template<typename COp=ChrOpNone<>, typename A=wchar_t*, typename B=wchar_t*> int
  return -1;  // BaseStr terminated early
 }
 //--------------------------------------------------------------------------- 
+template<typename T> size_t StrLen(T Path)
+{
+ size_t len = 0;
+ for(;Path[len];len++);
+ return len;
+}
+//---------------------------------------------------------------------------
+template<typename D, typename S> size_t StrCopy(D Dst, S Src)
+{
+ size_t len = 0;
+ for(;Src[len];len++)Dst[len] = Src[len];
+ Dst[len] = 0;
+ return len;
+}
+//---------------------------------------------------------------------------
+template<typename D, typename S> UINT StrCopy(D Dst, S Src, size_t MaxLen)
+{
+ size_t len = 0;
+ for(;Src[len] && (len < MaxLen);len++)Dst[len] = Src[len];
+ Dst[len] = 0;
+ return len;
+}
+//---------------------------------------------------------------------------
+template<typename D, typename S> size_t StrCat(D Dst, S Src)
+{
+ size_t slen = 0;
+ size_t dlen = StrLen(Dst);
+ for(;Src[slen];dlen++,slen++)Dst[dlen] = Src[slen];
+ Dst[dlen] = 0;
+ return dlen;
+}
+//---------------------------------------------------------------------------
+
+//--------------------------------------------------------------------------- 
+
+
+
+
 template<typename COp=ChrOpNone<>, typename A=wchar_t*, typename B=wchar_t*> bool IsContainSubStr(A StrVal, B StrBase){return (SubOffset<COp>(StrVal, StrBase) >= 0);}
-template<typename A, typename B> int _fastcall CompareIC(A StrValA, B StrValB, size_t MaxLen=-1){return CompareIC<ChrOpSiLC<>, A, B>(StrValA, StrValB, MaxLen);} 
+template<typename A, typename B> int _fastcall CompareIC(A StrValA, B StrValB, size_t MaxLen=-1){return Compare<ChrOpSiLC<>, A, B>(StrValA, StrValB, MaxLen);} 
+template<typename A, typename B> int _fastcall CompareSC(A StrValA, B StrValB, size_t MaxLen=-1){return Compare<ChrOpNone<>, A, B>(StrValA, StrValB, MaxLen);}  // Template alias argument deduction is not implemented in C++
 
 
 //---------------------------------------------------------------------------
@@ -78,10 +118,10 @@ class Mini
 
 //------------------------------- TEMPORARY, FOR COMPATIBILITTY -------------
 // typedef NStr::Mini CMiniStr
-// template <typename A, typename B> using StrCompareSimple = NStr::Compare<A,B, ChrOpNone<decltype(*A)> >; // Temlate alias argument deduction is not implemented in C++
-#define StrCompareSimple        NStr::Compare<NStr::ChrOpNone<> >      
-#define StrCompareSimpleIC      NStr::Compare<NStr::ChrOpSiLC<> >  
-#define GetChrOffsSimpleIC      NStr::ChrOffset<NStr::ChrOpSiLC<> >
-#define GetSubStrOffsSimpleIC   NStr::SubOffset<NStr::ChrOpSiLC<> >
-#define IsContainSubStrSimpleIC NStr::IsContainSubStr<NStr::ChrOpSiLC<> >
+// template <typename A, typename B> using StrCompareSimple = NStr::Compare<A,B, ChrOpNone<decltype(*A)> >; // Template alias argument deduction is not implemented in C++
+#define StrCompareSimple        NSTR::Compare<NSTR::ChrOpNone<> >      
+#define StrCompareSimpleIC      NSTR::Compare<NSTR::ChrOpSiLC<> >  
+#define GetChrOffsSimpleIC      NSTR::ChrOffset<NSTR::ChrOpSiLC<> >
+#define GetSubStrOffsSimpleIC   NSTR::SubOffset<NSTR::ChrOpSiLC<> >
+#define IsContainSubStrSimpleIC NSTR::IsContainSubStr<NSTR::ChrOpSiLC<> >
 //---------------------------------------------------------------------------

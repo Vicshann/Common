@@ -60,17 +60,17 @@ void*  __cdecl memset(void* _Dst, int _Val, size_t _Size)      // TODO: Aligned,
  return _Dst;
 } 
 //---------------------------------------------------------------------------
-int    __cdecl memcmp(const void* _Buf1, const void* _Buf2, size_t _Size) // '(*((ULONG**)&_Buf1))++;'	// TODO: Using Ptr increment will be faster than indexing?
+int    __cdecl memcmp(const void* _Buf1, const void* _Buf2, size_t _Size) // '(*((ULONG**)&_Buf1))++;'	// TODO: Using Ptr increment will be faster than indexing?    
 {
  unsigned char* BufA = (unsigned char*)_Buf1;
  unsigned char* BufB = (unsigned char*)_Buf2; 
  for(;_Size >= sizeof(size_t); _Size-=sizeof(size_t), BufA+=sizeof(size_t), BufB+=sizeof(size_t))  // Enters here only if Size >= sizeof(ULONG)
   {
-   if(*((size_t*)BufA) != *((size_t*)BufB))return (*((size_t*)BufA) - *((size_t*)BufB));
+   if(*((size_t*)BufA) != *((size_t*)BufB))break;  // Have to break and continue as bytes because return value must be INT  // return (*((intptr_t*)BufA) - *((intptr_t*)BufB));  //  // TODO: Move everything to multiplatform FRAMEWORK
   }  
  for(;_Size > 0; _Size--, BufA++, BufB++)  // Enters here only if Size > 0
   {
-   if(*((unsigned char*)BufA) != *((unsigned char*)BufB)){return (*((unsigned char*)BufA) - *((unsigned char*)BufB));}
+   if(*((unsigned char*)BufA) != *((unsigned char*)BufB)){return ((int)*BufA - (int)*BufB);}   
   }			   
  return 0; 
 } 
