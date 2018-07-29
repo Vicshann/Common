@@ -54,7 +54,7 @@ template<typename COp=ChrOpNone<>, typename A=wchar_t*, typename B=wchar_t*> int
 template<typename COp=ChrOpNone<>, typename A=wchar_t*, typename B=wchar_t*> int _fastcall SubOffset(A StrVal, B StrBase, size_t Offs=0, size_t BaseLen=-1, size_t ValLen=-1)   
 {
  if(Offs > BaseLen)return -2;    // if(!StrBase || !StrVal || !*StrVal || (Offs > Len))
- for(size_t voffs=0;StrBase[Offs] && (Offs < BaseLen);)
+ for(size_t voffs=0;StrBase[Offs] && (Offs < BaseLen);)     // Slow, by one char. TODO: Use memcmp for case sensitive strngs
   {
    if(COp::DoOp(StrBase[Offs]) != COp::DoOp(StrVal[voffs])){Offs += (bool)!voffs; voffs = 0; continue;}  // Reset scan
     else { voffs++; if(!StrVal[voffs] || (voffs >= ValLen))return Offs-voffs+1; }  // Exit if Full sub str match found
@@ -70,7 +70,7 @@ template<typename T> size_t StrLen(T Path)
  return len;
 }
 //---------------------------------------------------------------------------
-template<typename D, typename S> size_t StrCopy(D Dst, S Src)
+template<typename D, typename S> size_t StrCpy(D Dst, S Src)
 {
  size_t len = 0;
  for(;Src[len];len++)Dst[len] = Src[len];
@@ -78,13 +78,13 @@ template<typename D, typename S> size_t StrCopy(D Dst, S Src)
  return len;
 }
 //---------------------------------------------------------------------------
-template<typename D, typename S> UINT StrCopy(D Dst, S Src, size_t MaxLen)
+template<typename D, typename S> size_t StrCpy(D Dst, S Src, size_t MaxLen)
 {
  size_t len = 0;
- for(;Src[len] && (len < MaxLen);len++)Dst[len] = Src[len];
+ for(;Src[len] && (len < MaxLen);len++)Dst[len] = Src[len];         // Probably 'if constexpr (!MaxLen || (len < MaxLen))'  to exclude it if MaxLen is 0 and not needed
  Dst[len] = 0;
  return len;
-}
+} 
 //---------------------------------------------------------------------------
 template<typename D, typename S> size_t StrCat(D Dst, S Src)
 {
@@ -119,7 +119,8 @@ class Mini
 //------------------------------- TEMPORARY, FOR COMPATIBILITTY -------------
 // typedef NStr::Mini CMiniStr
 // template <typename A, typename B> using StrCompareSimple = NStr::Compare<A,B, ChrOpNone<decltype(*A)> >; // Template alias argument deduction is not implemented in C++
-#define StrCompareSimple        NSTR::Compare<NSTR::ChrOpNone<> >      
+#define StrCompareSimple        NSTR::Compare<NSTR::ChrOpNone<> >  
+#define GetChrOffsSimple        NSTR::ChrOffset<NSTR::ChrOpNone<> >    
 #define StrCompareSimpleIC      NSTR::Compare<NSTR::ChrOpSiLC<> >  
 #define GetChrOffsSimpleIC      NSTR::ChrOffset<NSTR::ChrOpSiLC<> >
 #define GetSubStrOffsSimpleIC   NSTR::SubOffset<NSTR::ChrOpSiLC<> >

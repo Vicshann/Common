@@ -36,8 +36,8 @@
 #pragma warning(disable:4244)     // Type cast (WinAPI compatibility)
 
 //---------------------------------------------------------------------------
-#define PATHDLMR 0x2F
-#define PATHDLML 0x5C
+#define PATHDLMR 0x2F    //  '/'
+#define PATHDLML 0x5C    //  '\'
 
 #define LOGTHID       // ???????????
 #define LOGTICK
@@ -114,7 +114,7 @@ int   _stdcall RefreshINIValueStr(LPSTR SectionName, LPSTR ValueName, LPSTR Defa
 int   _stdcall RefreshINIValueStr(LPSTR SectionName, LPSTR ValueName, LPSTR Default, PWSTR RetString, DWORD Size, LPSTR FileName);
 void  _stdcall SetINIValueInt(LPSTR SectionName, LPSTR ValueName, int Value, LPSTR FileName);
 //int   _stdcall ByteArrayToHexStrSwap(PBYTE Buffer, LPSTR DstStr, UINT HexByteCnt);
-int   _stdcall ByteArrayToHexStr(PBYTE Buffer, LPSTR DstStr, UINT HexByteCnt, bool UpCase=true);
+int   _stdcall ByteArrayToHexStr(PBYTE Buffer, LPSTR DstStr, UINT ByteCnt, bool UpCase=true);
 int _stdcall HexStrToByteArray(PBYTE Buffer, LPSTR SrcStr, UINT HexByteCnt=0);
 //UINT  _stdcall TrimFilePath(LPSTR FullPath);
 void _stdcall CreateDirectoryPath(LPSTR Path);

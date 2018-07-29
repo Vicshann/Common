@@ -110,7 +110,7 @@ static bool IsAddrHooked(PVOID PAddr, PVOID Hook)       // Already hooked by thi
 //------------------------------------------------------------------------------------
 
 public:
-enum EHookFlg {hfNone,hfFillNop};       // Restore MemProt flag?
+enum EHookFlg {hfNone,hfFillNop=1,hfFollowJmp=2};       // Restore MemProt flag?
 //------------------------------------------------------------------------------------
 bool IsActive(void){return (bool)this->HookLen;}
 //------------------------------------------------------------------------------------
@@ -124,7 +124,7 @@ bool SetHook(LPSTR ProcName, LPSTR LibName, UINT Flags=hfFillNop, T HookFunc=NUL
  return this->SetHook(ProcAddr,hfFillNop,HookFunc);  
 }  
 //------------------------------------------------------------------------------------
-bool SetHook(PBYTE ProcAddr=NULL, UINT Flags=hfFillNop, T HookFunc=NULL)   // Can be reused with same ProcAddr after 'Remove'  // Do not refer to 'T' from here or this function may be duplicated
+bool SetHook(PBYTE ProcAddr=NULL, UINT Flags=hfFillNop|hfFollowJmp, T HookFunc=NULL)   // Can be reused with same ProcAddr after 'Remove'  // Do not refer to 'T' from here or this function may be duplicated
 {
  if(!ProcAddr || this->IsActive())return false;
 // DBGMSG("Hooking: %p",ProcAddr);
@@ -143,6 +143,16 @@ bool SetHook(PBYTE ProcAddr=NULL, UINT Flags=hfFillNop, T HookFunc=NULL)   // Ca
  for(PBYTE DisAddr=ProcAddr;this->HookLen < TrLen;DisAddr += dhde.len)   // MSVC compiler crash if 'this->HookLen += dhde.len' is here
   {
    this->HookLen += dhde.Disasm(DisAddr);
+   if((*DisAddr == 0xE9)&&(Flags & hfFollowJmp))
+    {
+     dhde.len = 0;
+     DisAddr  = (PBYTE)RelAddrToAddr(DisAddr,5,*(DWORD*)&DisAddr[1]);
+     ProcAddr = DisAddr;
+     this->HookLen = 0;
+     CodeLen = 0;
+     continue;
+    }
+
 #ifdef _AMD64_
    if(((*DisAddr & 0xFB)==0x48) && (DisAddr[1]==0x8B) && ((DisAddr[2] & 0x07)==0x05))       // 48=RAX-rdi; 4C=R8-R15  // mov REG, qword ptr [REL]
     {

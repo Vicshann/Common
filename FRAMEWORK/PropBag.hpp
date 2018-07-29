@@ -3,9 +3,10 @@
 #define PropBagH
 
 #pragma once
-
-
+ 
 /*
+ When a propis set to a different value then its type duplicate is created and its pointer is set and ref ctr is decremented
+
   Any object can be inherited from a Prop
   Only a PropFactory creates and destroys props, PropBag only stores a pointer to it
   NameFactory manages all operation with storing and matching a names(or hashes of them in optimized mode)
@@ -35,14 +36,32 @@ Use some global name string factory for names? Definently don`t want to keep sim
 If we use some kind of HANDLE instead of CPropRef then we have to lock an entire CPropBag when accessing(removing) a prop
 
 Conclusion: deletion of props is a bad idea for a prop bag! Without this we can minimize threaad locking to allocation of a new memory chain blocks only
-*/
-class CPropBase
-{
 
-virtual ~CPropBase() = 0;
+Props are create by a PropFacrory and added to PropBag`s sparse list of pointers
+
+Prop Have Name, Type, And Value
+*/
+
+template<char* name> class CPropBase
+{
+ static const char* Name;   // Name for serializaation
+ static const char* Type;   // Type string to compare pointers
+
+//virtual ~CPropBase() = 0;
 
 
 };
+//---------------------------------------------------------------------------
+template<typename T, char* name=nullptr> class CProp   //: public CPropBase<name>
+{
+ T Value;
+public:
+ char* GetName(void)    // '__func__' returns only name of current function, no types
+  {               
+   return __FUNCSIG__;
+  }
+};
+
 //---------------------------------------------------------------------------
 
 
@@ -54,7 +73,7 @@ virtual ~CPropBase() = 0;
 
 
 
-
+/*
 
 
 // Methods` name must resolve to RTTI type
@@ -208,13 +227,13 @@ int RemoveProp(UINT Index)
 
 }
 //----------------------------------------
-/*
-  WORD Type    : 3;  // Prop Type (0 - 7)
-  WORD NameLen : 5;  // Max name len = 31  // 0 is for unnamed props
-  WORD PropLen : 8;  // Max prop len = 255  // Number values are packed
-  Name
-  Value
-*/
+
+//  WORD Type    : 3;  // Prop Type (0 - 7)
+//  WORD NameLen : 5;  // Max name len = 31  // 0 is for unnamed props
+//  WORD PropLen : 8;  // Max prop len = 255  // Number values are packed
+//  Name
+//  Value
+
 void SaveTo(SBinStream* Strm)
 {
 
@@ -228,6 +247,6 @@ void LoadFrom(SBinStream* Strm)
 
 };
 //---------------------------------------------------------------------------
-
+*/
 //---------------------------------------------------------------------------
 #endif

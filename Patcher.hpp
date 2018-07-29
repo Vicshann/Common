@@ -22,7 +22,7 @@ public:
 enum EPOp {poDat=0x00,     // Next byte is a single raw byte    // Low half can be random(To prevent some detection)      // TODO: CompileTime signature obfuscator
            poLoH=0x10,     // Low half contains LoHalf of a data byte  // Terminates a byte  // Can be used instead of poDat for obfuscation to prevent some detection
            poHiH=0x20,     // Low half contains HiHalf of a data byte  // Combine with poLoH to make it terminate a byte  // Can be used instead of poDat for obfuscation to prevent some detection
-           poRaw=0x40,     // Raw bytes, if (& 0x7F)==0 then next byte is an counter of raw bytes or else rest of bits is a byte counter(63 max)
+           poRaw=0x40,     // Raw bytes, if (& 0x7F)==0 then next byte is an counter of raw bytes or else rest of bits is a byte counter(63 max)   // No zero counter - 0 means 1
            poSkp=0x80,     // Skip bytes, counter is same as poRaw; Combine with poRaw to continue in a variable range. Counter byte specifies max range to search for a pattern continuation
   };
 
@@ -161,7 +161,7 @@ UINT FindSignatures(PBYTE AddrLo, PBYTE AddrHi, long Step, bool SkipUnreadable=f
     {
      SSigRec* Rec = this->GetSigRec(Idx); 
      if(!Rec)break;    // No more signatures
-//     if(Rec->FoundAddr)continue;  // Already found    // Now there may me more tan one addr
+//     if(Rec->FoundAddr)continue;  // Already found    // Now there may be more than one addr
      if(Rec->BoundIdx >= 0)
       {
        if(!Rec->BoundPtr)Rec->BoundPtr = this->GetSigRec(Rec->BoundIdx);
@@ -253,11 +253,11 @@ static int IsSignatureMatchBin(PBYTE Address, SIZE_T Size, PBYTE BinSig, long Si
 }
 //---------------------------------------------------------------------------
 // SigLen - number of chars in signature string (Can have a big block of signatures in one string and specify a separate one by offset and length)
-// Please don`t pass a malformed signatures here :)
+// Please don`t pass malformed signatures here :)
 static int IsSignatureMatchStr(PVOID Address, SIZE_T Size, LPSTR Signature, UINT SigLen)
 {
  PBYTE Data    = (PBYTE)Address; 
- BYTE  Value   = 0;
+ BYTE  Value   = !*Signature;
  long  SigMult = 1;
  if(!SigLen)SigLen--;         // Overflow the counter - removes size limit
  if('R' == *Signature)        // Reversed signature!  // Revise!
@@ -603,4 +603,6 @@ int LoadPatchScript(LPSTR Script, UINT ScriptSize=0)          // TODO: SigMCtr
 //--------------------------------------------------------------------------- 
 
 }; 
+
+typedef CSigScan<> SF;
 //============================================================================================================

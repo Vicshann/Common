@@ -223,7 +223,7 @@ void SetOctreeDepth(int Depth)
  for(int ctr=0,nctr=1;ctr < TREEMAXDEPTH;ctr++,nctr*=8)
   {
    if(ctr  <  Depth)Nodes = nctr;                        // TODO: Optimize - rearrange
-   if((ctr <  Depth)&&(NodeLevels[ctr] == NULL)){NodeLevels[ctr] = new OCTREENODE[nctr]; memset(NodeLevels[ctr], 0, sizeof(OCTREENODE)*nctr);}            // (OCTREENODE*)VirtualAlloc(NULL,(sizeof(OCTREENODE)*nctr),MEM_COMMIT,PAGE_READWRITE);
+   if((ctr <  Depth)&&(NodeLevels[ctr] == NULL)){NodeLevels[ctr] = new OCTREENODE[nctr]();}   // Specifying '()' for POD allocation forces a compiler to set that memory to 0 (C++ spec); MSVC invokes memset for this when SPEED optimization is enabled or uses 'rep stos' without it. Also with SPEED optimization it uses malloc instead of global 'new'        // (OCTREENODE*)VirtualAlloc(NULL,(sizeof(OCTREENODE)*nctr),MEM_COMMIT,PAGE_READWRITE);
    if((ctr >= Depth)&&(NodeLevels[ctr] != NULL)){delete[] NodeLevels[ctr]; NodeLevels[ctr] = NULL;}    // VirtualFree(NodeLevels[ctr],NULL,MEM_RELEASE);
   }
 
@@ -233,7 +233,7 @@ void SetOctreeDepth(int Depth)
 
  TreeDepth--;
  MaxNodes   = Nodes;
- ColorNodes = new COLORNODE[Nodes+1]; memset(ColorNodes, 0, sizeof(COLORNODE)*(Nodes+1));       //(COLORNODE*)VirtualAlloc(NULL,(sizeof(COLORNODE)*(Nodes+1)),MEM_COMMIT,PAGE_READWRITE);
+ ColorNodes = new COLORNODE[Nodes+1]();        //(COLORNODE*)VirtualAlloc(NULL,(sizeof(COLORNODE)*(Nodes+1)),MEM_COMMIT,PAGE_READWRITE);
 
  // Create a first pass color quantization table
  // Makes adding colors to Octree much more faster (Nodes indexing by combined colors)
