@@ -124,7 +124,7 @@ PVOID GetSigAddr(char* SigName, UINT SigIdx, UINT AddrIdx)    // By tag or just 
     {
      SSigRec* Rec = this->GetSigRec(ctr); 
      if(!Rec)return nullptr;
-     if(!StrCompareSimple(SigName,Rec->SigName) && !--SigIdx)return Rec->FndAddrLst.Get(AddrIdx);
+     if(NSTR::IsStrEqualSC(SigName,Rec->SigName) && !--SigIdx)return Rec->FndAddrLst.Get(AddrIdx);   // Case sensitive?
     }
   }
  SSigRec* Rec = this->GetSigRec(SigIdx); 

@@ -2187,3 +2187,21 @@ int _stdcall FormatDateForHttp(SYSTEMTIME* st, LPSTR DateStr)
  return olen+4;
 }
 //------------------------------------------------------------------------------------------------------------
+
+/*
+PVOID _stdcall GetProcessImageBase(HANDLE hProcess)   // Requires ntdef header
+{
+ static PVOID GetProcInfo = NULL;
+ H_PEB         ProcBlock;
+ PROCBASICINFO ProcInfo;
+
+ if(!GetProcInfo)GetProcInfo = GetProcAddress(GetModuleHandle("ntdll.dll"),"NtQueryInformationProcess");
+ memset(&ProcInfo,0,sizeof(ProcInfo));
+ memset(&ProcBlock,0,sizeof(ProcBlock));
+ if( GetProcInfo &&
+     !((DWORD (_stdcall *)(HANDLE,DWORD,PVOID,DWORD,PDWORD))GetProcInfo) (hProcess, 0, &ProcInfo, sizeof(ProcInfo), NULL) &&
+	 ReadProcessMemory(hProcess, ProcInfo.PebBaseAddress,&ProcBlock,sizeof(ProcBlock),NULL))return ProcBlock.ImageBaseAddress;
+ return NULL;
+}
+
+*/

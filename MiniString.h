@@ -352,16 +352,16 @@ bool SameAt(UINT pos, const char* str, UINT len=0)    // Slow comparision(not a 
  return !(str[idx]);  // If Zero, then Full Match
 }
 //----------------------
-int Pos(const char* str, int from=0, UINT len=0)
+int Pos(const char* str, int from=0, UINT len=0, UINT Maxoffs=0)
 {
  if(!len)len = lstrlen(str);   // That faster than comparing strings until a last char
  if(from < 0)   // Search backwards
   {
    from = -from;
-   if((from >= (int)this->Length())||(len > this->Length()))return -1;   // Out of the string
-   for(int idx=from;idx >= 0;idx--){if(this->SameAt(idx,str,len))return idx;}
+   if((from >= (int)this->Length())||(len > this->Length()))return -1;   // Out of the string   // Incorrect with Maxoffs
+   for(int idx=from;idx >= Maxoffs;idx--){if(this->SameAt(idx,str,len))return idx;}
   }
-   else for(int end=this->Length(),idx=from;(idx+(int)len) <= end;idx++){if(this->SameAt(idx,str,len))return idx;}
+   else for(int end=Maxoffs?Maxoffs:this->Length(),idx=from;(idx+(int)len) <= end;idx++){if(this->SameAt(idx,str,len))return idx;}
  return -1;
 }
 //---------------------

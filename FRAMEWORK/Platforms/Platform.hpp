@@ -1,18 +1,18 @@
 
 #pragma once
 
-#ifndef _PLATFORM_
-#define _PLATFORM_
-
-#include "Platforms\Windows\PlatWin.h" 
+#include "Platforms\Common.hpp" 
 
 namespace NPTM
 {
-PVOID _fastcall AllocMemLL(SIZE_T AllocSize, PVOID Mem=0, SIZE_T ReserveSize=0, SIZE_T Align=MEMPAGESIZE);
-void  _fastcall FreeMemLL(PVOID Mem, SIZE_T Size=0);
+extern "C"        // GetPageSize
+{
+PVOID _fastcall AllocMemLL(PVOID Mem, SIZE_T Size, SIZE_T AllocSize, SIZE_T ReserveSize=0, SIZE_T Align=MEMPAGESIZE);
+bool  _fastcall FreeMemLL(PVOID Mem, SIZE_T Size=0);
 
-PVOID _fastcall AllocMemHL(SIZE_T AllocSize, PVOID Mem=0, SIZE_T ReserveSize=0, SIZE_T Align=MEMPAGESIZE);    // EMemAlign is not supported!
-void  _fastcall FreeMemHL(PVOID Mem, SIZE_T Size=0);
+PVOID _fastcall AllocMemHL(PVOID Mem, SIZE_T Size, SIZE_T AllocSize, SIZE_T ReserveSize=0, SIZE_T Align=MEMPAGESIZE);    // EMemAlign is not supported!
+bool  _fastcall FreeMemHL(PVOID Mem, SIZE_T Size=0);
+}
 }
 //---------------------------------------------------------------------------
-#endif
+

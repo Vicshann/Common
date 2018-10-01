@@ -46,7 +46,7 @@ namespace CT
 #define ctFUNC __func__   // Useless, because no types are provided  (Part of C++ 11 standart)
 #endif
 
-
+// GCC: #define __forceinline __attribute__((always_inline))
 
 #ifndef ctCPLSEED
 	// If you don't specify the seed for algorithms, the time when compilation started will be used, seed actually changes the results of algorithms...

@@ -32,72 +32,114 @@ union UDbl         // Do magic without 64 bit shifts?
    while(x);
  return i;   // Number of chars
 }
-    
+ 
+  
 unsigned __int64 slow_pow(int X, int Y)    // TODO: TestIt
 {
  __int64 val = 1;
   while(Y--)val *= X;
  return val;
 } */
-          
+//------------------------------------------------------------------------------------
+enum EFltFmt {ffZeroPad=0x8000, ffSkipZeroFrac=0x4000, ffCommaSep=0x2000};  // Add this flags to 'afterpoint'
+static const int MaxDigit = 19;
+unsigned __int64 uExp10[MaxDigit] =
+{
+0,
+10,
+100,
+1000,
+10000,
+100000,
+1000000,
+10000000,
+100000000,
+1000000000,
+10000000000,
+100000000000,
+1000000000000,
+10000000000000,
+100000000000000,
+1000000000000000,
+10000000000000000,
+100000000000000000,
+1000000000000000000,  // Max for INT64
+};  
+//------------------------------------------------------------------------------------        
 // Converts a floating point number to string.
 // Check for 0?  
 // Buffer MUST be at least of 50 bytes of size
 // Result is NOT placed at beginning of the buffer, instead returned a pointer inside of it
 // Fast but only max up to 19 digits after '.' (limitation of UINT64)!
-char* ftoa_simple(double n, char *res, unsigned int afterpoint, unsigned int* size)    // TODO: Nan and everything else   // Format options
+// Must produce: 123.1234000   // Add zeroes to 'afterpoint'
+//               123.0         // Keep at least one zero, but trim to 'afterpoint'
+//               123           // Do not keep zero if integer
+//
+char* ftoa_simple(double num, unsigned int afterpoint, char *res, unsigned int len, unsigned int* size)    // TODO: Nan and everything else   // Format options
 {    
- int sc = 0;
- char *ptr = res;
- bool negative = (n < 0);                // -0.0 is in the case?
- if(negative){n = -n; *(ptr++) = '-'; sc++;}              // force it positive
- unsigned __int64 ipart = (unsigned __int64)n;            // Extract integer part  
- double  fpart = n - (double)ipart;     // Extract floating part   // At 18 digit after dot getting mistakes
- if(fpart <  0)fpart = n - (double)(--ipart);   // Fix rounding up, don`t touch FPU rounding modes
- if(fpart >= 1)fpart = n - (double)(++ipart);   // Fix rounding down 
- double fixup = 1.0;
- do   
+ int  Zeroes;
+ bool negative;
+ char *ptr = &res[len-1];   // Will store backwards
+ *(ptr--)  = 0;     // Make Optional?
+ if(num < 0){negative = true; num = -num;}  // force it positive // -0.0 is in the case?
+   else negative = false;              
+ int DAfter = afterpoint & 0xFF;
+ if(DAfter > MaxDigit)DAfter = MaxDigit;   // Prorect uExp10 array       
+
+ unsigned __int64 ipart = (unsigned __int64)num;              // Extract integer part  
+ if(DAfter)
   {
-   *(ptr++) = (ipart%10) + '0';
-   ipart = ipart/10;     // No way to take this from 'double'?
-   sc++;
-   fixup /= 10.0f;
-  } 
-   while(ipart);
- if(fpart > fixup)fpart += fixup; // Rounding fix
+   double  fpartd = num - (double)ipart;     // Extract floating part   // At 18 digit after dot getting mistakes
+   if(fpartd <  0)fpartd = num - (double)(--ipart);   // Fix rounding up, don`t touch FPU rounding modes
+   if(fpartd >= 1)fpartd = num - (double)(++ipart);   // Fix rounding down 
+
+   unsigned __int64 fpart = fpartd * uExp10[DAfter]; 
+   if(fpart){Zeroes = 0; for(int ctr=DAfter-1;(fpart < uExp10[ctr]);ctr--)Zeroes++;}  // Count zeroes before dot
+     else if(afterpoint & ffZeroPad)Zeroes = DAfter;     // If padding with zeroes allowed
+           else Zeroes = 1;    // At least one zero when no fraction part
  
- ptr = &res[sc-1];
- char *dat = res;
- for(;dat < ptr;dat++,ptr--)  // Reverse digits of integer part
-  {
-   char v = *dat;
-   *dat = *ptr;
-   *ptr = v; 
+   if(fpart || !(afterpoint & ffSkipZeroFrac))   // Make fraction part
+    {
+     if(fpart && !(afterpoint & ffZeroPad)){while(!(fpart % 10))fpart /= 10;}  // Skip right zeroes
+     for(;fpart;ptr--){*ptr = (fpart % 10) + '0'; fpart /= 10;}
+     for(;Zeroes;ptr--,Zeroes--)*ptr = '0';
+     *(ptr--) = (afterpoint & ffCommaSep)?(','):('.');   // add a dot
+    }
   }
 
- ptr = &res[sc];
- if(afterpoint){*(ptr++) = '.'; sc++;}  // add a dot
-// unsigned int VSum = 0;   // For detection of only zeroes after dot
- for(;afterpoint;afterpoint--,sc++)
-  {
-   fpart *= 10.0f;        // TODO: Parse 'double'
-   unsigned __int64 ival = (fpart-0.5);    // 3.52 becomes 4 without '-0.5'!
-   fpart -= ival;
-//   VSum  |= ival;
-   ival  += '0';
-   *(ptr++) = ival;
-  } 
- *(ptr) = 0;     // Make Optional
- if(size)*size = sc;
- return res;
+ if(ipart){ for(;ipart;ptr--){*ptr = (ipart % 10) + '0'; ipart /= 10;} }
+   else *(ptr--) = '0';
+ if(negative)*ptr = '-';  
+  else ptr++;     
+ if(size)*size = len - (ptr - res);  
+ return ptr;
 }
- 
+//------------------------------------------------------------------------------------ 
 extern "C" char* _cdecl gcvt(double f, size_t ndigit, char* buf)
 {
- char* xbuf = ftoa_simple(f, buf, ndigit, 0);   // ndigit after point?
- memmove(buf,xbuf,xbuf-buf);    // Move string to beginning of buffer
+ unsigned int size = 0;
+ char Tmp[64];
+ char* xbuf = ftoa_simple(f, ndigit, Tmp, sizeof(Tmp), &size);   // ndigit after point?
+ memmove(buf,xbuf,size+1);    // Move string to beginning of buffer
  return buf;
 }
+//------------------------------------------------------------------------------------
+void FTOA_Test(void)
+{
+ char* ptr;
+ unsigned int size = 0;
+ char Buf[64];
+ ptr = ftoa_simple(7.123, 0, (char*)&Buf, sizeof(Buf), &size);
+ ptr = ftoa_simple(9.000001, 6, (char*)&Buf, sizeof(Buf), &size);
+ ptr = ftoa_simple(9.123, 6, (char*)&Buf, sizeof(Buf), &size);
+ ptr = ftoa_simple(9.123, 6|ffZeroPad, (char*)&Buf, sizeof(Buf), &size);
+ ptr = ftoa_simple(7.0, 6|ffZeroPad, (char*)&Buf, sizeof(Buf), &size);
+ ptr = ftoa_simple(9.0, 6, (char*)&Buf, sizeof(Buf), &size);
+ ptr = ftoa_simple(8.0, 6|ffSkipZeroFrac, (char*)&Buf, sizeof(Buf), &size);
+ ptr = ftoa_simple(8.1, 6|ffSkipZeroFrac, (char*)&Buf, sizeof(Buf), &size);
+ ptr = 0;
+}
+//------------------------------------------------------------------------------------
 
 /*#include "math.h"
 #include <stdio.h>

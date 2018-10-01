@@ -56,6 +56,19 @@ public:
    return &entry->Element;
   }
 //----------------------
+T*   GetNextCyc(T* Element)            // Check List to NULL or GetHead is enough?    // As in .NET:  NextCyclic
+  {
+   SEntry* entry = this->EntryFromElement(Element)->Next;  // Last is Tail
+   return &entry->Element;
+  }
+//----------------------
+ T*   GetPrevCyc(T* Element)            // Check List to NULL or GetTail is enough?  // As in .NET:  PreviousCyclic    
+  {
+   SEntry* entry = this->EntryFromElement(Element)->Prev; // Last is Head
+   return &entry->Element;
+  }
+//----------------------
+
  T* Add(T* Element, PUINT Index=NULL){return this->Insert(Element,NULL,Index);}
  T* AddNew(PUINT Index=NULL){return this->Insert(NULL,Index);}
 //----------------------

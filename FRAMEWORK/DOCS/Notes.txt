@@ -1,0 +1,15 @@
+/* Memory allocations:
+Hard faults are what you are thinking of - these are where data is not in RAM and has to pulled in from the swap file. 
+They cripple performance (being 10 000's of times slower than RAM access for mechanical hard drives).
+
+Soft faults, however, are triggered by pages that the program requests to be zero (demand zero pages), 
+when a page is written to for the first time (if it was a copy on write page) or if the page is already in memory 
+somewhere else (usually when shared between multiple processes). These are not so bad for performance.
+*/
+
+
+// LinkedList: Less excess operations but many cache misses(But equal perfamance for a CPU wilh a small cache)
+//        PRO: Fast sorted insertion(No memory movement required as for arrays)
+//        CON: Slow sequential access(Cache misses)
+//  Good for StringPool, when strings are owned by some objects and accessed through them
+//

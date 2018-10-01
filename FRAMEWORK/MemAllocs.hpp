@@ -1,95 +1,93 @@
 
-#ifndef MemAllocatorsH
-#define MemAllocatorsH
-
 #pragma once
 
-/*
-Hard faults are what you are thinking of - these are where data is not in RAM and has to pulled in from the swap file. 
-They cripple performance (being 10 000's of times slower than RAM access for mechanical hard drives).
-
-Soft faults, however, are triggered by pages that the program requests to be zero (demand zero pages), 
-when a page is written to for the first time (if it was a copy on write page) or if the page is already in memory 
-somewhere else (usually when shared between multiple processes). These are not so bad for performance.
-*/
 //===========================================================================
-template<ESMemPage Algn=mp4K, int MAllocGranMul=1, int MReserGranMul=1> struct SAllocLL    // Low level memory allocator(High perfomance, High Reserve amount) // MReserGranMul and MAllocGranMul must not be 0 
-{
- static const unsigned int MAlignment = Algn;
- static const unsigned int MAllocGran = MAllocGranMul * MEMPAGESIZE;
- static const unsigned int MReserGran = MReserGranMul * MEMGRANSIZE;
+template<ESMemPage MAlgn=mp4K, ESMemPage SAlgn=mp4K, SIZE_T MaxBLen=MAXMEMBLK, int MAllocGranMul=1, int MReserGranMul=1> struct SAllocLL    // Low level memory allocator(High perfomance, High Reserve amount) // MReserGranMul and MAllocGranMul must not be 0 
+{              // All of these functions and constants are mandatory
+ static const SIZE_T SAlignment = SAlgn;           // Pow2
+ static const SIZE_T MAlignment = MAlgn;           // Pow2  // If a platform`s alignment is smaller than specified alignment then some memory will be wasted on improvized alignment
+ static const SIZE_T MAllocGran = MAllocGranMul * MEMPAGESIZE;  // Not have to be Pow2
+ static const SIZE_T MReserGran = MReserGranMul * MEMGRANSIZE;  // Not have to be Pow2
+ static const SIZE_T MaxBlkSize = AlignFrwrdPow2(MaxBLen, SAlignment);
 
-static PVOID Allocate(SIZE_T Size, SIZE_T* Reserved)
+static inline PVOID FCALLCNV Allocate(SIZE_T Size, SIZE_T* Allocated, SIZE_T* Reserved)
 {
- return ReAlloc(nullptr, Size, Reserved);
+ return Realloc(nullptr, Size, 0, Allocated, Reserved);
 }
 //-----------------------------------------
-static PVOID ReAlloc(PVOID Mem, SIZE_T Size, SIZE_T* Reserved)      // Pointer may become invalid!
+static inline PVOID FCALLCNV Realloc(PVOID Mem, SIZE_T Size, SIZE_T OldSize, SIZE_T* Allocated, SIZE_T* Reserved)      // Pointer stays valid, but reallocation for a bigger saze may fail
 {
- SIZE_T ASize = AlignFrwrd(Size, MAllocGran);
- SIZE_T RSize = AlignFrwrd(Size, MReserGran);
- PVOID  Ptr   = Platform::AllocMemLL(ASize, Mem, RSize, Algn);      // Commits a reserved pages and tries to commit more(Can fail!)
- if(Reserved)*Reserved = RSize;
+ SIZE_T ASize = AlignFrwrdPow2(AlignFrwrd(Size, MAllocGran), SAlignment);   // Alignment applied to Base and Size
+ SIZE_T RSize = AlignFrwrdPow2(AlignFrwrd(Size, MReserGran), SAlignment);
+ if(ASize > RSize)RSize  = ASize;  // Can happen when MEMPAGESIZE is same as MEMGRANSIZE
+ if(Allocated)*Allocated = ASize;  // Sets result to know on which size we failed
+ if(Reserved)*Reserved   = RSize;
+ if((RSize > MaxBlkSize)||(ASize > MaxBlkSize))return nullptr;
+ PVOID  Ptr   = NPTM::AllocMemLL(Mem, OldSize, ASize, RSize, MAlignment|MEMNORELOCATE);      // Commits a reserved pages and tries to commit more(Can fail!)
  return Ptr;
 }
 //-----------------------------------------
-static SIZE_T Resize(PVOID Mem, SIZE_T Size, SIZE_T Reserved)    // Expands an allocated memory in a reserved range
+static inline SIZE_T FCALLCNV Resize(PVOID Mem, SIZE_T Size, SIZE_T Reserved)    // Expands allocated memory in a reserved range only
 {
  if(Size > Reserved)Size = Reserved;
- SIZE_T ASize = AlignFrwrd(Size, MAllocGran);
- if(ASize)Platform::AllocMemLL(ASize, Mem, 0, Algn);    // ASize allowed to be 0
+ SIZE_T ASize = AlignFrwrdPow2(AlignFrwrd(Size, MAllocGran), SAlignment);    // Alignment applied to Base and Size
+ if(ASize)NPTM::AllocMemLL(Mem, 0, ASize, 0, MAlignment|MEMNORELOCATE);     // ASize allowed to be 0
  Reserved -= ASize;
  if(Reserved)Release(&((PUINT8)Mem)[ASize], Reserved);  // Decommit rest of the block and keep memory pages reserved
  return Size;
 }
 //-----------------------------------------
-static void Release(PVOID Mem, SIZE_T Size)
+static inline void FCALLCNV Release(PVOID Mem, SIZE_T Size)
 {
- Platform::FreeMemLL(Mem,Size);    // Releases an entire pages
+ NPTM::FreeMemLL(Mem,Size);    // Releases an entire pages
 }
 //-----------------------------------------
-static void Free(PVOID Mem)
+static inline void FCALLCNV Free(PVOID Mem)
 {
- Platform::FreeMemLL(Mem,0);
+ NPTM::FreeMemLL(Mem,0);
 }
 //-----------------------------------------
 };
 //===========================================================================
-template<ESMemPage Algn=mp4K, int MAllocGranMul=1, int MReserGranMul=1> struct SAllocHL   // High level memory allocator(Low perfomance, Low Reserve amount) // MReserGranMul and MAllocGranMul have same meaning here
+template<ESMemPage MAlgn=mpNO, ESMemPage SAlgn=mpNO, SIZE_T MaxBLen=MAXMEMBLK, int MAllocGranMul=0, int MReserGranMul=0> struct SAllocHL   // High level memory allocator(Low perfomance, Low Reserve amount) // MReserGranMul and MAllocGranMul have same meaning here
 {
- static const unsigned int MAlignment = Algn;
- static const unsigned int MAllocGran = MAllocGranMul * 256; 
- static const unsigned int MReserGran = MReserGranMul * 256;  
+ static const SIZE_T SAlignment = SAlgn;
+ static const SIZE_T MAlignment = MAlgn;
+ static const SIZE_T MAllocGran = MAllocGranMul * 256; 
+ static const SIZE_T MReserGran = MReserGranMul * 256;  
+ static const SIZE_T MaxBlkSize = AlignFrwrdPow2(MaxBLen, SAlignment);
 
-static PVOID Allocate(UINT Size, SIZE_T* Reserved)
+static inline PVOID FCALLCNV Allocate(UINT Size, SIZE_T* Allocated, SIZE_T* Reserved)
 {
- return ReAlloc(nullptr, Size, Reserved);
+ return Realloc(nullptr, Size, 0, Allocated, Reserved);
 }
 //-----------------------------------------
-static PVOID ReAlloc(PVOID Mem, SIZE_T Size, SIZE_T* Reserved)     // Pointer may become invalid!
+static inline PVOID FCALLCNV Realloc(PVOID Mem, SIZE_T Size, SIZE_T OldSize, SIZE_T* Allocated, SIZE_T* Reserved)     // Pointer may become invalid!
 {
- SIZE_T ASize = (MAllocGran)?(AlignFrwrd(Size, MAllocGran)):(Size);
- PVOID  Ptr   = Platform::AllocMemHL(ASize, Mem, 0, Algn);           // TODO: Use 'Expand' function if possible
- if(Reserved)*Reserved = ASize;                                    // Not 'Reserved' but 'Allocated'
+ SIZE_T ASize = (MAllocGran)?(AlignFrwrd(Size, MAllocGran)):(Size);       // No Base and Size alignment used
+ if(Allocated)*Allocated = ASize;                                   
+ if(Reserved)*Reserved   = ASize;                                  // Not 'Reserved' but 'Allocated'
+ if(ASize > MaxBlkSize)return nullptr;
+ PVOID  Ptr   = NPTM::AllocMemHL(Mem, OldSize, ASize, 0, MAlignment);           // TODO: Use 'Expand' function if possible
  return Ptr;
 }
 //-----------------------------------------
-static SIZE_T Resize(PVOID Mem, SIZE_T Size, SIZE_T Reserved)    // Resizes an allocated memory within a reserved range  // Preserves memory block pointer // Can`t release unused memory pages!
+static inline SIZE_T FCALLCNV Resize(PVOID Mem, SIZE_T Size, SIZE_T Reserved)    // Resizes an allocated memory within a reserved range  // Preserves memory block pointer // Can`t release unused memory pages!
 {
  if(Size > Reserved)Size = Reserved;
  return Size;
 }
 //-----------------------------------------
-static void Release(PVOID Mem, SIZE_T Size)      // Accepts ONLY addr returned from AllocMemHL
+static inline void FCALLCNV Release(PVOID Mem, SIZE_T Size)      // Accepts ONLY addr returned from AllocMemHL
 {
  Free(Mem);
 }
 //-----------------------------------------
-static void Free(PVOID Mem)
+static inline void FCALLCNV Free(PVOID Mem)
 {
- Platform::FreeMemHL(Mem,0);
+ NPTM::FreeMemHL(Mem,0);
 }
 //-----------------------------------------
 };
 //===========================================================================
-#endif
+

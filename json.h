@@ -473,7 +473,7 @@ public:
  const LPSTR GetName(void){return this->Name;}
  const UINT  GetNameLen(void){return CountedStrLen(this->Name);}   // {return ((PDWORD)this->Name)[-1];}
  const UINT  GetValStrLen(void){return CountedStrLen(this->Value.StringVal);} 
- void  SetName(const LPSTR name){SetString(&this->Name,name,0);}
+ void  SetName(const LPSTR name, UINT Len=0){SetString(&this->Name,name,Len);}
  void  SetType(const EJSonType type){this->Type = type;}
 
  __int64 GetValInt(void){return this->Value.IntVal;}
@@ -499,7 +499,7 @@ public:
  void  SetValInt(const __int64 val){this->Value.IntVal = val;}
  void  SetValBol(const bool    val){this->Value.BoolVal = val;}
  void  SetValFlt(const double  val){this->Value.FloatVal = val;}
- void  SetValStr(const char*   val){SetString(&this->Value.StringVal,val,0);}
+ void  SetValStr(const char*   val, UINT Len=0){SetString(&this->Value.StringVal,val,Len);}
 
 /* void  SetVal(const int     val){this->Value.IntVal = val;}
  void  SetVal(const __int64 val){this->Value.IntVal = val;}

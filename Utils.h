@@ -559,7 +559,7 @@ template<typename T, typename S> S ConvertToHexStr(T Value, int MaxDigits, S Num
 //---------------------------------------------------------------------------
 //template<typename T> T _fastcall CharLowSimple(T val) {return (((val >= 'A') && (val <= 'Z')) ? (val + 0x20) : (val));}
 
-template<typename T> bool _fastcall IsStrEqSimpleIC(T StrA, T StrB, int MaxLen=-1)
+/*template<typename T> bool _fastcall IsStrEqSimpleIC(T StrA, T StrB, int MaxLen=-1)
 {
  for(int ctr = 0; (MaxLen < 0) || (ctr < MaxLen); ctr++)
   {
@@ -567,7 +567,7 @@ template<typename T> bool _fastcall IsStrEqSimpleIC(T StrA, T StrB, int MaxLen=-
    if(!StrA[ctr])break;
   }
  return true;
-}
+} */
 //---------------------------------------------------------------------------
 template<typename T, typename S> S DecNumToStrS(T Val, S buf, UINT* Len=0)     
 {

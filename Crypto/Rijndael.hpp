@@ -14,11 +14,12 @@
 // Java code authors: Raif S. Naffah, Paulo S. L. M. Barreto
 // This Implementation was tested against KAT test published by the authors of the method and the results were identical.
 //
-template<int iMode=0, int keylen=16, int blklen=16> class CRijndael
+class CRijndael
 {
-static const int KeyLength = (keylen >= 128)?(keylen / 8):keylen;  // Key Length   // Defining its here will cause many functions to be templated and code will bloat but for speed and protection it is better
-static const int BlockSize = (blklen >= 128)?(blklen / 8):blklen;  // Block Size
-static const int RoundsNum = (KeyLength == 16)?((BlockSize == 16) ? 10 : (BlockSize == 24 ? 12 : 14)):((KeyLength == 24)?((BlockSize != 32) ? 12 : 14):(14));
+ int KeyLength;  // Key Length   // Defining its here will cause many functions to be templated and code will bloat but for speed and protection it is better
+ int BlockSize;  // Block Size
+ int RoundsNum;
+ int iMode;
 
 public:
 // Operation Modes:
@@ -58,10 +59,17 @@ static inline int Mul4(int a, char b[]) // Convenience method used in generating
 }  
 //------------------------------------------------------------------------------------		
 public:	
- CRijndael(){};   // Memset this to 0?
- ~CRijndael(){};  // Memset this to 0?
-
- void SetChain(char* chain){ memcpy(m_chain, chain, BlockSize); }         
+CRijndael(int iMode=ECB, int keylen=16, int blklen=16)   // Memset this to 0?
+{
+ this->KeyLength = (keylen >= 128)?(keylen / 8):keylen;  // Key Length   // Defining its here will cause many functions to be templated and code will bloat but for speed and protection it is better
+ this->BlockSize = (blklen >= 128)?(blklen / 8):blklen;  // Block Size
+ this->RoundsNum = (KeyLength == 16)?((BlockSize == 16) ? 10 : (BlockSize == 24 ? 12 : 14)):((KeyLength == 24)?((BlockSize != 32) ? 12 : 14):(14));	
+ this->iMode     = iMode;
+};   
+//------------------------------------------------------------------------------------		
+~CRijndael(){};  // Memset this to 0?
+//------------------------------------------------------------------------------------		
+void SetChain(char* chain){ memcpy(m_chain, chain, BlockSize); }         
 //------------------------------------------------------------------------------------		
 //Expand a user-supplied key material into a session key.
 // key        - The 128/192/256-bit user-key to use.
