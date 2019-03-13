@@ -1,8 +1,8 @@
 
 #pragma once
 
-#ifndef HexEditorH
-#define HexEditorH
+#ifndef DisEditorH
+#define DisEditorH
 /*
   Copyright (c) 2018 Victor Sheinmann, Vicshann@gmail.com
 
@@ -19,7 +19,7 @@
 
 #include <Windows.h>
 //---------------------------------------------------------------------------
-class CHexEditor
+class CDisAsmEditor
 {
 public:
 static const COLORREF ClrDisabled = 0x80000000;
@@ -81,56 +81,27 @@ public:
 //-------------------------------------
 
 private:
-struct CSelArray
-{
 struct SSelRec
 {
- UINT64 SelFirst;
+ WORD   OffsFirst;  // Chars
+ WORD   OffsLast;
+ UINT64 SelFirst;   // Addr, meaning a line
  UINT64 SelLast;
- COLORREF Color;
 };
- SSelRec* Array;
- UINT Number;
-//---------
- CSelArray(void){memset(this,0,sizeof(CSelArray));}     // FillMemory(this,sizeof(CSelArray),0x00);}
- ~CSelArray(void){this->Clear();}
-//---------
- void Clear(void)
-  {
-   this->Number = 0;
-   HeapFree(GetProcessHeap(),0,this->Array);
-   this->Array  = NULL;
-  }
-//---------
- void Add(UINT64 First, UINT64 Last, COLORREF Color)
-  {
-   this->Number++;
-   if(!this->Array)this->Array = (SSelRec*)HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,(this->Number * sizeof(SSelRec))+64);
-	 else this->Array = (SSelRec*)HeapReAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,this->Array,(this->Number * sizeof(SSelRec))+64);
-   this->Array[this->Number-1].SelFirst = First;
-   this->Array[this->Number-1].SelLast  = Last;
-   this->Array[this->Number-1].Color    = Color;
-  }
-//---------
- void Del(UINT Index)
-  {
-   if(Index >= this->Number)return;
-   this->Number--;
-   if(Index < this->Number)memcpy(&this->Array[Index],&this->Array[Index+1],(this->Number-Index)*sizeof(SSelRec));     // CopyMemory
-   if(this->Number > 0)this->Array = (SSelRec*)HeapReAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,this->Array,(this->Number * sizeof(SSelRec))+64);
-	 else {HeapFree(GetProcessHeap(),0,this->Array);this->Array=NULL;}
-  }
-//---------
- SSelRec* Get(UINT Index)
-  {
-   if(Index >= this->Number)return NULL;
-   return &this->Array[Index];
-  }
- UINT Count(void){return this->Number;}
+
+struct SAddrRec      // Each for a line
+{
+ UINT64 Addr;
+ WORD   PixOffs;
+ WORD   ChrOffs;
+ BYTE   Size;
+ BYTE   Length;
+ BYTE   Text[32];
 };
-//-------------------------------------
+
 enum ECursMove {cmTop,cmCenter,cmBottom};
  CByteSource* DataSrc;
+ SAddrRec* AddrLines;
  UINT64 SelFirst;
  UINT64 SelLast;
  UINT64 DataPos;   // When set, must be valid for DataSrc::Size
@@ -162,16 +133,16 @@ enum ECursMove {cmTop,cmCenter,cmBottom};
  int CharWidth;
  int CharHeight;
  int ColDelSize;   // Size of column delimiter in chars
- int BytesInRow;
- int VisibleBytes;
- bool RebuildHls;
+// int BytesInRow;   // Dynamic
+// int VisibleBytes;    // ????????????????????????????
+// bool RebuildHls;
  bool NeedRedraw;
- bool CursSecHalf;
- bool CursVisible;
+// bool CursSecHalf;
+// bool CursVisible;
  BITMAPINFO SelBmp;
  COLORREF*  SelPixs;
- COLORREF*  SelHigh;
- CSelArray  SelArr;
+// COLORREF*  SelHigh;
+ SSelRec    CurSel;
 
 //---------------------------------------------
 static WORD HexToCharUpC(BYTE Value)
@@ -198,82 +169,115 @@ static bool TrimRange(UINT64& First, UINT64& Last, UINT64 TrimToLen)  // Returns
  return true;
 }
 //---------------------------------------------
+void UpdateDisasm(void)
+{
+ int   TxTop = 0;
+ UINT64 DLen = this->DataSrc->GetSize();
+ UINT64 DPtr = this->DataPos;
+ for(int ctr=0;ctr < this->MaxLines;ctr++,TxTop+=this->CharHeight)
+  {
+   UINT64 DPos = DPtr + this->DataOffs;  
+   this->AddrLines[ctr].Addr    = DPos;
+   this->AddrLines[ctr].PixOffs = TxTop;
+   this->AddrLines[ctr].ChrOffs = TxTop / this->CharHeight;
+   UINT TxtLen = 0;
+   int len = this->cbkDisasmAddr(this->UsrCtx, DPos, (char*)&this->AddrLines[ctr].Text, &TxtLen);
+   if(len < 0)break;  
+   this->AddrLines[ctr].Size   = len;
+   this->AddrLines[ctr].Length = TxtLen;
+   DPtr += len;
+  }
+}
+//---------------------------------------------
 void DrawData(void)    // TODO: Draw to memory and blend with selection only when changed
 {
  BYTE Line[1056]; // Addr=8(16)+2+2, Data*4 = Max 256 BytesInRow
- BYTE Data[256];
+ BYTE Data[64];
+// BYTE Text[256];
  int   TxTop = 0;
  int   ASize = this->AddrSize - 1;
- int   BLeft = this->VisibleBytes;
+// int   BLeft = this->VisibleBytes;
  UINT64 DLen = this->DataSrc->GetSize();
  UINT64 DPtr = this->DataPos;
  if(!DLen)return;
- memset(&Line, 0x20, sizeof(Line));  // FillMemory(&Line,sizeof(Line),0x20);
- for(int ctr=0;(ctr < this->MaxLines)&&(BLeft > 0);ctr++,DPtr+=this->BytesInRow,BLeft-=this->BytesInRow,TxTop+=this->CharHeight)
+ memset(&Line, 0x20, sizeof(Line));  
+ for(int ctr=0;ctr < this->MaxLines;ctr++,TxTop+=this->CharHeight)
   {
    int    LPos = 0;
-   int    BRow = (BLeft > this->BytesInRow)?(this->BytesInRow):(BLeft);
-   UINT64 DPos = DPtr + this->DataOffs;
-   this->DataSrc->ReadBlock((PBYTE)&Data, DPtr, this->BytesInRow);
+   UINT64 DPos = DPtr + this->DataOffs;  
+//   this->AddrLines[ctr].Addr    = DPos;
+//   this->AddrLines[ctr].PixOffs = TxTop;
+//   this->AddrLines[ctr].ChrOffs = TxTop / this->CharHeight;
    for(int actr=0;actr <= ASize;actr++,LPos+=2)     // Write Addr field
 	{                                              
-	 WORD chr = HexToCharUpC(((PBYTE)&DPos)[actr]);
+	 WORD chr = HexToCharUpC(((PBYTE)&DPos)[actr]);   // Endianess!!!!!!!!!!!!!
 	 int CPos = (ASize-actr)*2;
 	 Line[CPos+0] = ((PBYTE)&chr)[0];
 	 Line[CPos+1] = ((PBYTE)&chr)[1];
 	}
+//   UINT TxtLen = 0;
+//   int len = this->cbkDisasmAddr(this->UsrCtx, DPos, (char*)&Text, &TxtLen);
+//   if(len < 0)break;
+   int len = this->AddrLines[ctr].Size;
+   this->DataSrc->ReadBlock((PBYTE)&Data, DPos, len);
+   DPtr += len;
    LPos += this->ColDelSize;
-   for(int dctr=0;dctr < BRow;dctr++,LPos+=3)       // Write data field
+   for(int dctr=0;dctr < len;dctr++,LPos+=3)       // Write data field
 	{
 	 WORD chr = HexToCharUpC(Data[dctr]);
 	 Line[LPos+0] = ((PBYTE)&chr)[0];
 	 Line[LPos+1] = ((PBYTE)&chr)[1];
-	}
-   for(;LPos < this->TxtOff;LPos++)Line[LPos] = 0x20;
-   for(int dctr=0;dctr < BRow;dctr++,LPos++)        // Write Text field
-	{
-	 BYTE Val = Data[dctr];
-	 if(Val < 0x20)Val = '.';
-	 Line[LPos] = Val;
-	}
-   TextOutA(this->hMemDC,0,TxTop,(LPSTR)&Line,LPos);   // No UNICODE for now
+	}                                                    
+   for(;LPos < this->TxtOff;LPos++)Line[LPos] = 0x20;     // TODO: Data bytes TAB
+   memcpy(&Line[LPos], &this->AddrLines[ctr].Text, this->AddrLines[ctr].Length);  ///////////// lstrcatA((char*)&Line[LPos], (char*)&Text);   // Write disasm field
+   LPos += this->AddrLines[ctr].Length;               
+   BOOL res = TextOutA(this->hMemDC,0,TxTop,(LPSTR)&Line,LPos);   // No UNICODE for now
+   res++;
   }
 }
 //---------------------------------------------
-void DrawCursor(HDC TgtDc)
+SAddrRec* FindRecForAddr(UINT64 Addr, int* Index=nullptr)
 {
- RECT RHex;
- RECT RTxt;
- int  HexX, TxtX, HexY, TxtY;
-
- if(!BytePosToChars(this->CursPos, &HexX, &TxtX, &HexY))return;
- TxtY  = HexY;
- HexX += (bool)this->CursSecHalf;
- bool DoHex = true;
- bool DoTxt = true;
- if(HexX < this->MaxChars)CharToPixel(HexX, HexY, true);
-   else DoHex = false;
- if(TxtX < this->MaxChars)CharToPixel(TxtX, TxtY, true);
-   else DoTxt = false;
- if(DoHex)
+ for(int ctr=0;ctr < this->MaxLines;ctr++)
   {
-   RHex.top    = HexY;
-   RHex.left   = HexX;
-   RHex.right  = HexX + this->CharWidth;
-   RHex.bottom = HexY + this->CharHeight;
-   InvertRect(TgtDc,&RHex);
+   if(this->AddrLines[ctr].Addr == Addr)
+    {
+     if(Index)*Index = ctr;
+     return &this->AddrLines[ctr];
+    }
   }
- if(DoTxt)
+ return nullptr;
+}
+//---------------------------------------------
+// When starting selection on address area - select by lines. When on bytes or instruction area - select as text(including multiline and comments)
+// Cursor marks only address, selection of the line follows when stepping
+// Cursor coordinates updated by DrawData
+// Selections are done without any caret display
+// Cursor is current PC pointer
+//
+void DrawCursor(HDC TgtDc)    // PC and sel cursor
+{
+ RECT RAddr;
+ if(SAddrRec* Addr = this->FindRecForAddr(this->CursPos))
   {
-   RTxt.top    = TxtY;
-   RTxt.left   = TxtX;
-   RTxt.right  = TxtX + this->CharWidth;
-   RTxt.bottom = TxtY + this->CharHeight;
-   InvertRect(TgtDc,&RTxt);
+   RAddr.top    = this->WTop + Addr->PixOffs;
+   RAddr.left   = 0;    // No margin?????
+   RAddr.right  = (this->AddrSize*2) * this->CharWidth;
+   RAddr.bottom = RAddr.top + this->CharHeight;
+   InvertRect(TgtDc, &RAddr);  
+  }
+ if(SAddrRec* Addr = this->FindRecForAddr(this->CurSel.SelLast))  // SEL cursor always marks a char at end of selection
+  {
+   if((this->CursPos == this->CurSel.SelLast) && (this->CurSel.SelLast == this->CurSel.SelFirst) && !this->CurSel.OffsLast)return;  // Do not draw SEL cursor at PC cursor automatically
+   RAddr.top    = this->WTop + Addr->PixOffs;
+   RAddr.left   = this->CurSel.OffsLast * this->CharWidth;    // No margin?????
+   RAddr.right  = RAddr.left + this->CharWidth;
+   RAddr.bottom = RAddr.top  + this->CharHeight;
+   InvertRect(TgtDc, &RAddr);  
   }
 }
 //---------------------------------------------
-void HighlightChar(int X, int Y, COLORREF Color, COLORREF* Pixels, int PixStep=1) // Note: No bounds check here!
+void HighlightChar(int X, int Y, COLORREF Color, COLORREF* Pixels, int PixStep=1) // Note: No bounds check here!  //By pixels - slow! :: TODO: FillRect(xor)? 
 {
  if(X >= this->MaxChars)return;
  int PixPosX = (this->CharWidth  * X);
@@ -290,65 +294,45 @@ void HighlightChar(int X, int Y, COLORREF Color, COLORREF* Pixels, int PixStep=1
   }
 }
 //---------------------------------------------
-void HighlightRange(ESelType Type, UINT64 First, UINT64 Last, COLORREF Color, COLORREF* Pixels)  // Highlites only visible part of Range
+void HighlightRange(SSelRec* Sel, COLORREF Color, COLORREF* Pixels)  // Highlites only visible part of Range
 {
- if(Last < First){UINT64 tmp = First; First = Last; Last = tmp;}  // Exchange
- UINT64 Vis = (this->DataPos+this->VisibleBytes);
- if((Last < this->DataPos)||(First >= Vis))return;  // Not visible
-
- int OffTo   = ((Last >= Vis)?(this->VisibleBytes):(Last-this->DataPos));
- int OffFrom = ((First <= this->DataPos)?(0):(First - this->DataPos));
- int Range   = OffTo - OffFrom + 1;
- int FLine   = OffFrom / this->BytesInRow;
- int LLine   = OffTo   / this->BytesInRow;
- if(LLine >= this->MaxLines)LLine = this->MaxLines-1;
-
- if(Type == stDisp)   // Select as DISPLAY text
+ if(!this->AddrLines)return;
+ if(this->AddrLines[0].Addr > Sel->SelLast)return;
+ if(this->AddrLines[this->MaxLines-1].Addr < Sel->SelFirst)return;
+ if((Sel->SelFirst == Sel->SelLast) && (Sel->OffsFirst == Sel->OffsLast) && (Sel->OffsFirst || (Sel->SelFirst != this->CursPos)))return;  // No visible SEL range, only SEL cursor
+ for(int ctr=0;ctr < this->MaxLines;ctr++)
   {
-   for(int ypos=FLine;ypos <= LLine;ypos++)
-	{
-	 for(int xpos=0;xpos < MaxChars;xpos++)this->HighlightChar(xpos, ypos, Color, Pixels);
-	}
-   return;
-  }
-
- int HexFill = 1;// + (Type != stHex) - (Type == stCustom);
- int TxtFill = 1;// + (Type != stText)- (Type == stCustom);
- for(int ypos=FLine,LnOffs=(OffFrom % this->BytesInRow);ypos <= LLine;ypos++)
-  {
-   bool DoSel = true;
-   for(int xpos=LnOffs;DoSel;) 
-	{
-	 int xoffs = xpos * 3;
-	 this->HighlightChar(xpos+TxtOff, ypos, Color, Pixels, TxtFill);
-	 xpos++;
-	 Range--;
-	 DoSel = (xpos < this->BytesInRow)&&(Range > 0);
-	 this->HighlightChar(xoffs+HexOff, ypos, Color, Pixels, HexFill);
-	 this->HighlightChar(xoffs+HexOff+1, ypos, Color, Pixels, HexFill);
-	 if(DoSel)this->HighlightChar(xoffs+HexOff+2, ypos, Color, Pixels, HexFill);
-	}
-   LnOffs = 0;
+   SAddrRec* Addr = &this->AddrLines[ctr];
+   int XOffs = 0;
+   int XChrs = this->MaxChars;
+   if(Addr->Addr < Sel->SelFirst)continue;
+   if(Addr->Addr > Sel->SelLast)break;
+   if(Addr->Addr == Sel->SelFirst)
+    {
+     XOffs  = Sel->OffsFirst;
+     XChrs -= XOffs;
+    }
+   else if(Addr->Addr == Sel->SelLast)XChrs -= Sel->OffsLast;
+   for(int xpos=XOffs;xpos < XChrs;xpos++)this->HighlightChar(xpos, Addr->ChrOffs, Color, Pixels);
   }
 }
 //---------------------------------------------
-void DrawHighlights(bool HiRedraw)
+void DrawHighlights(void) //bool HiRedraw)
 {
- if(HiRedraw)
+/* if(HiRedraw)
   {
    for(int ctr=0,total=(this->WWidth*this->WHeight);ctr < total;ctr++)this->SelHigh[ctr] = this->BgrClr;
-   CSelArray::SSelRec* sel = NULL;
-   for(int Index=0;sel = SelArr.Get(Index);Index++)if((int)sel->Color >= 0)this->HighlightRange(stCustom, sel->SelFirst, sel->SelLast, sel->Color, this->SelHigh);
-  }
+   this->HighlightRange(stCustom, sel->SelFirst, sel->SelLast, sel->Color, this->SelHigh);
+  }*/
  for(int ctr=0,total=(this->WWidth*this->WHeight);ctr < total;ctr++)this->SelPixs[ctr] = this->BgrClr;   // Clear selection
- if(this->SelType)this->HighlightRange(this->SelType, this->SelFirst, this->SelLast, this->SelClr, this->SelPixs);   // Redraw selection
- for(int ctr=0,total=(this->WWidth*this->WHeight);ctr < total;ctr++)
+ this->HighlightRange(&this->CurSel, this->SelClr, this->SelPixs);   // Redraw selection
+/* for(int ctr=0,total=(this->WWidth*this->WHeight);ctr < total;ctr++)
   {
    if(this->SelHigh[ctr] == this->BgrClr)continue;  // Nothing to copy
    if(this->SelPixs[ctr] == this->BgrClr)this->SelPixs[ctr] = this->SelHigh[ctr];  // Direct copy
 	 else this->SelPixs[ctr] = (this->SelPixs[ctr] ^ this->SelHigh[ctr]) & 0x00FFFFFF;
-  }
- SetDIBits(this->hMemDC,this->hMemBmp,0,this->WHeight,this->SelPixs,&this->SelBmp,DIB_RGB_COLORS);
+  } */
+ SetDIBits(this->hMemDC,this->hMemBmp,0,this->WHeight,this->SelPixs,&this->SelBmp,DIB_RGB_COLORS); 
 }
 //---------------------------------------------
 bool PixelToChar(int& X, int& Y, bool Margin)   // In owner window coordinates
@@ -372,7 +356,7 @@ bool CharToPixel(int& X, int& Y, bool Margin)
  return true;
 }
 //---------------------------------------------
-UINT64 CharToBytePos(int X, int Y, ESelType* Type=NULL)
+/*UINT64 CharToBytePos(int X, int Y, ESelType* Type=NULL)
 {
  if(X < this->AdrChrs)           // Address zone
   {
@@ -403,9 +387,9 @@ UINT64 CharToBytePos(int X, int Y, ESelType* Type=NULL)
  UINT64 res = this->DataPos + ByteOffs;
  if(res >= this->DataSrc->GetSize()){if(Type)*Type = stNone; return -2;}
  return res;
-}
+} */
 //---------------------------------------------
-bool BytePosToChars(UINT64 Pos, int* HexX, int* TxtX, int* PosY)
+/*bool BytePosToChars(UINT64 Pos, int* HexX, int* TxtX, int* PosY)
 {
  if((Pos < this->DataPos)||(Pos >= (this->DataPos+this->VisibleBytes)))return false; // Not in visible range
  int Offset = Pos - this->DataPos;
@@ -415,19 +399,23 @@ bool BytePosToChars(UINT64 Pos, int* HexX, int* TxtX, int* PosY)
  if(TxtX)*TxtX = this->TxtOff + LOff;
  if(HexX)*HexX = (this->HexOff)+(LOff*3);   // First char of the pair
  return true;
-}
+} */
 //---------------------------------------------
-void ReleaseTarget(void)
+void ReleaseTarget(void)    // TODO: Reallocate buffers only when size changes
 {
  if(this->hMemBmp)DeleteObject(this->hMemBmp);
  if(this->hMemDC )DeleteDC(this->hMemDC);
  if(this->SelPixs){HeapFree(GetProcessHeap(),0,this->SelPixs);this->SelPixs=NULL;}
- if(this->SelHigh){HeapFree(GetProcessHeap(),0,this->SelHigh);this->SelHigh=NULL;}
+// if(this->SelHigh){HeapFree(GetProcessHeap(),0,this->SelHigh);this->SelHigh=NULL;}
+ if(this->AddrLines){HeapFree(GetProcessHeap(),0,this->AddrLines);this->AddrLines=NULL;}
 }
 //---------------------------------------------
 
 
 public:
+void* UsrCtx;
+int (_cdecl *cbkDisasmAddr)(void* Ctx, UINT64 Addr, char* Str, UINT* Len);
+
 static long CharToHex(BYTE CharValue)
 {
  if((CharValue >= 0x30)&&(CharValue <= 0x39))return (CharValue - 0x30);		 // 0 - 9
@@ -495,68 +483,51 @@ static bool IsKeyCombinationPressed(UINT Combination)
  return true;
 }
 //---------------------------------------------------------------------------
-
-CHexEditor(void)
+CDisAsmEditor(void)
 {
- memset(this,0,sizeof(CHexEditor));  //    FillMemory(this,sizeof(CHexEditor),0x00);  // OK
+ memset(this,0,sizeof(CDisAsmEditor));  //    FillMemory(this,sizeof(CHexEditor),0x00);  // OK
  this->DataSrc     = nullptr;
- this->BytesInRow  = 16;
+// this->BytesInRow  = 16;
  this->ColDelSize  = 2;
  this->SelClr      = 0x00E0E0F0;
  this->TxtClr      = 0x00000000;
  this->BgrClr      = 0x00FFFFFF;
  this->CurClr      = 0x00505050;
- this->CursVisible = true;
+// this->CursVisible = true;
  this->CharWidth = this->CharHeight = 1; // No 'Division by Zero'
 }
 //---------------------------------------------
-~CHexEditor()
+~CDisAsmEditor()
 {
  this->ReleaseTarget();
 }
 //---------------------------------------------
 void Reset(void)
 {
- this->SelFirst = this->SelLast = 0;
+// this->SelFirst = this->SelLast = 0;
  this->SelType  = stNone;
- this->SelArr.Clear();   
+// this->SelArr.Clear();   
  this->SetPosition(0);   // Is cursor reset?
-}
-//---------------------------------------------
-UINT SelCount(void){return SelArr.Count();}
-bool AddSel(UINT64 First, UINT64 Last, COLORREF Color)
-{
- if(Last < First){UINT64 tmp = First; First = Last; Last = tmp;}  // Exchange
- //if((First >= this->DataLen)||(Last >= this->DataLen))return false;   // Not useful: Prevents from preparing a static selections table
- SelArr.Add(First,Last,Color);
- this->RebuildHls = true;
- return true;
-}
-//---------------------------------------------
-void DelSel(UINT Index)
-{
- SelArr.Del(Index);
- this->RebuildHls = true;
 }
 //---------------------------------------------
 bool GetSel(UINT Index, UINT64* First, UINT64* Last, COLORREF* Color)
 {
- CSelArray::SSelRec* sel = SelArr.Get(Index);
+/* CSelArray::SSelRec* sel = SelArr.Get(Index);
  if(!sel)return false;
  if(Color)*Color = sel->Color;
  if(First)*First = sel->SelFirst;
- if(Last)*Last   = sel->SelLast;
+ if(Last)*Last   = sel->SelLast; */
  return true;
 }
 //---------------------------------------------
 bool SetSel(UINT Index, UINT64 First, UINT64 Last, COLORREF Color)
 {
- CSelArray::SSelRec* sel = SelArr.Get(Index);
+/* CSelArray::SSelRec* sel = SelArr.Get(Index);
  if(!sel)return false;
  if((int)Color != ClrNoChange)sel->Color = Color;
  sel->SelFirst = First;
  sel->SelLast  = Last;
- this->RebuildHls = true;
+ this->RebuildHls = true;  */
  return true;
 }
 //---------------------------------------------
@@ -567,51 +538,64 @@ void SetDataSource(CByteSource* Src)
  this->SetPosition(0);
 }
 //---------------------------------------------
+UINT64 GetSelCurAddr(void)
+{
+ return this->CurSel.SelLast;
+}
+//---------------------------------------------
 bool GetSelection(UINT64* First, UINT64* Last)
 {
- if(this->SelType == stNone)return false;
+/* if(this->SelType == stNone)return false;
  if(First)*First = this->SelFirst;
- if(Last)*Last   = this->SelLast;
+ if(Last)*Last   = this->SelLast; */
  return true;
 }
 //---------------------------------------------
 void ClearSelection(void)
 {
- this->SelFirst = this->SelLast = 0;
+/* this->SelFirst = this->SelLast = 0;
  this->SelType  = stNone;
- this->Redraw(true);
+ this->Redraw(true);   */
 }
 //---------------------------------------------
 bool StartSelect(int X, int Y)   // Mouse
 {
  if(!this->PixelToChar(X, Y, true))return false;
- UINT64 BPos = CharToBytePos(X, Y, &this->SelType);
- if(this->SelType == stNone)this->SelFirst = this->SelLast = 0;
-   else this->SelFirst = this->SelLast = BPos;
- this->Redraw(true);
+ if(Y >= this->MaxLines)return false;
+ SAddrRec* Addr = &this->AddrLines[Y];
+ this->CurSel.SelFirst  = this->CurSel.SelLast  = Addr->Addr;
+ this->CurSel.OffsFirst = this->CurSel.OffsLast = X;
+ this->Redraw(true);   
  return true;
 }
 //---------------------------------------------
 bool StopSelect(int X, int Y)    // Mouse 
 {
- ESelType SType;
+/* ESelType SType;
  if(!this->PixelToChar(X, Y, true))return false;
  UINT64 BPos = CharToBytePos(X, Y, &SType);
  if(SType == stNone)return false;
  this->SelLast = BPos;
- this->Redraw(true);
+ this->Redraw(true);  */
  return true;
 }
 //---------------------------------------------
 bool TrackSelect(int X, int Y)  // Mouse 
 {
- ESelType SType;
+/* ESelType SType;
  if(!this->PixelToChar(X, Y, true))return false;
  UINT64 BPos = CharToBytePos(X, Y, &SType);
  if(SType != this->SelType)return false;
  this->SelLast = BPos;
- this->Redraw(true);
+ this->Redraw(true); */
  return true;
+}
+//---------------------------------------------
+void SelectAddr(UINT64 Addr)      // Simple selection to sync with PC
+{
+ this->CurSel.OffsFirst = this->CurSel.OffsLast = 0;
+ this->CurSel.SelFirst  = this->CurSel.SelLast  = Addr;
+ this->NeedRedraw = true;    // TODO: Separate DC for highlits
 }
 //---------------------------------------------
 bool SetTarget(HWND hWnd, HFONT Font, RECT* Margins=NULL, COLORREF TxtColor=-1, COLORREF BgrColor=-1, COLORREF SelColor=-1)  // Call this after each resize
@@ -666,64 +650,63 @@ bool SetTarget(HWND hWnd, HFONT Font, RECT* Margins=NULL, COLORREF TxtColor=-1, 
  this->SelBmp.bmiHeader.biBitCount    = 32;
  this->SelBmp.bmiHeader.biCompression = BI_RGB;
  this->SelPixs = (COLORREF*)HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,(this->WWidth*this->WHeight*sizeof(COLORREF))+64);
- this->SelHigh = (COLORREF*)HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,(this->WWidth*this->WHeight*sizeof(COLORREF))+64);
- this->RebuildHls = true;
+// this->SelHigh = (COLORREF*)HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,(this->WWidth*this->WHeight*sizeof(COLORREF))+64);
+ this->AddrLines  = (SAddrRec*)HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,(this->MaxLines+6)*sizeof(SAddrRec));
+// this->RebuildHls = true;
  this->SetPosition(this->DataPos);     // Recalc for a new window and Redraw at current position
  return true;
 }
 //---------------------------------------------
 void Redraw(bool Force=false)
 {
- if(Force || this->RebuildHls || this->NeedRedraw)
+ if(Force || /*this->RebuildHls ||*/ this->NeedRedraw)
   {
-   this->DrawHighlights(this->RebuildHls); // Only if needed
+   this->UpdateDisasm();
+   this->DrawHighlights();//this->RebuildHls); // Only if needed
    this->DrawData();       // Only if needed
-   this->RebuildHls = false;
+//   this->RebuildHls = false;
    this->NeedRedraw = false;
   }
  HDC hTgtDC = GetDC(this->TgtWnd);
  BitBlt(hTgtDC,this->WLeft,this->WTop,this->WWidth,this->WHeight,this->hMemDC,0,0,SRCCOPY);
- if(this->CursVisible)this->DrawCursor(hTgtDC);
+ this->DrawCursor(hTgtDC);
  ReleaseDC(this->TgtWnd,hTgtDC);
  ValidateRect(this->TgtWnd,&this->WrkRc);  // Prevent it from repainting by someone else
 }
 //---------------------------------------------
-bool SetPosition(UINT64 Pos, bool KeepLine=false)
+bool SetPosition(UINT64 Pos)
 {
- this->RebuildHls = true;
+ if(!this->TgtWnd)return false;
+// this->RebuildHls = true;
  this->NeedRedraw = true;
- if(KeepLine)Pos -= (Pos % this->BytesInRow);
  if(Pos != this->DataPos)
   {
    if(Pos >= this->DataSrc->GetSize())return false;
    this->DataPos = Pos;
-//   if(DataSrc->SetPosition(Pos))this->DataPos = Pos;
-//	 else return false;
   }
- UINT64 MaxDisp = this->BytesInRow * this->MaxLines;
+// UINT64 MaxDisp = this->BytesInRow * this->MaxLines;
  UINT64 DatLeft = this->DataSrc->GetSize() - this->DataPos;
- this->VisibleBytes = (DatLeft >= MaxDisp)?(MaxDisp):(DatLeft);
+// this->VisibleBytes = (DatLeft >= MaxDisp)?(MaxDisp):(DatLeft);
  UINT64 DPos = this->DataPos + this->DataOffs;
- this->AddrSize = (((DPos+this->VisibleBytes) > 0xFFFFFFFF)?(8):(4));
+ this->AddrSize = 4;//(((DPos+this->VisibleBytes) > 0xFFFFFFFF)?(8):(4));
  this->AdrChrs  = (this->AddrSize * 2);   // 1 byte == 2 chars to display
  this->HexOff   = this->AdrChrs + this->ColDelSize;
- this->TxtOff   = this->HexOff  + (this->BytesInRow * 3) + this->ColDelSize - 1;
- this->Redraw(true);
+ this->TxtOff   = this->HexOff  + (30) + this->ColDelSize - 1;     // ????????????
+ this->Redraw(true);  
  return true;
 }
 //---------------------------------------------
-bool SetCursorPos(UINT64 Pos, bool SecHalf=false)
+bool SetCursorPos(UINT64 Pos)
 {
  if(Pos >= this->DataSrc->GetSize())return false;
  this->CursPos     = Pos;
- this->CursSecHalf = SecHalf;
  this->Redraw();
  return true;
 }
 //---------------------------------------------
 bool SetCursorAt(int X, int Y)    // Pixel coords
 {
- if(!PixelToChar(X, Y, true))return false;
+/* if(!PixelToChar(X, Y, true))return false;
  ESelType SType;
  bool SecHalf = false;
  UINT64 BPos = CharToBytePos(X, Y, &SType);
@@ -735,20 +718,20 @@ bool SetCursorAt(int X, int Y)    // Pixel coords
    if(X > 1)return false;  // On delimiter
    SecHalf = (bool)X;
   }
- this->CurType = SType;
- return this->SetCursorPos(BPos, SecHalf);
+ this->CurType = SType;  */
+ return 0;//this->SetCursorPos(BPos, SecHalf);
 }
 //---------------------------------------------
-void ShowCursor(bool Show)
+/*void ShowCursor(bool Show)
 {
  this->CursVisible = Show;
  this->Redraw();
-}
+} */
 //---------------------------------------------
 bool StepLines(int Lines)
 {
- int Offs = Lines * this->BytesInRow;
- if(!this->SetPosition(this->DataPos + Offs))return false;
+/* int Offs = Lines * this->BytesInRow;
+ if(!this->SetPosition(this->DataPos + Offs))return false; */
  this->Redraw(true);
  return true;
 }
@@ -758,7 +741,7 @@ bool StepLines(int Lines)
 bool MoveToCursor(ECursMove Type, bool KeepLine=true)
 {
  UINT64 NewPos = this->CursPos;
- if(this->DataSrc->GetSize() >= this->VisibleBytes)
+/* if(this->DataSrc->GetSize() >= this->VisibleBytes)
   {
    switch(Type)
 	{
@@ -779,11 +762,11 @@ bool MoveToCursor(ECursMove Type, bool KeepLine=true)
 	}
   }
    else NewPos = 0;      // All data fits
- if(KeepLine)NewPos -= (NewPos % this->BytesInRow);
+ if(KeepLine)NewPos -= (NewPos % this->BytesInRow);   */
  return this->SetPosition(NewPos);
 }
 //---------------------------------------------
-bool InputValue(WCHAR Val, bool MoveCursor=true)  // HalfByte or FullChar
+/*bool InputValue(WCHAR Val, bool MoveCursor=true)  // HalfByte or FullChar
 {
  if(this->CurType == stNone)return false;
  if(this->CurType == stHex)
@@ -816,16 +799,17 @@ bool InputValue(WCHAR Val, bool MoveCursor=true)  // HalfByte or FullChar
  if(MoveCursor && !this->IsCursorVisible())return this->MoveToCursor(cmBottom,true);
  this->Redraw(true);
  return true;
-}
+} */
 //---------------------------------------------
 bool IsCursorVisible(void)
 {
- return ((this->CursPos >= this->DataPos)&&(this->CursPos < (this->DataPos + this->VisibleBytes)));
+ return (bool)this->FindRecForAddr(this->CursPos);
+// return true;//((this->CursPos >= this->DataPos)&&(this->CursPos < (this->DataPos + this->VisibleBytes)));   // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 }
 //---------------------------------------------
-UINT64 GetCursorPos(bool* SecHalf)
+UINT64 GetCursorPos(void)
 {
- if(SecHalf)*SecHalf = this->CursSecHalf;
+// if(SecHalf)*SecHalf = this->CursSecHalf;
  return this->CursPos;
 }
 //---------------------------------------------

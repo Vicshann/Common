@@ -448,7 +448,7 @@ int AddBlock(UINT TgtID, PVOID* Data, UINT Size)          // TgtID = 0 - Broadca
  this->NewMsg->TargetID = TgtID;
  if(LstMsg)this->NewMsg->PrevOffs = ((PBYTE)LstMsg - this->MBuf.BufferPtr()); 
    else this->NewMsg->PrevOffs = -1;
- DBGMSG("Adding: FirstBlk=%08X, LastBlk=%08X, Size=%08X, Sender=%08X, Target=%08X, MsgID=%08X, PrevOffs=%08X",FMsg,LMsg,FullLen,this->InstanceID,TgtID,Desc->NxtMsgID,this->NewMsg->PrevOffs);
+// DBGMSG("Adding: FirstBlk=%08X, LastBlk=%08X, Size=%08X, Sender=%08X, Target=%08X, MsgID=%08X, PrevOffs=%08X",FMsg,LMsg,FullLen,this->InstanceID,TgtID,Desc->NxtMsgID,this->NewMsg->PrevOffs);    // TODO: For Full debug log level
  this->SetValidHdr(this->NewMsg);    // Must be done before modification of FirstBlk and LastBlk (Not Synced msg enumeration)
  Desc->FirstBlk = FMsg;      
  Desc->LastBlk  = LMsg;      
@@ -820,7 +820,7 @@ int PutMsg(UINT16 MsgType, UINT16 MsgID, UINT32 DataID, PVOID MsgData, UINT Data
 //
 int ExchangeMsg(UINT16 MsgID, UINT16 MsgType, CArgBuf* Req, CArgBuf* Rsp, UINT TgtID=CSharedIPC::MSG_BROADCAST)
 {
- DBGMSG("Request: MsgID=%u, MsgType=%u, ReqSize=%08X",MsgID,MsgType,Req->GetLen());
+// DBGMSG("Request: MsgID=%u, MsgType=%u, ReqSize=%08X",MsgID,MsgType,Req->GetLen());   // TODO: For Full debug log level
  if(!this->IsConnected()){DBGMSG("Not connected!"); return -1;}
  if(!this->IsOtherConnections()){DBGMSG("No other connections!"); this->Disconnect(); return -2;}
  EnterCriticalSection(&this->csec);
@@ -838,7 +838,7 @@ int ExchangeMsg(UINT16 MsgID, UINT16 MsgType, CArgBuf* Req, CArgBuf* Rsp, UINT T
 //   DBGMSG("MsgType=%04X, MsgID=%04X, DataID=%08X, Sequence=%08X, DataSize=%08X",Cmd->MsgType,Cmd->MsgID,Cmd->DataID,Cmd->Sequence,Cmd->DataSize);
    if((Cmd->MsgType != ExpectMT)||(Cmd->MsgID != MsgID)||(Cmd->DataID != (this->DSeqNum-1)))continue;
    Rsp->Assign(&Cmd->Data,Cmd->DataSize, true);
-   DBGMSG("Response: MsgID=%u, MsgType=%u, RspSize=%08X, RspWaitMs=%u",MsgID,MsgType,Rsp->GetLen(),GetTickCount()-StTicks);
+//   DBGMSG("Response: MsgID=%u, MsgType=%u, RspSize=%08X, RspWaitMs=%u",MsgID,MsgType,Rsp->GetLen(),GetTickCount()-StTicks);     // TODO: For Full debug log level
    this->EndMsg(&MCtx);      // Unlock buffer
    LeaveCriticalSection(&this->csec);
    return Rsp->GetLen();

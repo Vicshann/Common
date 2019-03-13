@@ -141,6 +141,9 @@ __declspec(noinline) static void RedirRet(PBYTE OldBase, PBYTE NewBase)
 *(PVOID*)_AddressOfReturnAddress() = RetAddr;
 }
 //------------------------------------------------------------------------------------
+// Doesn`t uses LoadLibrary for RealDll mappinc because of LoaderLock in DLL main from which it may be called
+//
+//
 static int HideSelfProxyDll(PVOID DllBase, PVOID pNtDll, LPSTR RealDllPath, PVOID* NewBase, PVOID* EntryPT)   // Call this from DllMain
 {    
  LOGMSG("DllBase=%p, pNtDll=%p, RealDllPath=%s",DllBase,pNtDll,RealDllPath);                        

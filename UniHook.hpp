@@ -30,7 +30,7 @@
 { \
  static void* Address; \
  if(!Address)Address = GetProcAddress(LoadLibrary(LibPathName),#NameAPI); \
- ((DWORD (__cdecl *)(...))(Address))(ParA, ParB, ParC, ParD, ParE, ParF, ParG, ParH, ParIF, ParJ, ParK, ParL); \
+ if(Address)((DWORD (__cdecl *)(...))(Address))(ParA, ParB, ParC, ParD, ParE, ParF, ParG, ParH, ParIF, ParJ, ParK, ParL); \
 }
 
 #else
@@ -38,6 +38,7 @@
 #define APIWRAPPER(LibPathName,NameAPI) extern "C" _declspec(dllexport) _declspec(naked) void __cdecl NameAPI(void) \
 { \
  static void* Address; \
+ DBGMSG("Name: %s",#NameAPI); \
  if(!Address)Address = GetProcAddress(LoadLibrary(LibPathName),#NameAPI); \
  __asm mov EAX, [Address] \
  __asm jmp EAX \
@@ -74,7 +75,11 @@ template<typename T, void* HookProc> struct SVftHook      //  'T HProc' will cra
 //====================================================================================
 //                                   SProcHook<decltype(&proc), &proc>            <typename T, T HProc=0> struct SProcHook   
 //------------------------------------------------------------------------------------
-#define PHOOK(proc) SProcHook<decltype(&proc), &proc>             // Waiting for C++17`s auto as a template argument type
+#define PHOOK(proc) SProcHook<decltype(&proc), &proc>             // Waiting for C++17`s auto as a template argument type   // TODO: Skip int3 or other types of software breakpoints
+namespace EHookFlg {
+enum NHookFlg {hfNone,hfFillNop=1,hfFollowJmp=2,hfForceHook=4};       // Restore MemProt flag?
+};
+
 template<typename T, T HProc=0> struct SProcHook        //  'T HProc' will crash the MSVC compiler!    // Declare all members static that the hook struct can be declared temporary on stack (without 'static' cpecifier)?
 {
 #ifdef _AMD64_
@@ -108,25 +113,9 @@ static bool IsAddrHooked(PVOID PAddr, PVOID Hook)       // Already hooked by thi
  return true;
 }
 //------------------------------------------------------------------------------------
-
-public:
-enum EHookFlg {hfNone,hfFillNop=1,hfFollowJmp=2};       // Restore MemProt flag?
-//------------------------------------------------------------------------------------
-bool IsActive(void){return (bool)this->HookLen;}
-//------------------------------------------------------------------------------------
-bool SetHook(LPSTR ProcName, LPSTR LibName, UINT Flags=hfFillNop, T HookFunc=NULL)
+bool SetHookIntr(PBYTE ProcAddr=NULL, UINT Flags=EHookFlg::hfFillNop|EHookFlg::hfFollowJmp, void* HookFunc=NULL)   // Can be reused with same ProcAddr after 'Remove'  // Do not refer to 'T' from here or this function may be duplicated
 {
- if(this->IsActive())return false;       // Already set
- HMODULE  hLib  = GetModuleHandleA(LibName);
- if(!hLib)hLib  = LoadLibraryA(LibName);             // Only with a ForceLoad flag?
- PBYTE ProcAddr = (PBYTE)GetProcAddress(hLib,ProcName);
- if(!ProcAddr)return false;
- return this->SetHook(ProcAddr,hfFillNop,HookFunc);  
-}  
-//------------------------------------------------------------------------------------
-bool SetHook(PBYTE ProcAddr=NULL, UINT Flags=hfFillNop|hfFollowJmp, T HookFunc=NULL)   // Can be reused with same ProcAddr after 'Remove'  // Do not refer to 'T' from here or this function may be duplicated
-{
- if(!ProcAddr || this->IsActive())return false;
+ if(!ProcAddr || (this->IsActive() && !(Flags & EHookFlg::hfForceHook))){/*DBGMSG("Failed: %p",ProcAddr);*/ return false;}       // Logging here will mage the message duplicated by templating and size will bloat!
 // DBGMSG("Hooking: %p",ProcAddr);
 #ifdef _AMD64_
  HDE64 dhde;
@@ -136,14 +125,14 @@ bool SetHook(PBYTE ProcAddr=NULL, UINT Flags=hfFillNop|hfFollowJmp, T HookFunc=N
  DWORD PrevProt  = 0;					   
  UINT  CodeLen   = 0;
  this->HookLen   = 0;
- if(!HookFunc)HookFunc = HProc;
+// if(!HookFunc)HookFunc = HProc;       // No more bloating
  if(!ProcAddr)ProcAddr = *(PBYTE*)&this->HookAddr;
  if(*ProcAddr == 0xFC)ProcAddr++;   // CLD  // Just in case
  VirtualProtect(this,sizeof(*this),PAGE_EXECUTE_READWRITE,&PrevProt);	 // On some platforms a data sections is not executable!		   
  for(PBYTE DisAddr=ProcAddr;this->HookLen < TrLen;DisAddr += dhde.len)   // MSVC compiler crash if 'this->HookLen += dhde.len' is here
   {
    this->HookLen += dhde.Disasm(DisAddr);
-   if((*DisAddr == 0xE9)&&(Flags & hfFollowJmp))
+   if((*DisAddr == 0xE9)&&(Flags & EHookFlg::hfFollowJmp))
     {
      dhde.len = 0;
      DisAddr  = (PBYTE)RelAddrToAddr(DisAddr,5,*(DWORD*)&DisAddr[1]);
@@ -152,7 +141,15 @@ bool SetHook(PBYTE ProcAddr=NULL, UINT Flags=hfFillNop|hfFollowJmp, T HookFunc=N
      CodeLen = 0;
      continue;
     }
-
+   if((*DisAddr == 0xEB)&&(Flags & EHookFlg::hfFollowJmp))
+    {
+     dhde.len = 0;
+     DisAddr  = (PBYTE)RelAddrToAddr(DisAddr,2,*(BYTE*)&DisAddr[1]);
+     ProcAddr = DisAddr;
+     this->HookLen = 0;
+     CodeLen = 0;
+     continue;
+    }
 #ifdef _AMD64_
    if(((*DisAddr & 0xFB)==0x48) && (DisAddr[1]==0x8B) && ((DisAddr[2] & 0x07)==0x05))       // 48=RAX-rdi; 4C=R8-R15  // mov REG, qword ptr [REL]
     {
@@ -205,26 +202,35 @@ bool SetHook(PBYTE ProcAddr=NULL, UINT Flags=hfFillNop|hfFollowJmp, T HookFunc=N
   // LOGMSG("jmp at %p to %p, disp32 = %08X, imm32 = %08X",DisAddr,Addr,dhde.disp.disp32,dhde.imm.imm32);
    Carr[0]  = 0xF82444C7;	// mov [RSP-8], DWORD
    Carr[2]  = 0xFC2444C7;	// mov [RSP-4], DWORD
-   Carr[4]  = 0xF82464FF;  //  jmp [RSP-8] 
+   Carr[4]  = 0xF82464FF;   // jmp [RSP-8] 
    Carr[1]  = ((PDWORD)&Addr)[0];
    Carr[3]  = ((PDWORD)&Addr)[1];
    CodeLen += 20;
    continue;
   } 
+#else
+ if(dhde.opcode == 0xE8) // call rel32     
+  {								
+   PVOID Addr = RelAddrToAddr(DisAddr,dhde.len,dhde.imm.imm32);  
+   this->StolenCode[CodeLen] = 0xE8;
+   *(PDWORD)&this->StolenCode[CodeLen+1] = AddrToRelAddr(&this->StolenCode[CodeLen],5,Addr);
+   CodeLen += 5;
+   continue;
+  }
 #endif
 
    memcpy(&this->StolenCode[CodeLen],DisAddr,dhde.len);   // Copy current instruction as is
    CodeLen += dhde.len;
   }
  BYTE Patch[16];   
- this->HookProc = HookFunc;   // *(PVOID*)&this->HookProc = (PVOID)HookFunc;
+ *(PVOID*)&this->HookProc = HookFunc;   // *(PVOID*)&this->HookProc = (PVOID)HookFunc;
  *(PVOID*)&this->HookAddr = (PVOID)ProcAddr;
  *(PVOID*)&this->OrigProc = (PVOID)&StolenCode;
  VirtualProtect(this,sizeof(*this),PAGE_EXECUTE_READWRITE,&PrevProt);	// Module`s data section may be not executable!		   
  VirtualProtect(ProcAddr,TrLen,PAGE_EXECUTE_READWRITE,&PrevProt);  
  *(__m128i*)&Patch = *(__m128i*)ProcAddr;
  *(__m128i*)&this->OriginCode = *(__m128i*)&Patch;
- if(Flags & hfFillNop)memset(&Patch,0x90,this->HookLen);      // Optional, good for debugging
+ if(Flags & EHookFlg::hfFillNop)memset(&Patch,0x90,this->HookLen);      // Optional, good for debugging
 #ifdef _AMD64_
  this->StolenCode[CodeLen]   = 0xFF;
  this->StolenCode[CodeLen+1] = 0x25;
@@ -232,7 +238,7 @@ bool SetHook(PBYTE ProcAddr=NULL, UINT Flags=hfFillNop|hfFollowJmp, T HookFunc=N
  *((PBYTE*)&this->StolenCode[CodeLen+6]) = ProcAddr + this->HookLen;   // Aligned by HDE to whole command
  Patch[0]  = 0x48;				       // movabs rax,FFFFFFF00332211   // EAX is unused in x64 calling convention  // TODO: Usesome SSE instructions to copy this by one operation
  Patch[1]  = 0xB8;
- *(PVOID*)&Patch[2] = HookFunc;        // NOTE: This was modified to use a single assignment somewhere already!!!!!
+ *(PVOID*)&Patch[2] = *(PVOID*)&HookFunc;        // NOTE: This was modified to use a single assignment somewhere already!!!!!
  Patch[10] = 0xFF;                     // jmp EAX      // EAX is not preserved!  // Replace with QHalves method if EAX must be preserved  // No relative addresses here for easy overhooking
  Patch[11] = 0xE0;
 #else
@@ -252,6 +258,32 @@ bool SetHook(PBYTE ProcAddr=NULL, UINT Flags=hfFillNop|hfFollowJmp, T HookFunc=N
  FlushInstructionCache(GetCurrentProcess(),ProcAddr,sizeof(this->OriginCode));   // Is it really needed here?
  return true;
 }  
+//------------------------------------------------------------------------------------
+
+public:
+//------------------------------------------------------------------------------------
+bool IsActive(void){return (bool)this->HookLen;}
+//------------------------------------------------------------------------------------
+bool SetHook(LPSTR ProcName, LPSTR LibName, UINT Flags=EHookFlg::hfFillNop|EHookFlg::hfFollowJmp, T HookFunc=NULL)
+{
+ if(this->IsActive() && !(Flags & EHookFlg::hfForceHook))return false;       // Already set
+ HMODULE  hLib  = GetModuleHandleA(LibName);
+ if(!hLib)hLib  = LoadLibraryA(LibName);             // Only with a ForceLoad flag?
+ PBYTE ProcAddr = (PBYTE)GetProcAddress(hLib,ProcName);
+ if(!ProcAddr){DBGMSG("Failed: %s:%s",LibName,ProcName);return false;}
+ return this->SetHook(ProcAddr,Flags,HookFunc);  
+}  
+//------------------------------------------------------------------------------------
+// If a JMP can`t be reused then it should be followed. Conditions fo this is different for x64 and x32
+// Following a jump means to risk reaching end of a function
+// First jump is a special case of redirection
+// hfFollowJmp flag have no effect!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+//
+bool SetHook(PBYTE ProcAddr=NULL, UINT Flags=EHookFlg::hfFillNop|EHookFlg::hfFollowJmp, T HookFunc=NULL)  // Separated to prevent code bloating because of templating
+{
+ if(!HookFunc)HookFunc = HProc;
+ return SetHookIntr(ProcAddr, Flags, HookFunc); 
+}
 //------------------------------------------------------------------------------------
 bool Remove(bool Any=true)     // NOTE: If someone else takes our jump code and after that we exit - CRASH!   // TODO: Rethink hook chaining
 {

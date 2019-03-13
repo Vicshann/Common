@@ -183,11 +183,11 @@ __forceinline C* Decrypt(void)  // Run-time decryption   // There will be a copy
 
 // Compile-time string encryption macro
 #ifndef ctDISENCSTR
-#define ctOENCSA(Str, Name) CT::ctCplEncryptedString<char,  sizeof(Str), ctEncKey, ctEncKeyEx, CT::ctCplIndexes<AlignAsPtr(sizeof(Str))>::Result> Name(Str)   // Str size includes a terminating NULL   
-#define ctOENCSW(Str, Name) CT::ctCplEncryptedString<wchar_t, sizeof(Str)/sizeof(wchar_t), ctEncKey, ctEncKeyEx, CT::ctCplIndexes<AlignAsPtr(sizeof(Str))>::Result> Name(Str)   // Str size includes a terminating NULL
+#define ctOENCSA(Str, Name) CT::ctCplEncryptedString<char,  sizeof(Str), ctEncKey, ctEncKeyEx, CT::ctCplIndexes<CT::ctAlignAsPtr(sizeof(Str))>::Result> Name(Str)   // Str size includes a terminating NULL   
+#define ctOENCSW(Str, Name) CT::ctCplEncryptedString<wchar_t, sizeof(Str)/sizeof(wchar_t), ctEncKey, ctEncKeyEx, CT::ctCplIndexes<CT::ctAlignAsPtr(sizeof(Str))>::Result> Name(Str)   // Str size includes a terminating NULL
 
-#define ctCENCSA(Str) CT::ctCplEncryptedString<char,  sizeof(Str), ctEncKey, ctEncKeyEx, CT::ctCplIndexes<AlignAsPtr(sizeof(Str))>::Result>(Str)   // Str size includes a terminating NULL   
-#define ctCENCSW(Str) CT::ctCplEncryptedString<wchar_t, sizeof(Str)/sizeof(wchar_t), ctEncKey, ctEncKeyEx, CT::ctCplIndexes<AlignAsPtr(sizeof(Str))>::Result>(Str)   // Str size includes a terminating NULL
+#define ctCENCSA(Str) CT::ctCplEncryptedString<char,  sizeof(Str), ctEncKey, ctEncKeyEx, CT::ctCplIndexes<CT::ctAlignAsPtr(sizeof(Str))>::Result>(Str)   // Str size includes a terminating NULL   
+#define ctCENCSW(Str) CT::ctCplEncryptedString<wchar_t, sizeof(Str)/sizeof(wchar_t), ctEncKey, ctEncKeyEx, CT::ctCplIndexes<CT::ctAlignAsPtr(sizeof(Str))>::Result>(Str)   // Str size includes a terminating NULL
 
 #define ctENCSA(Str) (ctCENCSA(Str).Decrypt())   // Str size includes a terminating NULL   
 #define ctENCSW(Str) (ctCENCSW(Str).Decrypt())   // Str size includes a terminating NULL
@@ -237,8 +237,8 @@ template<typename A, typename B> constexpr __forceinline int ctTNDif(const int o
 
 struct SCplFuncInfo  // Holds info about a TypeName position in a function signature for current compiler
 {
- static const int TypeOffs = ctTNDif<char,long>(0);     // Offset of a type in a string
- static const int TailSize = ctTNLen<char>(TypeOffs+4) - (TypeOffs+4);  // Left of a full string   // 4 is len of 'char' string
+ static constexpr int TypeOffs = ctTNDif<char,long>(0);     // Offset of a type in a string   
+ static constexpr int TailSize = ctTNLen<char>(TypeOffs+4) - (TypeOffs+4);  // Left of a full string   // 4 is len of 'char' string
 };
 
 // Helps to get name of a type without RTTI and RTL

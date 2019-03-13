@@ -60,8 +60,11 @@ typedef unsigned long       SIZEP, *PSIZEP;
 
 // Dump here any implementations that should be accessible early and have no personal HPP yet
 
-template<typename T, class U> struct IsSameTypes {enum { value = 0 };};
-template<typename T> struct IsSameTypes<T, T> {enum { value = 1 };};
+template<typename T, class U> struct Is_Same_Types {enum { value = 0 };};
+template<typename T> struct Is_Same_Types<T, T> {enum { value = 1 };};
+
+template<typename T> struct Is_Pointer { static const bool value = false; };      
+template<typename T> struct Is_Pointer<T*> { static const bool value = true; };
 
 template<typename N> constexpr FINLINE N _fastcall AlignFrwrd(N Value, unsigned int Alignment){return (((Value/Alignment)+((bool)(Value%Alignment)))*Alignment);}
 template<typename N> constexpr FINLINE N _fastcall AlignBkwrd(N Value, unsigned int Alignment){return ((Value/Alignment)*Alignment);}

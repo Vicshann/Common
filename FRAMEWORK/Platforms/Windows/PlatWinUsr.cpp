@@ -58,12 +58,7 @@ bool _fastcall FreeMemLL(PVOID Mem, SIZE_T Size)
 PVOID _fastcall AllocMemHL(PVOID Mem, SIZE_T Size, SIZE_T AllocSize, SIZE_T ReserveSize, SIZE_T Align)         // Can do reallocation of memory, returning a new pointer and copying old contents
 {
  if(!hHeap)hHeap = GetProcessHeap();
- if(Mem)
-  {
-   UINT Flags = HEAP_ZERO_MEMORY;    // All low level mem allocation functions shoul return Zeroed memory
-   if(Align > 0x7FFFFFFF)Flags |= HEAP_REALLOC_IN_PLACE_ONLY;   // Alignment is NOT supported for this allocation type
-   return HeapReAlloc(hHeap,HEAP_ZERO_MEMORY,Mem,AllocSize); 
-  }
+ if(Mem)return HeapReAlloc(hHeap,HEAP_ZERO_MEMORY|HEAP_REALLOC_IN_PLACE_ONLY,Mem,AllocSize);    // All low level mem allocation functions shoul return Zeroed memory
  return HeapAlloc(hHeap,HEAP_ZERO_MEMORY,AllocSize);
 }
 //---------------------------------------------------------------------------
@@ -73,7 +68,7 @@ bool _fastcall FreeMemHL(PVOID Mem, SIZE_T Size)
  return HeapFree(hHeap,0,Mem);
 }
 //===========================================================================
-/*  
+/*         // TODO: Add MemTouch and MemRelease
 
 
 OK, I just tried it on Linux myself. The mprotect thing didn't work by itself, but this does:

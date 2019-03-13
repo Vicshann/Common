@@ -4,7 +4,7 @@
  
 extern "C" void*  __cdecl memmove(void* _Dst, const void* _Src, size_t _Size);
 
-#pragma pack(push,1)
+/*#pragma pack(push,1)
 union UDbl         // Do magic without 64 bit shifts?
 {
  struct
@@ -15,7 +15,7 @@ union UDbl         // Do magic without 64 bit shifts?
   }Fields;
  double Value;
 };
-#pragma pack(pop)
+#pragma pack(pop)  */
 
  // Converts a given integer x to string str[].  d is the number  // 18.01 becomes 18.1 !!!!!!!!!!!!!
  // of digits required in output. If d is more than the number
@@ -42,7 +42,7 @@ unsigned __int64 slow_pow(int X, int Y)    // TODO: TestIt
 } */
 //------------------------------------------------------------------------------------
 enum EFltFmt {ffZeroPad=0x8000, ffSkipZeroFrac=0x4000, ffCommaSep=0x2000};  // Add this flags to 'afterpoint'
-static const int MaxDigit = 19;
+static const int MaxDigit = 19;    // Including an empty position (0)
 unsigned __int64 uExp10[MaxDigit] =
 {
 0,
@@ -70,7 +70,7 @@ unsigned __int64 uExp10[MaxDigit] =
 // Check for 0?  
 // Buffer MUST be at least of 50 bytes of size
 // Result is NOT placed at beginning of the buffer, instead returned a pointer inside of it
-// Fast but only max up to 19 digits after '.' (limitation of UINT64)!
+// Fast but only max up to 18 digits after '.' (limitation of UINT64)!  (Stable amount is 15)
 // Must produce: 123.1234000   // Add zeroes to 'afterpoint'
 //               123.0         // Keep at least one zero, but trim to 'afterpoint'
 //               123           // Do not keep zero if integer
@@ -84,7 +84,7 @@ char* ftoa_simple(double num, unsigned int afterpoint, char *res, unsigned int l
  if(num < 0){negative = true; num = -num;}  // force it positive // -0.0 is in the case?
    else negative = false;              
  int DAfter = afterpoint & 0xFF;
- if(DAfter > MaxDigit)DAfter = MaxDigit;   // Prorect uExp10 array       
+ if(DAfter >= MaxDigit)DAfter = MaxDigit-1;   // Safe check uExp10 array       
 
  unsigned __int64 ipart = (unsigned __int64)num;              // Extract integer part  
  if(DAfter)
@@ -93,9 +93,9 @@ char* ftoa_simple(double num, unsigned int afterpoint, char *res, unsigned int l
    if(fpartd <  0)fpartd = num - (double)(--ipart);   // Fix rounding up, don`t touch FPU rounding modes
    if(fpartd >= 1)fpartd = num - (double)(++ipart);   // Fix rounding down 
 
-   unsigned __int64 fpart = fpartd * uExp10[DAfter]; 
+   unsigned __int64 fpart = fpartd * uExp10[DAfter];  // After 15 digit loses some precision
    if(fpart){Zeroes = 0; for(int ctr=DAfter-1;(fpart < uExp10[ctr]);ctr--)Zeroes++;}  // Count zeroes before dot
-     else if(afterpoint & ffZeroPad)Zeroes = DAfter;     // If padding with zeroes allowed
+     else if(afterpoint & ffZeroPad)Zeroes = DAfter;  // If padding with zeroes allowed
            else Zeroes = 1;    // At least one zero when no fraction part
  
    if(fpart || !(afterpoint & ffSkipZeroFrac))   // Make fraction part

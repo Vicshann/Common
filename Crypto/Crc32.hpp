@@ -95,6 +95,58 @@ static const UINT32  crc_table[256] = {
  return crc_table[Idx];
 }
 //------------------------------------------------------------------------------
+/*
+unsigned int __stdcall CalcAlignedCRC32(unsigned __int8 *aData, signed int aSize)
+{
+  unsigned __int8 *vData; // edx
+  unsigned int ResCRC; // eax
+  signed int i; // edi
+  unsigned int v5; // esi
+  int v6; // ecx
+  unsigned int v7; // eax
+  unsigned int v8; // eax
+  signed int v9; // ecx
+  int v10; // edi
+  int v11; // esi
+
+  vData = aData;
+  ResCRC = 0xFFFFFFFF;                          
+  for ( i = aSize; (unsigned __int8)vData & 3; --i )
+  {
+    if ( i <= 0 )
+      break;
+    ResCRC = Crc32Tbl[*vData++ ^ (unsigned __int8)ResCRC] ^ (ResCRC >> 8);// Byte CRC 32 loop
+  }
+  if ( i >= 4 )
+  {
+    v5 = (unsigned int)i >> 2;
+    i -= 4 * ((unsigned int)i >> 2);
+    do
+    {
+      v6 = *(_DWORD *)vData;
+      vData += 4;
+      v7 = ((v6 ^ ResCRC) >> 8) ^ Crc32Tbl[(unsigned __int8)(v6 ^ ResCRC)];
+      v8 = (((v7 >> 8) ^ Crc32Tbl[(unsigned __int8)v7]) >> 8) ^ Crc32Tbl[(unsigned __int8)(BYTE1(v7) ^ LOBYTE(Crc32Tbl[(unsigned __int8)v7]))];
+      ResCRC = Crc32Tbl[(unsigned __int8)v8] ^ (v8 >> 8);
+      --v5;
+    }
+    while ( v5 );
+  }
+  v9 = i;
+  v10 = i - 1;
+  if ( v9 )
+  {
+    v11 = v10 + 1;
+    do
+    {
+      ResCRC = Crc32Tbl[*vData++ ^ (unsigned __int8)ResCRC] ^ (ResCRC >> 8);
+      --v11;
+    }
+    while ( v11 );
+  }
+  return ResCRC;
+}
+*/
 static UINT32 ByteCRC32(UINT32 crc, UINT8 val)
 {
  return Table((UINT8)crc ^ val) ^ (crc >> 8);

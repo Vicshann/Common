@@ -41,7 +41,41 @@ Props are create by a PropFacrory and added to PropBag`s sparse list of pointers
 
 Prop Have Name, Type, And Value
 */
+#undef GetProp
+#undef SetProp
+              // Some props need to be lockable when getting them. Some kind of smart pointer which locks prop while exist (from another get/set prop)
+template<typename T, int Flg=0> CProp     // All props are SIMD aligned in memory //Encapsulates props. Allows props to be write-locked on request if required
+{
+ T     Prop;
+ UINT8 Lock;     // Must be aligned to sizeof(void*)      // No need for RefCtr?s
+ UINT8 Flags;
+};
 
+// Store this pointer instead of requesting a Prop from PropBag each time (Requires search by hash) 
+// May use locking and async access
+// 
+//
+template<typename T, bool NoLock=true> CPropPtr
+{
+ T* Prop;  // Each prop is SIMD aligned in memory so 3 low bits of its pointer can be used for some flags
+//----------------------------------------
+CPropPtr(T* Val): Prop(Val) 
+{
+
+}
+//----------------------------------------
+~CPropPtr()
+{
+
+}
+//----------------------------------------
+
+//----------------------------------------
+
+}; 
+
+// Compile-time assert if requested prop type is different from its stored type
+//
 template<char* name> class CPropBase
 {
  static const char* Name;   // Name for serializaation
@@ -49,7 +83,8 @@ template<char* name> class CPropBase
 
 //virtual ~CPropBase() = 0;
 
-
+template<typename T> T& GetProp(char* Name)                // Allow to construct it inplace?
+template<typename T> void SetProp(char* Name, )    // Link prop? to be Write on modify?  
 };
 //---------------------------------------------------------------------------
 template<typename T, char* name=nullptr> class CProp   //: public CPropBase<name>
@@ -248,5 +283,62 @@ void LoadFrom(SBinStream* Strm)
 };
 //---------------------------------------------------------------------------
 */
+//---------------------------------------------------------------------------
+/*
+All props are not intended to be removed separatedly from their PropBags
+*/
+//---------------------------------------------------------------------------
+
+//---------------------------------------------------------------------------
+// No props names are stored. Use logging to search them by hash later if needed
+// Duplicate hashes are not accepted. You have to change a prop name if collision is happend
+// Only an unnamed props can be added freely (Zero hash)
+//
+// 
+//
+//---------------------------------------------------------------------------
+// Not storing hash here saves 8 bytes for each prop instance
+//
+struct SPropPtr   
+{
+ void* Ptr;
+ 
+ GetPtr
+ SetPtr
+ GetFlg
+ SetFlg
+};
+//---------------------------------------------------------------------------
+// Should be aligned to 16 bytes for SIMD
+//
+template<typename T> struct alignas(16) SProp   // Can be casted to T* since T is its first member. No deriving because it is impossible to derive from built-in types
+{
+static char* TypeStr;    // Set to string of type T   // Compiler must merge duplicate strings or prop type comparision won`t work (Pointers are compared)
+ T Value;         // Most props are 4 bytes?  // Constructor arguments are passed. Type must support 'operator ='
+ UINT8  Lock;     // Alignment?
+ UINT8  Flags;
+ UINT16 NameIdx;
+
+// alignas(sizeof(void*)) UINT64 Hash;     // Should be aligned to 8   // Wasting 4 bytes by storing hash here instead of index in an hash table  // Special form of hashing. Guranties uniquness for strings <= 9 chars (And for most of 10 chars)
+// UINT16 Lock;     // Must be aligned to sizeof(void*)      // No need for RefCtr?s
+// UINT16 Flags;
+};
+//===========================================================================
+// Modify props here to have these changes in all instances
+//
+class CPropBag
+{
+ CPropBag* Base;  // Base instance set it to 'this' // Can be destroyed on destruction of a derived CPropBag if RefCtr becomes 0
+ void* OwnProps;
+ void* PropMap;   // Base props here can be overriden with local props (by name). New props are just added. Some props can be forbidden through Flags field
+ UINT  TotProps;  // In PropMap
+ UINT  RefCtr;    // 1 when no deriveds, +1 for each
+
+NewInstance()     // Makes a copy of this PropBag  //  PropBag itself is just a template. Props of each instance initially(before modification) refer to base value
+template<typename T> AddProp(args) // Templated
+
+};
+
+
 //---------------------------------------------------------------------------
 #endif

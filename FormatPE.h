@@ -313,7 +313,13 @@ template<typename T> struct SImportThunk
 {
  T Value;	   // ForwarderString; Function; Ordinal; AddressOfData;
 };
-
+//---------------------------------------------------------------------------
+struct SRichRec 
+{
+ WORD  Ver;    // MinVer
+ WORD  PId;    // Product Identifier
+ DWORD Cntr;   // Counter of what?
+};
 #pragma pack( pop )
 //---------------------------------------------------------------------------
 static bool _stdcall IsValidPEHeader(PVOID Header)
@@ -1222,6 +1228,101 @@ static DWORD _stdcall CalcChecksumPE(PBYTE ModuleBase, UINT Size)
  checksum  = checksum & 0xffff;
  checksum += Size;
  return checksum;
+}
+//---------------------------------------------------------------------------
+static int _stdcall LoadRichInfo(PBYTE ModuleBase, SRichRec* Recs, PUINT RecsNum, PUINT Offset=nullptr, bool* IsChkValid=nullptr)
+{
+ if(!IsValidPEHeader(ModuleBase))return -1;
+ DOS_HEADER* DosHdr  = (DOS_HEADER*)ModuleBase;
+ UINT EndOffs = DosHdr->OffsetHeaderPE;      // Rich is before PE
+ if(EndOffs < sizeof(DOS_HEADER))return -1;
+ if(EndOffs > 1024)EndOffs = 1024;  
+ PDWORD EndPtr = (PDWORD)&ModuleBase[EndOffs];
+ DWORD  XorKey = 0;
+ DWORD  Sign   = 'hciR';
+ PDWORD RBeg   = nullptr;
+ PDWORD REnd   = nullptr;
+ do
+  {
+   EndPtr--;
+   if(*EndPtr == Sign)
+    {
+     if(REnd){RBeg=EndPtr; break;}
+     XorKey = EndPtr[1];
+     REnd   = EndPtr;
+     Sign   = 'SnaD' ^ XorKey;
+    }
+  }
+   while(EndPtr > (PDWORD)ModuleBase);
+ if(!RBeg || !REnd)return -3;
+ int  Counter = ((REnd - RBeg) / 2) - 2;
+ UINT ROffs   = (PBYTE)RBeg - (PBYTE)ModuleBase;
+ if(Counter < 0)return -4;
+ if(RecsNum)*RecsNum = Counter;
+ if(Offset)*Offset = ROffs;
+ RBeg += 4;
+ PDWORD DstPtr = (PDWORD)Recs;
+ UINT RichSize = ((((XorKey >> 5) % 3) + Counter) * 8) + 0x20;   // Counter not includes first 4 DWORDs
+ for(UINT ctr=0;ctr < Counter;ctr++)
+ {
+  *(DstPtr++) = *(RBeg++) ^ XorKey;
+  *(DstPtr++) = *(RBeg++) ^ XorKey;
+ }
+ if(IsChkValid)
+  {
+   DWORD OrgXorKey = ROffs;
+   for(UINT Idx=0;Idx < ROffs;Idx++)OrgXorKey += ((Idx < 0x3C)||(Idx > 0x3F))?(RotL((DWORD)ModuleBase[Idx], Idx)):(0);    // Skipping OffsetHeaderPE (Slower but without a buffer)
+   for(UINT Idx=0;Idx < Counter;Idx++)
+    {
+     PDWORD Rec = (PDWORD)&Recs[Idx];
+     OrgXorKey += RotL(Rec[0], (BYTE)Rec[1]);
+    }
+   *IsChkValid = (OrgXorKey == XorKey);
+  }
+ return RichSize;
+}
+//---------------------------------------------------------------------------
+static int _stdcall SaveRichInfo(PBYTE ModuleBase, SRichRec* Recs, UINT RecsNum, UINT Offset)
+{
+ if(!IsValidPEHeader(ModuleBase))return -1;
+ DOS_HEADER* DosHdr  = (DOS_HEADER*)ModuleBase;
+ WIN_HEADER<PECURRENT>* WinHdr = (WIN_HEADER<PECURRENT>*)&(ModuleBase[DosHdr->OffsetHeaderPE]);
+
+ UINT OldOffsPE = DosHdr->OffsetHeaderPE;
+ DWORD XorKey = Offset;
+ DosHdr->OffsetHeaderPE = 0;    // Must be set to 0 before calculation
+ for(UINT Idx=0;Idx < Offset;Idx++)XorKey += RotL((DWORD)ModuleBase[Idx], Idx);
+ for(UINT Idx=0;Idx < RecsNum;Idx++)
+  {
+   PDWORD Rec = (PDWORD)&Recs[Idx];
+   XorKey += RotL(Rec[0], (BYTE)Rec[1]);
+  }
+ UINT RichSize  = ((((XorKey >> 5) % 3) + RecsNum) * 8) + 0x20;
+ PDWORD OPtr    = (PDWORD)&ModuleBase[Offset];
+
+ UINT NewOffsPE = Offset + RichSize;
+ UINT SizePE    = WinHdr->OptionalHeader.SizeOfHeaders - OldOffsPE;
+ if(NewOffsPE < OldOffsPE)
+  {
+   memmove(&ModuleBase[NewOffsPE], &ModuleBase[OldOffsPE], SizePE);
+   memset(&ModuleBase[NewOffsPE+SizePE],0,OldOffsPE-NewOffsPE);
+  }
+   else if(NewOffsPE > OldOffsPE)
+    {
+     SizePE -= (NewOffsPE - OldOffsPE);
+     memmove(&ModuleBase[NewOffsPE], &ModuleBase[OldOffsPE], SizePE);
+    }
+
+ DosHdr->OffsetHeaderPE = NewOffsPE;
+ memset(OPtr, 0, RichSize);  
+ *(OPtr++) = XorKey ^ 'SnaD';
+ *(OPtr++) = XorKey;
+ *(OPtr++) = XorKey;
+ *(OPtr++) = XorKey;
+ for(UINT Idx=0,Tot=RecsNum*2;Idx < Tot;Idx++)*(OPtr++) = ((PDWORD)Recs)[Idx] ^ XorKey; 
+ *(OPtr++) = 'hciR';
+ *(OPtr++) = XorKey;
+ return RichSize;
 }
 //---------------------------------------------------------------------------
 

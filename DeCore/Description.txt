@@ -1,0 +1,27 @@
+Microoperations with same index are parallel and input arguments are unafected by result (i.e. x86 IDIV which makes EAX:EDX / N and EAX:EDX % N and saves result in EAX:EDX)
+
+
+¬се адресное пространство хранитс€ в цепочке блоков. Ќекоторые из них это массиив инструкций(тоже можно хранить в файле), некоторые массив форматированных данных, 
+а остальные просто блок сырых данных, которые ссылаютс€ на файл данных и не хран€тс€ в пам€ти.
+ƒекомпилированные (и выполн€емые) фрагменты кода хран€тс€ в двусв€зных списках в пам€ти.
+Ќа начальной стадии анализа, все данные наход€тс€ в пам€ти(?).
+
+// For each proc, decompilation context will contan its own copy of SIEInstruction in streams  // Same for JIT and emulation
+
+
+
+
+Static entities:
+Operands    - May be many of those in kind of constants
+Condition   - Few of those
+Operation   - Few of those
+Instruction - May be many of those because of constant operands
+
+
+ValArr: Each value is 32 bit, Max values in total is 15 (0 means NoValue). 4 bits for each value
+
+Prop
+{
+ RefCtr
+ Value
+}  // Props of same name and value are use ref counter to avoid duplication    // For game engine, not for decompiler: even search by a hash is too slow 

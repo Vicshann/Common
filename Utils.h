@@ -31,6 +31,8 @@
 //#include "json.h"
 //#include "crc32.h"
 //#include "sha256.h"
+#include "StrUtils.hpp"
+
 
 #pragma warning(push)
 #pragma warning(disable:4244)     // Type cast (WinAPI compatibility)
@@ -115,10 +117,10 @@ int   _stdcall RefreshINIValueStr(LPSTR SectionName, LPSTR ValueName, LPSTR Defa
 void  _stdcall SetINIValueInt(LPSTR SectionName, LPSTR ValueName, int Value, LPSTR FileName);
 //int   _stdcall ByteArrayToHexStrSwap(PBYTE Buffer, LPSTR DstStr, UINT HexByteCnt);
 int   _stdcall ByteArrayToHexStr(PBYTE Buffer, LPSTR DstStr, UINT ByteCnt, bool UpCase=true);
-int _stdcall HexStrToByteArray(PBYTE Buffer, LPSTR SrcStr, UINT HexByteCnt=0);
+//int _stdcall HexStrToByteArray(PBYTE Buffer, LPSTR SrcStr, UINT HexByteCnt=0);
 //UINT  _stdcall TrimFilePath(LPSTR FullPath);
-void _stdcall CreateDirectoryPath(LPSTR Path);
-void _stdcall CreateDirectoryPathW(PWSTR Path);
+//void _stdcall CreateDirectoryPath(LPSTR Path);
+//void _stdcall CreateDirectoryPathW(PWSTR Path);
 SIZE_T _stdcall GetRealModuleSize(PVOID ModuleBase);
 __int64   _stdcall GetTime64(bool Local=false);
 bool  _stdcall IsValidAsciiString(PBYTE Ptr, UINT MinLen, UINT MaxLen);
@@ -134,6 +136,7 @@ DWORD _stdcall HexStrToDW(LPSTR String, UINT Bytes);
 DWORD _stdcall WriteLocalProtectedMemory(PVOID Address, PVOID Data, DWORD DataSize, bool RestoreProt);
 int   _stdcall SizeOfSignatureData(LPSTR Signature, UINT SigLen=0);
 bool  _stdcall IsMemSignatureMatch(PVOID Address, LPSTR Signature, UINT SigLen=0);
+PBYTE _stdcall FindMemPatternInRange(PBYTE AddrLo, PBYTE AddrHi, PBYTE Patern, UINT PatSize, UINT Step, UINT MatchIdx);
 PBYTE _stdcall FindMemSignatureInRange(PBYTE AddrLo, PBYTE AddrHi, LPSTR Signature, UINT Step=1, UINT MatchIdx=1, UINT SigLen=0);
 PBYTE _stdcall FindMemSignatureInRangeSafe(PBYTE AddrLo, PBYTE AddrHi, LPSTR Signature, UINT Step=1, UINT MatchIdx=1, UINT SigLen=0);
 //LPSTR _stdcall GetFileName(LPSTR FullPath);
@@ -148,12 +151,13 @@ int _stdcall ConvertToUTF8(PWSTR Src, LPSTR Dest, UINT DestLen);
 long  _stdcall GetProcessPath(LPSTR ProcNameOrID, LPSTR PathBuffer, long BufferLngth);
 UINT _stdcall GetRandomValue(UINT MinVal, UINT MaxVal);
 HMODULE _stdcall FindModuleByExpName(LPSTR ModuleName);
-bool _stdcall AssignFilePath(LPSTR DstPath, LPSTR BasePath, LPSTR FilePath);
+//bool _stdcall AssignFilePath(LPSTR DstPath, LPSTR BasePath, LPSTR FilePath);     // Template
 HANDLE WINAPI CreateFileX(PVOID lpFileName,DWORD dwDesiredAccess,DWORD dwShareMode,LPSECURITY_ATTRIBUTES lpSecurityAttributes,DWORD dwCreationDisposition,DWORD dwFlagsAndAttributes,HANDLE hTemplateFile);
 void _stdcall ReverseBytes(PBYTE Array, UINT Size);
 int _stdcall BinaryPackToBlobStr(LPSTR ApLibPath, LPSTR SrcBinPath, LPSTR OutBinPath, BYTE Key);
 UINT _stdcall NextItemASN1(PBYTE DataPtr, PBYTE* Body, PBYTE Type, UINT* Size);
 int _stdcall FormatDateForHttp(SYSTEMTIME* st, LPSTR DateStr);
+bool _stdcall IsWow64(void);
 //---------------------------------------------------------------------------
 
 
@@ -316,6 +320,25 @@ template<typename T> struct SSPPtr   // With this we can have any static members
 };
 
 
+inline int _fastcall FastRand(UINT64* Seed=nullptr) 
+{ 
+ static UINT64 state = 0;
+ if(Seed)state = *Seed; 
+ UINT64 z = (state += UINT64(0x9E3779B97F4A7C15));
+ z = (z ^ (z >> 30)) * UINT64(0xBF58476D1CE4E5B9);
+ z = (z ^ (z >> 27)) * UINT64(0x94D049BB133111EB);
+ return z ^ (z >> 31);
+} 
+
+inline UINT _fastcall RndGen32(UINT dwMin, UINT dwMax)
+{
+ if(dwMax == dwMin)return dwMin;
+ UINT dwResult = FastRand();
+ if((dwMax - dwMin) == -1UL)return dwResult;
+ dwResult = dwMin + (dwResult % (dwMax - dwMin + 1));
+ return dwResult;
+}
+
 /*
 All anonymous, unnamed namespaces in global scope (that is, unnamed namespaces that are not nested) of
  the same translation unit share the same namespace. This way you can make static declarations without using the 'static' keyword.
@@ -379,12 +402,19 @@ template<typename T> bool _stdcall IsPathLink(T Name)
  return false;
 }
 //---------------------------------------------------------------------------
-template<typename T> char* _fastcall DecNumToStrU(T Val, char* buf, int* Len)     // A/W char string and Signed/Unsigned output by constexpr
+// No Streams support!
+template<typename T, typename O> O _fastcall DecNumToStrU(T Val, O buf, int* Len)     // A/W char string and Signed/Unsigned output by constexpr
 {
- if(Val == 0){if(Len)*Len = 1; return "0";}
+ if(Val == 0)
+ {
+  if(Len)*Len = 1; 
+  *buf = '0';
+  buf[1] = 0;
+  return buf;
+ }
  buf  = &buf[20];
  *buf = 0;
- char* end = buf;
+ O end = buf;
  for(buf--;Val;buf--)
   {
    *buf  = (Val % 10) + '0';
@@ -393,7 +423,7 @@ template<typename T> char* _fastcall DecNumToStrU(T Val, char* buf, int* Len)   
  buf++;
  if(Len)*Len = end-buf; 
   else buf[end-buf] = 0;
- return buf;
+ return buf;     // Optionally move?
 }
 //--------------------------------------------------------------------------- 
 template<typename O, typename T> O _fastcall DecStrToNum(T Str, long* Size=nullptr)
@@ -474,13 +504,15 @@ template<typename T> int NormalizeFileName(T FileName, char rep='_')  // Use cou
 template<typename T> T IncrementFileName(T FileName)
 {
  if(!IsFileExists(FileName))return FileName;
- BYTE Buf[32];
+ BYTE Ext[32];
  T ExtPtr = GetFileExt(FileName);
- NSTR::StrCopy((T)&Buf, &ExtPtr[-1]);
+ NSTR::StrCopy((T)&Ext, &ExtPtr[-1]);
  for(UINT ctr=0;;ctr++) 
   {
-   if(sizeof(*FileName) > 1)wsprintfW((PWSTR)ExtPtr,L"%u%ls",ctr,&Buf);   // TODO: Use own templated NumToStr function
-     else wsprintfA((LPSTR)ExtPtr,"%u%s",ctr,&Buf);
+   int Len  = 0;
+   T NumPtr = DecNumToStrU(ctr, ExtPtr, &Len);
+   NSTR::StrCopy(ExtPtr, NumPtr, Len);  // Mobe inplace
+   NSTR::StrCopy(&ExtPtr[Len], (T)&Ext);
    if(!IsFileExists(FileName))break;
   }
  return FileName;
@@ -518,6 +550,36 @@ template<typename T> T GetCmdLineParam(T CmdLine, T Param, unsigned short Scope=
 // while(*CmdLine && (*CmdLine <= 0x20))CmdLine++; // Skip any spaces after 
  return CmdLine; 
 }
+//---------------------------------------------------------------------------
+template<typename D, typename S> bool AssignFilePath(D DstPath, S BasePath, S FilePath)  // TODO: Should return length
+{
+ if(!FilePath || !FilePath[0])return false;
+ if(FilePath[1] != ':') 
+  {
+   NSTR::StrCopy(DstPath, BasePath);    // lstrcpy(DstPath, BasePath);
+   S Ptr = (IsFilePathDelim(FilePath[0]))?(&FilePath[1]):(&FilePath[0]);
+   NSTR::StrCnat(DstPath, Ptr);  //  lstrcat(DstPath, Ptr);
+  }
+   else NSTR::StrCopy(DstPath, FilePath);  // lstrcpy(DstPath, FilePath);
+ return true;
+}
+//---------------------------------------------------------------------------
+template<typename S> void _stdcall CreateDirectoryPath(S Path) // Must end with '\\', may contain a filename at the end
+{
+ WCHAR FullPath[MAX_PATH];
+ S PathPtr = (S)&FullPath;
+ NSTR::StrCopy(PathPtr, Path);
+ for(int Count=0;PathPtr[Count] != 0;Count++)
+  {
+   if((PathPtr[Count]==PATHDLML)||(PathPtr[Count]==PATHDLMR))
+	{
+	 PathPtr[Count] = 0;
+	 if(!((PBYTE)Path)[1])CreateDirectoryW((PWSTR)&FullPath, NULL); // Faster Always create or Test it`s existance first ?
+       else CreateDirectoryA((LPSTR)&FullPath, NULL);
+	 PathPtr[Count] = PATHDLML;
+	}
+  }
+} 
 //---------------------------------------------------------------------------
 // Return address always points to Number[16-MaxDigits];
 //
@@ -557,6 +619,23 @@ template<typename T, typename S> S ConvertToHexStr(T Value, int MaxDigits, S Num
  return NumBuf; 
 }
 //---------------------------------------------------------------------------
+template<typename T> int HexStrToByteArray(PBYTE Buffer, T SrcStr, UINT HexByteCnt=-1)
+{
+ UINT ctr = 0;
+ for(UINT len = 0;(SrcStr[len]&&SrcStr[len+1])&&(ctr < HexByteCnt);len++)   // If it would be possible to make an unmodified defaults to disappear from compilation...
+  {
+   if(SrcStr[len] <= 0x20)continue;   // Skip spaces and line delimitters
+   int ByteHi  = CharToHex(SrcStr[len]);
+   int ByteLo  = CharToHex(SrcStr[len+1]);
+   if((ByteHi  < 0)||(ByteLo < 0))return ctr;  // Not a HEX char
+   Buffer[ctr] = (ByteHi << 4)|ByteLo;
+   ctr++;
+   len++;
+  }
+ return ctr;
+}
+//---------------------------------------------------------------------------
+
 //template<typename T> T _fastcall CharLowSimple(T val) {return (((val >= 'A') && (val <= 'Z')) ? (val + 0x20) : (val));}
 
 /*template<typename T> bool _fastcall IsStrEqSimpleIC(T StrA, T StrB, int MaxLen=-1)
@@ -738,6 +817,22 @@ VOID
     );
      */
 //#pragma pack(pop)
+//---------------------------------------------------------------------------
+template<typename T> class SAlloc
+{
+ PVOID  Mem;
+ SIZE_T Len;
+ HANDLE hHeap;
+public:
+ SAlloc(UINT Size=0){this->hHeap = GetProcessHeap(); this->Mem = NULL; this->Len = 0; if(Size)this->Allocate(Size);}
+ ~SAlloc(){this->Free();} 
+ operator   const T()    {return (T)this->Mem;}
+ T operator->() const { return (T)this->Mem; }
+ T Get(void){return (T)this->Mem;}
+ T Allocate(UINT Size){this->Mem = (this->Mem)?(HeapReAlloc(this->hHeap,HEAP_ZERO_MEMORY,this->Mem,Size)):(HeapAlloc(this->hHeap,HEAP_ZERO_MEMORY,Size)); this->Len = Size; return (T)this->Mem;}
+ SIZE_T Size(void){return this->Len;}
+ void   Free(void){if(this->Mem)HeapFree(GetProcessHeap(),0,this->Mem);}
+};
 //---------------------------------------------------------------------------
 class CHndl
 {

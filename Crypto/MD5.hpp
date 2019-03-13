@@ -214,7 +214,7 @@ void Update(UINT8* inBuf, UINT inLen)
  while (inLen--)
   {
    this->lpszBuffer[mdi++] = *inBuf++;
-   if (mdi == 0x40) 
+   if (mdi == 0x40)          // TODO: Optimize
     {
      UINT32 in[16];
 	 for(int i = 0, ii = 0; i < 16; i++, ii += 4)in[i] = (((UINT32)this->lpszBuffer[ii+3]) << 24) | (((UINT32)this->lpszBuffer[ii+2]) << 16) | (((UINT32)this->lpszBuffer[ii+1]) << 8) | ((UINT32)this->lpszBuffer[ii]);

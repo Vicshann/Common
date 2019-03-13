@@ -37,6 +37,8 @@ BYTE Flags;
 0x80 - BOOL type value
 */
 
+//extern "C" char* _cdecl gcvt(double f, size_t ndigit, char* buf);
+
 /* InBinaryFile: // Unnamed BOOL=1 byte, unnamed int=1 byte(0 value), 3 bytes(0-255 value),...
  BYTE Flags
  Name:[BYTE Size, CHAR[]] // No terminating NULL, 0 = 1 char, max 256
@@ -484,7 +486,7 @@ public:
  bool  IsNull(void){return (jstNULL == this->Type);}
  bool  IsArray(void){return (jstArray == this->Type);}
  bool  IsObject(void){return (jstObject == this->Type);}
- bool  IsValInt(void){return (jstInt == this->Type);}
+ bool  IsValInt(void){return (jstInt == this->Type)||(jstHexInt == this->Type);}
  bool  IsValBol(void){return (jstBool == this->Type);}
  bool  IsValFlt(void){return (jstFloat == this->Type);}
  bool  IsValStr(void){return (jstString == this->Type);}
@@ -662,7 +664,7 @@ public:
    bool scopedtp  = false;
    bool knowntype = true;
    if(format){if(str.Length())str += "\r\n";str.AddChars(0x20,indent);}
-   if(this->Name){str += NormalStrToJsonStr(this->Name,0,nouc); str.AddChars(':');}   // Or check if Parent is an Object 
+   if(this->Name){str += NormalStrToJsonStr(this->Name,0,nouc); str.AddChars(':');}   // Or check if Parent is an Object    // Masking chars in names IS reqoired by JSON standard?
    switch(this->Type)
 	{
 	 case jstString:
@@ -691,7 +693,7 @@ public:
 	 case jstFloat:
 	  {
 	   BYTE Buf[128];
-	 //  gcvt(this->Value.FloatVal,32,(LPSTR)&Buf);  // May skikp the '.'!
+	   gcvt(this->Value.FloatVal,15,(LPSTR)&Buf);  // May skikp the '.'!
 	   for(int ctr=0;Buf[ctr] != '.';ctr++){if(!Buf[ctr]){Buf[ctr]='.';Buf[ctr+1]='0';Buf[ctr+2]=0;break;}} // By presence of '.' we will detect type of this entry
 	   str += (LPSTR)&Buf;
 	  }
@@ -819,7 +821,7 @@ static CMiniStr _fastcall JsonStrToNormalStr(LPCSTR str, int len=0, bool nouc=fa
 	  {
 	   case '\"':
 	   case '\\':
-	   case '/':
+//	   case '/':
 		break;
 	   case 'b':
 	     Val = '\b';
@@ -892,7 +894,7 @@ static CMiniStr _fastcall NormalStrToJsonStr(LPCSTR str, int len=0, bool nouc=fa
 	{
 	 case '\"':
 	 case '\\':
-	 case '/':
+//	 case '/':      // Not required?  (Validators accept without it)
 	   anstr[Count++] = '\\';
 	   break;
 	 case '\b':
@@ -915,6 +917,8 @@ static CMiniStr _fastcall NormalStrToJsonStr(LPCSTR str, int len=0, bool nouc=fa
 	   Val = 't';
 	   anstr[Count++] = '\\';
 	   break;
+
+//     case '\u':    'u' hex hex hex hex
 	}
    if(Val < 0x20)Val = 0x20;
 	 else if(Val > 0xFF)

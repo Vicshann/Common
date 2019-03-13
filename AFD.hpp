@@ -182,7 +182,7 @@ struct SAFD_INFO_CONN      // 0x28(Two addr?) - This structure is in InputBuffer
  ULONG  Unknown3;
  PVOID  UnkPtr;
  USHORT AddrCnt;      // Last addr should be empty?
- UCHAR  AddrLst[0];   // PH,PH,A0,A1,A2,A3
+ UCHAR  AddrLst[0];   // PH,PL,A0,A1,A2,A3
 };
 
 struct SAFD_WSABUF

@@ -5,8 +5,12 @@
 #include <Windowsx.h>
 #include <Commctrl.h>
 
+#include "CompileTime.hpp"     
+
 //==========================================================================================================================
 // NOTE: No multithreading yet!
+
+// Windows only, GUI only, Header only library
 
 /*
  BEHAVIOUR notes:
@@ -22,6 +26,10 @@
 WM_SETFONT
 
 ------------------------------------------------------------------
+http://www.mctrl.org/about.php
+
+https://www.codeproject.com/Articles/1042516/%2FArticles%2F1042516%2FCustom-Controls-in-Win-API-Scrolling
+
 About Window Classes: https://msdn.microsoft.com/ru-ru/library/windows/desktop/ms633574%28v=vs.85%29.aspx#system 
 
 Buttons: https://msdn.microsoft.com/ru-ru/library/windows/desktop/bb775943(v=vs.85).aspx
@@ -109,7 +117,7 @@ protected:
 void SetHInstance(void)
 {
  auto Ptr = &CObjBase::SetHInstance; 
- GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, *reinterpret_cast<LPCSTR*>(&Ptr), &this->hOwnerMod);  // Try to make a current module an owner
+ GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, *(LPCSTR*)&Ptr, &this->hOwnerMod);  // Try to make a current module an owner
  if(!this->hOwnerMod)this->hOwnerMod = GetModuleHandleA(NULL);  // Make the EXE module an owner
 }
 //------------------------------------------------------------------------------------------------------------
@@ -186,7 +194,7 @@ CWndBase* GetOwnerWnd(void){return reinterpret_cast<CWndBase*>(this->OwnerObj);}
 //------------------------------------------------------------------------------------------------------------
 static LRESULT CALLBACK WndProxyProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 {
- CWndBase* This = (CWndBase*)GetWindowLongPtrA(hWnd, WLP_USERDATA);    // Ur use a window`s extra bytes instead?
+ CWndBase* This = (CWndBase*)GetWindowLongPtrA(hWnd, WLP_USERDATA);    // Or use a window`s extra bytes instead?
  if(!This && ((Msg == WM_NCCREATE)||(Msg == WM_CREATE)))     // WM_NCCREATE then WM_CREATE or only one of them
   {
    This = (CWndBase*)((CREATESTRUCT*)lParam)->lpCreateParams;
@@ -205,7 +213,9 @@ static LRESULT CALLBACK WndProxyProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM 
  return DefWindowProcA(hWnd, Msg, wParam, lParam);
 }
 //------------------------------------------------------------------------------------------------------------
-ATOM GetSuperClass(LPSTR OrigClassName, LPSTR ClassName, UINT ExStyles=0)  // hInstance is NULL to superclass a system controls
+// Used to superclass system controls classes
+//
+ATOM SuperClassSysCtrl(LPSTR OrigClassName, LPSTR ClassName, UINT ExStyles=0)  // hInstance is NULL to superclass a system controls
 {
  WNDCLASSEXA wcls;  
  WNDCLASSEXA ewcls; 
@@ -216,10 +226,10 @@ ATOM GetSuperClass(LPSTR OrigClassName, LPSTR ClassName, UINT ExStyles=0)  // hI
  if(!this->hOwnerMod)this->SetHInstance();   
  if(ATOM MyClass  = GetClassInfoExA(this->hOwnerMod,ClassName,&ewcls))   // Returns an ATOM cast to BOOL as said on MSDN     // CLASS is already registered
   {        
-   this->WndClass = MyClass;
+   this->WndClass = MyClass;                                 // UnregisterClassA on it will fail unless there is no windows of this class left
    return this->WndClass;         // ATOM of an existing class
   }
- this->OrigWndProc  = wcls.lpfnWndProc;          // WM_CREATE will assign 'THIS' pointer to a window and there we assign original lpfnWndProc to a CLASS
+ this->OrigWndProc  = wcls.lpfnWndProc;          // WM_CREATE will assign 'THIS' pointer to a window and there we assign original lpfnWndProc to a CLASS     // Should be after GetClassInfoExA???? - test it later
  wcls.hInstance     = this->hOwnerMod;
  wcls.lpfnWndProc   = (WNDPROC)&CWndBase::WndProxyProc;
  wcls.lpszClassName = ClassName;
@@ -266,6 +276,11 @@ void NotifyParents(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam, UINT Notif
 //------------------------------------------------------------------------------------------------------------  enum EWNotify {wnChildren=1, wnDeepChld=2, wnDeepPrnt=4};
 
 public:
+ void (_fastcall CWndBase::*OnPaint)(CWndBase* Sender) = nullptr; 
+ void (_fastcall CWndBase::*OnResize)(CWndBase* Sender, UINT Type, WORD Width, WORD Height) = nullptr; 
+ void (_fastcall CWndBase::*OnMouseBtnDn)(CWndBase* Sender, WORD EvtKey, WORD KeyState, int x, int y) = nullptr;
+ void (_fastcall CWndBase::*OnKeyDn)(CWndBase* Sender, WORD KeyCode, WORD RepCnt, BYTE ScanCode, bool ExtKey, bool PrvState) = nullptr; 
+
 //------------------------------------------------------------------------------------------------------------
 CWndBase(void){ }
 //------------------------------------------------------------------------------------------------------------
@@ -307,12 +322,54 @@ HWND GetOwnerHandle(void){return (this->OwnerObj)?(((CWndBase*)this->OwnerObj)->
 virtual ~CWndBase()    // A thread cannot use DestroyWindow to destroy a window created by a different thread. 
 {                      // 'DestroyWindow' may fail here because all child windows is already deleted by parent`s 'DestroyWindow' call
  if(this->hWindow)DestroyWindow(this->hWindow);    // If the specified window is a parent or owner window, DestroyWindow automatically destroys the associated child or owned windows when it destroys the parent or owner window.
- if(this->WndClass)UnregisterClassA((LPCSTR)this->WndClass, this->hOwnerMod);   // Restore original WindowProc before this?
+ if(this->WndClass)UnregisterClassA((LPCSTR)this->WndClass, this->hOwnerMod);   // Restore original WindowProc before this?   // Will work only if there is no windows left of that class
 }  
 //------------------------------------------------------------------------------------------------------------
 virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, LRESULT& lResult)      // Returns TRUE if the message processed
 {
  lResult = CallWindowProcA(this->OrigWndProc, hWnd, Msg, wParam, lParam);   // Process on original WindowProc
+ switch(Msg)
+  {
+   case WM_VSCROLL:  // Hello! We need these in a child control handler, not here!
+   case WM_HSCROLL:
+    if(lParam)       // Pass it down to a child Scroll Bar    // TODO: Pass other scroll bar messages back to it
+     {
+      if(CWndBase* CldThis = (CWndBase*)GetWindowLongPtrA((HWND)lParam, WLP_USERDATA)) 
+       {
+        hWnd   = CldThis->GetHandle();
+        lParam = NULL;        // Prevents this message from looping WindowProc
+        CldThis->WindowProc(hWnd, Msg, wParam, lParam, lResult);
+       }
+     }
+    break;
+
+   case WM_SIZE:       // WM_SIZING later
+    if(this->OnResize)(this->*OnResize)(this, wParam, lParam & 0xFFFF, lParam >> 16);
+    break;
+
+   case WM_PAINT:         // Never received for main windows! Only for controls?
+   case WM_ERASEBKGND:    // If you set the class background brush to NULL, however, the system sends a WM_ERASEBKGND message to your window procedure whenever the window background must be drawn, letting you draw a custom background.
+    if(this->OnPaint)(this->*OnPaint)(this);
+    break;
+
+   case WM_XBUTTONDOWN:
+    if(this->OnMouseBtnDn)(this->*OnMouseBtnDn)(this, ((wParam >> 16) & XBUTTON1)?(MK_XBUTTON1):(MK_XBUTTON2), wParam & 0xFFFF, lParam & 0xFFFF, lParam >> 16);
+    break;
+   case WM_MBUTTONDOWN:
+    if(this->OnMouseBtnDn)(this->*OnMouseBtnDn)(this, MK_MBUTTON, wParam & 0xFFFF, lParam & 0xFFFF, lParam >> 16);
+    break;
+   case WM_RBUTTONDOWN:
+    if(this->OnMouseBtnDn)(this->*OnMouseBtnDn)(this, MK_RBUTTON, wParam & 0xFFFF, lParam & 0xFFFF, lParam >> 16);
+    break;
+   case WM_LBUTTONDOWN:
+    if(this->OnMouseBtnDn)(this->*OnMouseBtnDn)(this, MK_LBUTTON, wParam & 0xFFFF, lParam & 0xFFFF, lParam >> 16);
+    break;
+
+   case WM_KEYDOWN:
+   case WM_SYSKEYDOWN:   // For F10
+    if(this->OnKeyDn)(this->*OnKeyDn)(this, wParam, lParam & 0xFFFF, (lParam >> 16) & 0xFF, lParam & (1 << 24), lParam & (1 << 30));
+    break;
+  }
  return true;
 }      
 //------------------------------------------------------------------------------------------------------------
@@ -321,6 +378,67 @@ virtual HFONT GetFont(void){return (HFONT)SendMessageA(this->hWindow, WM_GETFONT
 virtual void  SetFont(HFONT Font, bool Redraw=false){SendMessageA(this->hWindow, WM_SETFONT, (LPARAM)Font, Redraw);}
 //------------------------------------------------------------------------------------------------------------
 virtual BOOL  Show(bool Show){return ShowWindow(this->hWindow, (Show)?(SW_SHOW):(SW_HIDE));}
+//------------------------------------------------------------------------------------------------------------
+};
+//==========================================================================================================================
+//                                               WINDOW FORM CLASS
+//==========================================================================================================================
+// TODO: Unicode flag (RegisterClassExW) // Affects child sys windows?
+class CWndForm: public CWndBase    // TODO: Partial update of controls, do not redraw all
+{
+ HFONT Font     = nullptr;   // Custom class windows 
+//------------------------------------------------------------------------------------------------------------
+
+public:
+//------------------------------------------------------------------------------------------------------------
+CWndForm(void){ }
+//------------------------------------------------------------------------------------------------------------
+int Create(LPCSTR WndName, SWDim& Wdim, HWND hParentWnd, DWORD Style, DWORD ExStyle, HBRUSH hBgrBrush=GetSysColorBrush(COLOR_BTNFACE))
+{
+ WNDCLASSEX wcls; 
+ char WCName[256];
+
+ lstrcpyA(&WCName[1], "CSWForm");
+ WCName[0] = (hBgrBrush)?('S'):('N'); 
+ if(!this->hOwnerMod)this->SetHInstance();
+ if(!(this->WndClass = GetClassInfoExA(this->hOwnerMod,(LPSTR)&WCName,&wcls)))  // Returns an ATOM cast to BOOL as said on MSDN     // CLASS is already registered  // UnregisterClassA on it will fail unless there is no windows of this class left
+  {
+   wcls.cbSize        = sizeof(WNDCLASSEX);
+   wcls.style         = CS_OWNDC|CS_HREDRAW|CS_VREDRAW|CS_GLOBALCLASS;
+   wcls.cbClsExtra    = sizeof(PVOID);   // To store DefWindowProc
+   wcls.cbWndExtra    = 0;
+   wcls.hInstance     = this->hOwnerMod; 
+   wcls.hIcon         = LoadIcon(NULL, IDI_APPLICATION);                 
+   wcls.hCursor       = LoadCursor(0, (LPCSTR)IDC_ARROW);
+   wcls.hbrBackground = hBgrBrush;//GetSysColorBrush(COLOR_BTNFACE); // (HBRUSH)(COLOR_BACKGROUND+1);  
+   wcls.lpszClassName = (LPSTR)&WCName;
+   wcls.lpszMenuName  = 0;
+   wcls.hIconSm       = 0;
+   wcls.lpfnWndProc   = (WNDPROC)&CWndBase::WndProxyProc;   // Belongs to this window CLASS  // WM_CREATE is passed to class`s proc because only there it is specified before a window created
+   this->WndClass     = RegisterClassExA(&wcls);
+   if(!this->WndClass)return -1;
+  }
+ return (this->CreateWnd((LPCSTR)this->WndClass, WndName, Style, ExStyle, Wdim.PosX, Wdim.PosY, Wdim.Width, Wdim.Height, hParentWnd))?(0):(-2);
+}
+//------------------------------------------------------------------------------------------------------------
+virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, LRESULT& lResult)
+{    
+ CWndBase::WindowProc(hWnd, Msg, wParam, lParam, lResult);  // Let base class to process the messages before we extend them   // Before or After processing
+ switch(Msg)
+  {
+   case WM_SIZE:
+    this->NotifyChildren(this->hWindow, Msg, wParam, lParam);
+    break;
+   case WM_GETFONT:
+    lResult = (LRESULT)this->Font;
+    break; 
+   case WM_SETFONT:
+    this->Font = (HFONT)wParam;
+    if((bool)lParam){InvalidateRect(hWnd, NULL, TRUE); lResult = CallWindowProcA(this->OrigWndProc, hWnd, WM_PAINT, 0, 0);}
+    break;
+  }        
+ return true;  
+}
 //------------------------------------------------------------------------------------------------------------
 };
 //==========================================================================================================================
@@ -405,7 +523,7 @@ int Create(LPCSTR EdText, SWDim& Wdim, bool Passw=false)
 {
  DWORD Style = 0;           
  if(Passw)Style |= ES_PASSWORD;
- if(!this->GetSuperClass("EDIT", "CSWEdit"))return -1;
+ if(!this->SuperClassSysCtrl("EDIT", "CSWEdit"))return -1;
  return (this->CreateWnd((LPCSTR)this->WndClass, EdText, Style|WS_CHILD, 0, Wdim.PosX, Wdim.PosY, Wdim.Width, Wdim.Height, NULL))?(0):(-2);
 }
 //------------------------------------------------------------------------------------------------------------
@@ -424,7 +542,7 @@ CSWButton(void){ }
 int Create(LPCSTR BtnName, SWDim& Wdim)  // Separate from constructor to allow some additional configuration
 { 
  DWORD Style = WS_CHILD|BS_CENTER|BS_DEFPUSHBUTTON; 
- if(!this->GetSuperClass("BUTTON", "CSWButton"))return -1;
+ if(!this->SuperClassSysCtrl("BUTTON", "CSWButton"))return -1;
  return (this->CreateWnd((LPCSTR)this->WndClass, BtnName, Style, 0, Wdim.PosX, Wdim.PosY, Wdim.Width, Wdim.Height, 0))?(0):(-2);
 }
 //------------------------------------------------------------------------------------------------------------
@@ -447,57 +565,189 @@ virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, L
 //------------------------------------------------------------------------------------------------------------
 };
 //==========================================================================================================================
-//                                               WINDOW FORM CLASS
+//                                               SCROLL BAR CLASS
 //==========================================================================================================================
-// TODO: Unicode flag (RegisterClassExW) // Affects child sys windows?
-class CWndForm: public CWndBase    // TODO: Partial update of controls, do not redraw all
+/*
+SBS_BOTTOMALIGN:  Aligns the bottom edge of the scroll bar with the bottom edge of the rectangle defined by the x, y, nWidth, and nHeight parameters of CreateWindowEx function. The scroll bar has the default height for system scroll bars. Use this style with the SBS_HORZ style.
+SBS_HORZ:  Designates a horizontal scroll bar. If neither the SBS_BOTTOMALIGN nor SBS_TOPALIGN style is specified, the scroll bar has the height, width, and position specified by the x, y, nWidth, and nHeight parameters of CreateWindowEx.
+SBS_LEFTALIGN:  Aligns the left edge of the scroll bar with the left edge of the rectangle defined by the x, y, nWidth, and nHeight parameters of CreateWindowEx. The scroll bar has the default width for system scroll bars. Use this style with the SBS_VERT style.
+SBS_RIGHTALIGN:  Aligns the right edge of the scroll bar with the right edge of the rectangle defined by the x, y, nWidth, and nHeight parameters of CreateWindowEx. The scroll bar has the default width for system scroll bars. Use this style with the SBS_VERT style.
+SBS_SIZEBOX:  The scroll bar is a size box. If you specify neither the SBS_SIZEBOXBOTTOMRIGHTALIGN nor the SBS_SIZEBOXTOPLEFTALIGN style, the size box has the height, width, and position specified by the x, y, nWidth, and nHeight parameters of CreateWindowEx. 
+SBS_SIZEBOXBOTTOMRIGHTALIGN:  Aligns the lower right corner of the size box with the lower right corner of the rectangle specified by the x, y, nWidth, and nHeight parameters of CreateWindowEx. The size box has the default size for system size boxes. Use this style with the SBS_SIZEBOX or SBS_SIZEGRIP styles.
+SBS_SIZEBOXTOPLEFTALIGN:  Aligns the upper left corner of the size box with the upper left corner of the rectangle specified by the x, y, nWidth, and nHeight parameters of CreateWindowEx. The size box has the default size for system size boxes. Use this style with the SBS_SIZEBOX or SBS_SIZEGRIP styles.
+SBS_SIZEGRIP:  Same as SBS_SIZEBOX, but with a raised edge.  // The scroll bar is a size box with a raised edge. 
+SBS_TOPALIGN:  Aligns the top edge of the scroll bar with the top edge of the rectangle defined by the x, y, nWidth, and nHeight parameters of CreateWindowEx. The scroll bar has the default height for system scroll bars. Use this style with the SBS_HORZ style.
+SBS_VERT:  Designates a vertical scroll bar. If you specify neither the SBS_RIGHTALIGN nor the SBS_LEFTALIGN style, the scroll bar has the height, width, and position specified by the x, y, nWidth, and nHeight parameters of CreateWindowEx.
+*/
+class CSWScrBar: public CCldBase
 {
- HFONT Font     = nullptr;   // Custom class windows 
-//------------------------------------------------------------------------------------------------------------
-
+ bool AUpd = true;
 public:
-//------------------------------------------------------------------------------------------------------------
-CWndForm(void){ }
-//------------------------------------------------------------------------------------------------------------
-int Create(LPCSTR WndName, SWDim& Wdim, HWND hParentWnd, DWORD Style, DWORD ExStyle)
-{
- WNDCLASSEX wcls; 
+ enum EScrType {stLine=1,stPage=2,stEdge=4,stTrack=8,stTrackDone=16};  // Can be masked
 
- if(!this->hOwnerMod)this->SetHInstance();
- wcls.cbSize        = sizeof(WNDCLASSEX);
- wcls.style         = CS_OWNDC|CS_HREDRAW|CS_VREDRAW|CS_GLOBALCLASS;
- wcls.cbClsExtra    = sizeof(PVOID);   // To store DefWindowProc
- wcls.cbWndExtra    = 0;
- wcls.hInstance     = this->hOwnerMod; 
- wcls.hIcon         = 0;                 
- wcls.hCursor       = LoadCursor(0, (LPCSTR)IDC_ARROW);
- wcls.hbrBackground = GetSysColorBrush(COLOR_BTNFACE); // (HBRUSH)(COLOR_BACKGROUND+1);  
- wcls.lpszClassName = "CSWForm";
- wcls.lpszMenuName  = 0;
- wcls.hIconSm       = 0;
- wcls.lpfnWndProc   = (WNDPROC)&CWndBase::WndProxyProc;   // Belongs to this window CLASS  // WM_CREATE is passed to class`s proc because only there it is specified before a window created
- this->WndClass     = RegisterClassExA(&wcls);
- if(!this->WndClass)return -1;
- return (this->CreateWnd((LPCSTR)this->WndClass, WndName, Style, ExStyle, Wdim.PosX, Wdim.PosY, Wdim.Width, Wdim.Height, hParentWnd))?(0):(-2);
+ void (_fastcall CWndBase::*OnScroll)(CWndBase* Sender, int Type, int PosMod) = nullptr;
+
+CSWScrBar(void){ }
+//------------------------------------------------------------------------------------------------------------
+int Create(SWDim& Wdim, DWORD Style, bool AutoUpd=true)
+{
+ this->AUpd = AutoUpd;
+ if(!this->SuperClassSysCtrl("SCROLLBAR", "CSWScrBar"))return -1;
+ return (this->CreateWnd((LPCSTR)this->WndClass, "", Style|WS_CHILD, 0, Wdim.PosX, Wdim.PosY, Wdim.Width, Wdim.Height, NULL))?(0):(-2);
 }
 //------------------------------------------------------------------------------------------------------------
 virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, LRESULT& lResult)
-{    
- CWndBase::WindowProc(hWnd, Msg, wParam, lParam, lResult);  // Let base class to process the messages before we extend them   // Before or After processing
+{  
+ CCldBase::WindowProc(hWnd, Msg, wParam, lParam, lResult);   
+// LRESULT Result = 0;
+// bool    NoOrig = false;
+ switch(Msg)
+  {  
+   case WM_VSCROLL:
+   case WM_HSCROLL:
+     {
+      SCROLLINFO sci;
+      sci.cbSize = sizeof(SCROLLINFO);
+      sci.fMask  = SIF_ALL;
+      GetScrollInfo(this->hWindow, SB_CTL, &sci);
+      switch(wParam & 0xFFFF)
+       {  
+//     case SB_ENDSCROLL:    // ?????????
+
+        case SB_THUMBPOSITION:
+         if(this->AUpd)this->SetPos(sci.nTrackPos);
+         if(this->OnScroll)(this->GetOwnerWnd()->*OnScroll)(this, stTrack|stTrackDone, sci.nTrackPos);
+         break;
+        case SB_THUMBTRACK:
+         if(this->AUpd)this->SetPos(sci.nTrackPos);
+         if(this->OnScroll)(this->GetOwnerWnd()->*OnScroll)(this, stTrack, sci.nTrackPos);
+         break;
+        case SB_TOP:
+//        case SB_LEFT:
+         if(this->AUpd)this->SetPos(sci.nMin);
+         if(this->OnScroll)(this->GetOwnerWnd()->*OnScroll)(this, stEdge, sci.nMin);
+         break;
+        case SB_RIGHT:
+//        case SB_BOTTOM:
+         if(this->AUpd)this->SetPos(sci.nMax);
+         if(this->OnScroll)(this->GetOwnerWnd()->*OnScroll)(this, stEdge, sci.nMax);
+         break;
+        case SB_LINEUP:
+//        case SB_LINELEFT:
+         if(this->AUpd)this->SetPos(sci.nPos-1);
+         if(this->OnScroll)(this->GetOwnerWnd()->*OnScroll)(this, stLine, -1);
+         break; 
+        case SB_LINEDOWN:
+//        case SB_LINERIGHT:
+         if(this->AUpd)this->SetPos(sci.nPos+1);
+         if(this->OnScroll)(this->GetOwnerWnd()->*OnScroll)(this, stLine, 1);
+         break;
+        case SB_PAGEUP:
+//        case SB_PAGELEFT:
+         if(this->AUpd)this->SetPos(sci.nPos-sci.nPage);
+         if(this->OnScroll)(this->GetOwnerWnd()->*OnScroll)(this, stPage, -sci.nPage);
+         break;
+        case SB_PAGEDOWN:
+//        case SB_PAGERIGHT:
+         if(this->AUpd)this->SetPos(sci.nPos+sci.nPage);
+         if(this->OnScroll)(this->GetOwnerWnd()->*OnScroll)(this, stPage, sci.nPage);
+         break;
+       }
+     }
+    break;
+  } 
+// if(NoOrig)return Result;        
+ return true;
+}
+//------------------------------------------------------------------------------------------------------------
+int SetRange(int iMin, int iMax, UINT uPage)
+{
+ SCROLLINFO sci;
+ sci.cbSize = sizeof(SCROLLINFO);
+ sci.fMask  = SIF_RANGE;
+ sci.nPage  = uPage;
+ sci.nMin   = iMin;
+ sci.nMax   = iMax;
+ if(uPage)sci.fMask |= SIF_PAGE;
+ return SetScrollInfo(this->hWindow, SB_CTL, &sci, TRUE); 
+}
+//------------------------------------------------------------------------------------------------------------
+int GetRange(int* pMin, int* pMax, UINT* pPage)
+{
+ SCROLLINFO sci;
+ sci.cbSize = sizeof(SCROLLINFO);
+ sci.fMask  = SIF_POS;
+ if(pPage)sci.fMask |= SIF_PAGE;
+ if(!GetScrollInfo(this->hWindow, SB_CTL, &sci))return -1;
+ if(pPage)*pPage = sci.nPage;
+ if(pMin)*pMin = sci.nMin;
+ if(pMax)*pMax = sci.nMax;
+ return 0;
+}
+//------------------------------------------------------------------------------------------------------------
+int SetPos(int iPos)     // Is setting beyond limits sets to min/max or does nothing?
+{
+ SCROLLINFO sci;
+ sci.cbSize = sizeof(SCROLLINFO);
+ sci.fMask  = SIF_POS;
+ sci.nPos   = iPos;
+ return SetScrollInfo(this->hWindow, SB_CTL, &sci, TRUE); 
+}
+//------------------------------------------------------------------------------------------------------------
+int GetPos(void)
+{
+ SCROLLINFO sci;
+ sci.cbSize = sizeof(SCROLLINFO);
+ sci.fMask  = SIF_POS;
+ if(!GetScrollInfo(this->hWindow, SB_CTL, &sci))return -1;
+ return sci.nPos;
+}
+//------------------------------------------------------------------------------------------------------------
+
+};
+//==========================================================================================================================
+/*
+CBS_SIMPLE: 	Displays the list at all times, and shows the selected item in an edit control.
+CBS_DROPDOWN: 	Displays the list when the icon is clicked, and shows the selected item in an edit control.
+CBS_DROPDOWNLIST: 	Displays the list when the icon is clicked, and shows the selected item in a static control.
+*/
+class CSWComboBox: public CCldBase
+{
+public:
+// void (_fastcall CWndBase::*OnMouseBtnUp)(CWndBase* Sender, WORD WMsg, WORD KeyEx, int x, int y) = nullptr;    // If a callback returns true then no need to pass this message next to original WindowProc
+
+CSWComboBox(void){ }
+//------------------------------------------------------------------------------------------------------------
+int Create(LPCSTR Text, SWDim& Wdim, DWORD Style)  // Separate from constructor to allow some additional configuration
+{                     
+ if(!this->SuperClassSysCtrl("ComboBox", "CSWButton"))return -1;
+ return (this->CreateWnd((LPCSTR)this->WndClass, Text, Style|WS_CHILD, 0, Wdim.PosX, Wdim.PosY, Wdim.Width, Wdim.Height, 0))?(0):(-2);
+}           
+//------------------------------------------------------------------------------------------------------------
+virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, LRESULT& lResult)    // No Effect!!!!!!!!!
+{ 
  switch(Msg)
   {
-   case WM_SIZE:
-    this->NotifyChildren(this->hWindow, Msg, wParam, lParam);
+   case WM_KEYDOWN:
+ //  case WM_RBUTTONUP:
+ //  case WM_MBUTTONUP:
+     Sleep(1);// if(this->OnMouseBtnUp)(this->GetOwnerWnd()->*OnMouseBtnUp)(this, Msg, wParam, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
     break;
-   case WM_GETFONT:
-    lResult = (LRESULT)this->Font;
-    break; 
-   case WM_SETFONT:
-    this->Font = (HFONT)wParam;
-    if((bool)lParam){InvalidateRect(hWnd, NULL, TRUE); lResult = CallWindowProcA(this->OrigWndProc, hWnd, WM_PAINT, 0, 0);}
+  } 
+ 
+ CCldBase::WindowProc(hWnd, Msg, wParam, lParam, lResult);   
+// LRESULT Result = 0;
+// bool    NoOrig = false;
+ switch(Msg)
+  {
+   case WM_KEYDOWN:
+ //  case WM_RBUTTONUP:
+ //  case WM_MBUTTONUP:
+     Sleep(1);// if(this->OnMouseBtnUp)(this->GetOwnerWnd()->*OnMouseBtnUp)(this, Msg, wParam, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
     break;
-  }        
- return true;  
+  } 
+// if(NoOrig)return Result;        
+ return true;
 }
 //------------------------------------------------------------------------------------------------------------
 };

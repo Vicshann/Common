@@ -54,6 +54,10 @@ static bool EqualMem(PVOID BlkA, PVOID BlkB, UINT Length)
  return (memcmp(BlkA,BlkB,Length) == 0);  // TODO: implement 'memcmp'?
 }
 //----------------------
+static void FillMem(PVOID Dst, size_t Val, size_t Length)   // TODO: Pattern fill (size_t is already used for value)
+{
+ memset(Dst, Val, Length);
+}
 
 //};
 //---------------------------------------------------------------------------

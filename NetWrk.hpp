@@ -156,9 +156,9 @@ int Connect(LPSTR Url, USHORT port, PCCERT_CONTEXT Cert=NULL)
    this->SetSocTimeout(5);
    this->SSoc.Initialize(this->soc,0,this->SslCert);
    if(this->SSoc.ClientInit() != 0){LOGMSG("Failed to initialize SSL session!"); this->SSoc.ClientOff(); closesocket(this->soc); this->SSoc.Destroy(); return -4;}
-   this->SetSocTimeout(this->Timeout);
    this->UseHttps = true;
   }
+ if(this->Timeout)this->SetSocTimeout(this->Timeout);
  this->Connected = true;
  return 0;
 }
@@ -275,16 +275,19 @@ int GetResponse(CMiniStr& Rsp)
  return Rsp.Length();
 }
 //------------------------------------------------------------------------------------------------------------
-int GetResponseContent(CMiniStr& Rsp, CMiniStr& Content)    // TODO: Decode Url encoded content?
+int GetResponseContent(CMiniStr& Rsp, CMiniStr& Content, bool NeedOK=false)    // TODO: Decode Url encoded content?
 {
  Content.Clear();
- if((Rsp.Length() < 5) || (StrCompareSimpleIC("HTTP/", Rsp.c_str()) >= 0)){Content = Rsp; return 1;}
- int epos = GetSubStrOffsSimpleIC("\r\n\r\n", (CHAR*)Rsp.c_data(), 0, Rsp.Length());
-// int rpos = GetSubStrOffsSimpleIC("200 OK", (CHAR*)Rsp.c_data(), 0, (epos > 0)?(epos):(Rsp.Length()));
-// if(rpos < 0){LOGMSG("No '200 OK' in HTTP response header(Size=%u)!",Rsp.Length());}
+ if((Rsp.Length() < 5) || (NSTR::CompareIC("HTTP/", Rsp.c_str()) >= 0)){Content = Rsp; return 1;}
+ int epos = NSTR::StrOffset<NSTR::ChrOpSiLC<> >((CHAR*)Rsp.c_data(), "\r\n\r\n", 0, Rsp.Length());
+ if(NeedOK)
+  {
+   int rpos = NSTR::StrOffset<NSTR::ChrOpSiLC<> >((CHAR*)Rsp.c_data(), "200 OK", 0, (epos > 0)?(epos):(Rsp.Length()));
+   if(rpos < 0){LOGMSG("No '200 OK' in HTTP response header(Size=%u)!",Rsp.Length());}
+  }
  if(epos < 0){Content = Rsp; return 2;}     // LOGMSG("No content!"); 
- bool GZipd = (GetSubStrOffsSimpleIC("Content-Encoding: gzip", (CHAR*)Rsp.c_data(), 0, epos) > 0);
- bool Chunk = (GetSubStrOffsSimpleIC("Transfer-Encoding: chunked", (CHAR*)Rsp.c_data(), 0, epos) > 0); 
+ bool GZipd = (NSTR::StrOffset<NSTR::ChrOpSiLC<> >((CHAR*)Rsp.c_data(), "Content-Encoding: gzip", 0, epos) > 0);
+ bool Chunk = (NSTR::StrOffset<NSTR::ChrOpSiLC<> >((CHAR*)Rsp.c_data(), "Transfer-Encoding: chunked", 0, epos) > 0); 
  int DataOffs = epos + 4;  // \r\n\r\n
  if(Chunk)
   {
@@ -292,7 +295,7 @@ int GetResponseContent(CMiniStr& Rsp, CMiniStr& Content)    // TODO: Decode Url 
     {
      UINT CntLen = HexStrToNum<UINT>((LPSTR)&Rsp.c_data()[DataOffs]);  // Size of Chunk
      if(!CntLen)break;  // End chunk is 0
-     int rpos = GetSubStrOffsSimpleIC("\r\n", (LPSTR)Rsp.c_data(), DataOffs, Rsp.Length());
+     int rpos = NSTR::StrOffset<NSTR::ChrOpSiLC<> >((LPSTR)Rsp.c_data(), "\r\n", DataOffs, Rsp.Length());
      if(rpos < 0)break;
      DataOffs  = rpos + 2;   // \r\n
      Content.cAppend((LPSTR)&Rsp.c_data()[DataOffs], CntLen);

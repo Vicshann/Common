@@ -16,7 +16,7 @@
 #include "Utils.h"
 #include "FormatPE.h"
 //====================================================================================
-
+                                            // sprintf: hex, bits
 HANDLE hLogFile = INVALID_HANDLE_VALUE;
 HANDLE hConsOut = INVALID_HANDLE_VALUE;
 HANDLE hConsErr = INVALID_HANDLE_VALUE;
@@ -140,6 +140,7 @@ void __cdecl operator delete[](void* p)
 
 extern "C" int _fltused = 0;
 
+extern "C" int __cdecl _purecall(void) { return 0; }
 
 extern "C" int __cdecl atexit( void (__cdecl *func )( void ) )   // MINIRTL ?
 {
@@ -502,7 +503,7 @@ UINT _stdcall TrimFilePath(LPSTR FullPath)
  return 0;
 }
 //---------------------------------------------------------------------------
-void _stdcall CreateDirectoryPath(LPSTR Path) // Must end with '\\', may contain a filename at the end
+/*void _stdcall CreateDirectoryPath(LPSTR Path) // Must end with '\\', may contain a filename at the end
 {
  BYTE FullPath[MAX_PATH];
 
@@ -531,7 +532,7 @@ void _stdcall CreateDirectoryPathW(PWSTR Path) // Must end with '\\', may contai
 	 FullPath[Count] = PATHDLML;
 	}
   }
-}
+} */
 //---------------------------------------------------------------------------
 UINT64 _stdcall QueryFileSize(LPSTR File)
 {
@@ -986,6 +987,19 @@ bool _stdcall IsMemSignatureMatch(PVOID Address, LPSTR Signature, UINT SigLen)
  return false;
 }   
 //--------------------------------------------------------------------------- 
+PBYTE _stdcall FindMemPatternInRange(PBYTE AddrLo, PBYTE AddrHi, PBYTE Patern, UINT PatSize, UINT Step, UINT MatchIdx)
+{                                      
+ if(!Step)Step = 1;                // Support backwards?
+ if(!MatchIdx)MatchIdx = 1;
+ AddrHi -= PatSize;      // Prevent a buffer overflow
+ for(;AddrLo <= AddrHi;AddrLo+=Step)
+  {
+   if(!memcmp(AddrLo, Patern, PatSize) && !--MatchIdx){DBGMSG("Address is %p",AddrLo); return AddrLo;} 
+  }
+ DBGMSG("Not found!");
+ return NULL;
+}
+//--------------------------------------------------------------------------- 
  // Backward('R') sigs are useless and unsafe for a range search?
 PBYTE _stdcall FindMemSignatureInRange(PBYTE AddrLo, PBYTE AddrHi, LPSTR Signature, UINT Step, UINT MatchIdx, UINT SigLen)
 {                                      
@@ -1160,23 +1174,6 @@ int _stdcall ByteArrayToHexStr(PBYTE Buffer, LPSTR DstStr, UINT ByteCnt, bool Up
  return len;
 } */
 //---------------------------------------------------------------------------
-int _stdcall HexStrToByteArray(PBYTE Buffer, LPSTR SrcStr, UINT HexByteCnt)
-{
- UINT len = 0;
- UINT ctr = 0;
- for(;(SrcStr[len]&&SrcStr[len+1])&&(!HexByteCnt||(ctr < HexByteCnt));len++)
-  {
-   if(SrcStr[len] <= 0x20)continue;   // Skip spaces and line delimitters
-   int ByteHi  = CharToHex(SrcStr[len]);
-   int ByteLo  = CharToHex(SrcStr[len+1]);
-   if((ByteHi  < 0)||(ByteLo < 0))return ctr;  // Not a HEX char
-   Buffer[ctr] = (ByteHi << 4)|ByteLo;
-   ctr++;
-   len++;
-  }
- return ctr;
-}
-//------------------------------------
 bool _stdcall IsValidAsciiString(PBYTE Ptr, UINT MinLen, UINT MaxLen)
 {
  for(UINT ctr=0;ctr < MaxLen;ctr++)
@@ -2059,7 +2056,7 @@ int _stdcall MaxOnePos(DWORD Value, UINT MaxBits)
  return MaxPos;
 }
 //---------------------------------------------------------------------------
-UINT _stdcall GetRandomValue(UINT MinVal, UINT MaxVal)
+UINT _stdcall GetRandomValue(UINT MinVal, UINT MaxVal)   // Bad distribution in sequential usage!!!!!!!
 {
  LARGE_INTEGER RndSeed;
  if(QueryPerformanceCounter(&RndSeed));
@@ -2092,19 +2089,6 @@ HMODULE _stdcall FindModuleByExpName(LPSTR ModuleName)              // For modul
   }
  CloseHandle(hModulesSnap);
  return NULL;
-}
-//---------------------------------------------------------------------------
-bool _stdcall AssignFilePath(LPSTR DstPath, LPSTR BasePath, LPSTR FilePath)  // TODO: Should return length
-{
- if(!FilePath || !FilePath[0])return false;
- if(FilePath[1] != ':') 
-  {
-   lstrcpy(DstPath, BasePath);
-   LPSTR Ptr = (IsFilePathDelim(FilePath[0]))?(&FilePath[1]):(&FilePath[0]);
-   lstrcat(DstPath, Ptr);
-  }
-   else lstrcpy(DstPath, FilePath);
- return true;
 }
 //---------------------------------------------------------------------------
 HANDLE WINAPI CreateFileX(PVOID lpFileName,DWORD dwDesiredAccess,DWORD dwShareMode,LPSECURITY_ATTRIBUTES lpSecurityAttributes,DWORD dwCreationDisposition,DWORD dwFlagsAndAttributes,HANDLE hTemplateFile)
@@ -2187,6 +2171,15 @@ int _stdcall FormatDateForHttp(SYSTEMTIME* st, LPSTR DateStr)
  return olen+4;
 }
 //------------------------------------------------------------------------------------------------------------
+bool _stdcall IsWow64(void)
+{
+ static PVOID Proc = NULL;
+ if(!Proc)Proc = GetProcAddress(GetModuleHandle("Kernel32.dll"),"IsWow64Process");
+ if(!Proc)return false;
+ BOOL Result = 0;
+ return ((BOOL (_stdcall *)(HANDLE,PBOOL))Proc) (GetCurrentProcess(), &Result) && Result;
+}
+//---------------------------------------------------------------------------
 
 /*
 PVOID _stdcall GetProcessImageBase(HANDLE hProcess)   // Requires ntdef header

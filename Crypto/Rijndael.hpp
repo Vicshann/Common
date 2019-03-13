@@ -1,8 +1,8 @@
 
 #pragma once
 
-#ifndef RIJNDAELH
-#define RIJNDAELH
+#define _RIJNDAELH_
+
 
 
 // Rijndael (pronounced Reindaal) is a block cipher, designed by Joan Daemen and Vincent Rijmen as a candidate algorithm for the AES.
@@ -14,12 +14,33 @@
 // Java code authors: Raif S. Naffah, Paulo S. L. M. Barreto
 // This Implementation was tested against KAT test published by the authors of the method and the results were identical.
 //
+// TODO: Padding support
+//
+// C++17 required
+//
 class CRijndael
 {
  int KeyLength;  // Key Length   // Defining its here will cause many functions to be templated and code will bloat but for speed and protection it is better
  int BlockSize;  // Block Size
  int RoundsNum;
  int iMode;
+                                   // 0 1 2 3 4 5 6 7 8
+static const inline char sm_sidx[] = {0,0,0,0,0,0,1,0,2};   // 4(0),6(1),8(2) DWORDs is 128, 192, 256 bit key sizes     
+static const inline char sm_shifts[3][4][2] =
+{
+	{ {0, 0}, {1, 3}, {2, 2}, {3, 1} },     // 4
+	{ {0, 0}, {1, 5}, {2, 4}, {3, 3} },     // 6
+	{ {0, 0}, {1, 7}, {3, 5}, {4, 4} }      // 8
+};
+
+#ifndef RIJNDAEL_STATIC
+ static inline char sm_rcon[30]  = {0};        // Array pointers: // int (*A)[ny][nx] = (int(*)[ny][nx]) p;   
+ static inline unsigned char sm_S[256]  = {0};
+ static inline unsigned char sm_Si[256] = {0};
+ static inline int  sm_U[4][256] = {0};
+ static inline int  sm_TS[4][256] = {0};
+ static inline int  sm_TSi[4][256] = {0};  
+#endif
 
 public:
 // Operation Modes:
@@ -32,8 +53,8 @@ public:
 private:
  enum { MAX_BLOCK_SIZE=32, MAX_ROUNDS=14, MAX_KC=8, MAX_BC=8 };
 
- int  m_Ke[MAX_ROUNDS+1][MAX_BC];   // Encryption (m_Ke) round key   
- int  m_Kd[MAX_ROUNDS+1][MAX_BC];   // Decryption (m_Kd) round key
+ int m_Ke[MAX_ROUNDS+1][MAX_BC];   // Encryption (m_Ke) round key   
+ int m_Kd[MAX_ROUNDS+1][MAX_BC];   // Decryption (m_Kd) round key
  unsigned char m_chain[MAX_BLOCK_SIZE];  //Chain Block
 
 //------------------------------------------------------------------------------------	
@@ -41,30 +62,164 @@ static inline void XorBlk(unsigned char* buff, unsigned char* chain, int Size)  
 {
  for(int i=0;i < Size; i++)*(buff++) ^= *(chain++);	
 }
-//------------------------------------------------------------------------------------		
-static inline int Mul(int a, int b)  // Multiply two elements of GF(2^m)                             // static
+//------------------------------------------------------------------------------------	
+static inline int GetShift(int a, int b, int c)
+{                        
+ return sm_shifts[sm_sidx[a]][b][c];
+}		
+//------------------------------------------------------------------------------------	
+#ifndef RIJNDAEL_STATIC
+static void InitTables(void)
 {
- return (a && b) ? sm_alog(sm_log(a) + sm_log(b)) : 0;
-}
-//------------------------------------------------------------------------------------		
-static inline int Mul4(int a, char b[]) // Convenience method used in generating Transposition Boxes      // static
+ static const int ROOT = 0x11B;
+
+ unsigned char B[] = { 0, 1, 1, 0, 0, 0, 1, 1};
+ unsigned char A[8][8] = {
+            {1, 1, 1, 1, 1, 0, 0, 0},
+            {0, 1, 1, 1, 1, 1, 0, 0},
+		    {0, 0, 1, 1, 1, 1, 1, 0},
+		    {0, 0, 0, 1, 1, 1, 1, 1},
+		    {1, 0, 0, 0, 1, 1, 1, 1},
+		    {1, 1, 0, 0, 0, 1, 1, 1},
+		    {1, 1, 1, 0, 0, 0, 1, 1},
+		    {1, 1, 1, 1, 0, 0, 0, 1}
+  };
+
+  unsigned char G[4][4] = {      // T-boxes
+            {2, 1, 1, 3},
+            {3, 2, 1, 1},
+            {1, 3, 2, 1},
+            {1, 1, 3, 2}
+  };
+  
+ unsigned char AA[4][8] = {0};    // ~3k on stack or make these static
+ unsigned char iG[4][4] = {0};
+ unsigned char log[256] = {0};
+ unsigned char alog[256] = {0};
+ unsigned char box[256][8] = {0};     
+ unsigned char cox[256][8] = {0};
+
+auto Mul = [&log, &alog](unsigned char a, unsigned char b) -> int  // Multiply two elements of GF(2^m)                         
+{
+ return (a && b) ? alog[(log[a] + log[b]) % 255] : 0;
+};
+
+auto Mul4 = [&log, &alog](int a, unsigned char b[]) -> int // Convenience method used in generating Transposition Boxes      
 {
  if(!a)return 0;
- a = sm_log(a);
- int a0 = (b[0]) ? sm_alog(a + sm_log(b[0])) : 0;
- int a1 = (b[1]) ? sm_alog(a + sm_log(b[1])) : 0;
- int a2 = (b[2]) ? sm_alog(a + sm_log(b[2])) : 0;
- int a3 = (b[3]) ? sm_alog(a + sm_log(b[3])) : 0;
- return a0 << 24 | a1 << 16 | a2 << 8 | a3;
-}  
-//------------------------------------------------------------------------------------		
+ a = log[unsigned char(a)];
+ int a0 = (b[0]) ? alog[(a + log[b[0]]) % 255] : 0;
+ int a1 = (b[1]) ? alog[(a + log[b[1]]) % 255] : 0;
+ int a2 = (b[2]) ? alog[(a + log[b[2]]) % 255] : 0;
+ int a3 = (b[3]) ? alog[(a + log[b[3]]) % 255] : 0;
+ return a0 << 24 | a1 << 16 | a2 << 8 | a3; 
+}; 
+
+ alog[0] = 1;
+ for(int i = 1; i < 256; i++)    // produce log and alog tables, needed for multiplying in the field GF(2^m) (generator = 3)
+  {
+   unsigned int j = (alog[i-1] << 1) ^ alog[i-1];
+   if((j & 0x100) != 0) j ^= ROOT;
+   alog[i] = j;
+  } 
+ for(int i = 1; i < 255; i++)log[alog[i]] = i;   
+
+ box[1][7] = 1;
+ for(int i = 2; i < 256; i++)    // substitution box based on F^{-1}(x)
+  {
+   unsigned int j = alog[255 - log[i]];
+   for(int t = 0; t < 8; t++)box[i][t] = (j >> (7 - t)) & 0x01;  
+  }     
+ 
+ for(int i = 0; i < 256; i++)  // affine transform:  box[i] <- B + A*box[i]
+   for(int t = 0; t < 8; t++) 
+    {
+     cox[i][t] = B[t];
+     for(int j = 0; j < 8; j++)cox[i][t] ^= A[t][j] * box[i][j];
+    }
+
+ for(int i = 0; i < 256; i++)  // S-boxes and inverse S-boxes
+  {
+   sm_S[i] = cox[i][0] << 7;
+   for(int t = 1; t < 8; t++)sm_S[i] ^= cox[i][t] << (7-t);
+   sm_Si[unsigned char(sm_S[i])] = i;
+  }
+
+ for(int i = 0; i < 4; i++) 
+  {
+   for(int j = 0; j < 4; j++)AA[i][j] = G[i][j];
+   AA[i][i+4] = 1;
+  }
+ 
+ for(int i = 0; i < 4; i++) 
+  {
+   unsigned char pivot = AA[i][i];
+   if(pivot == 0) 
+    {
+     int t = i + 1;
+     while((AA[t][i] == 0) && (t < 4))t++;
+     if(t != 4) 
+      {
+       for(int j = 0; j < 8; j++) 
+        {
+         unsigned char tmp = AA[i][j];
+         AA[i][j] = AA[t][j];
+         AA[t][j] = tmp;
+        }
+       pivot = AA[i][i];
+      }
+//       else throw new RuntimeException("G matrix is not invertible");
+    }
+   for(int j = 0; j < 8; j++)
+     if (AA[i][j] != 0)AA[i][j] = alog[(255 + log[unsigned char(AA[i][j])] - log[pivot]) % 255];   
+
+   for(int t = 0; t < 4; t++)
+     if(i != t) 
+       {
+        for(int j = i+1; j < 8; j++)AA[t][j] ^= Mul(AA[i][j], AA[t][i]);
+        AA[t][i] = 0;
+       }
+  }
+        
+ for(int i = 0; i < 4; i++)
+   for(int j = 0; j < 4; j++)iG[i][j] = AA[i][j + 4];     
+
+ for(int t = 0; t < 256; t++) 
+  {
+   int s = sm_S[t];
+   sm_TS[0][t] = Mul4(s, G[0]);
+   sm_TS[1][t] = Mul4(s, G[1]);
+   sm_TS[2][t] = Mul4(s, G[2]);
+   sm_TS[3][t] = Mul4(s, G[3]);
+
+   s = sm_Si[t];
+   sm_TSi[0][t] = Mul4(s, iG[0]);
+   sm_TSi[1][t] = Mul4(s, iG[1]);
+   sm_TSi[2][t] = Mul4(s, iG[2]);
+   sm_TSi[3][t] = Mul4(s, iG[3]);
+
+   sm_U[0][t] = Mul4(t, iG[0]);
+   sm_U[1][t] = Mul4(t, iG[1]);
+   sm_U[2][t] = Mul4(t, iG[2]);
+   sm_U[3][t] = Mul4(t, iG[3]);
+  }
+
+ sm_rcon[0] = 1;
+ for(int t = 1, r = 1; t < 30; )sm_rcon[t++] = (r = Mul(2, r));   // round constants
+}
+#endif
+//------------------------------------------------------------------------------------	
+	
 public:	
-CRijndael(int iMode=ECB, int keylen=16, int blklen=16)   // Memset this to 0?
+CRijndael(int iMode=ECB, int keylen=16, int blklen=16)   // Default is AES // Memset this to 0?
 {
- this->KeyLength = (keylen >= 128)?(keylen / 8):keylen;  // Key Length   // Defining its here will cause many functions to be templated and code will bloat but for speed and protection it is better
+ this->KeyLength = (keylen >= 128)?(keylen / 8):keylen;  // Key Length   // Defining its here will cause many functions to be templated and the code will bloat but for speed and protection it is better
  this->BlockSize = (blklen >= 128)?(blklen / 8):blklen;  // Block Size
  this->RoundsNum = (KeyLength == 16)?((BlockSize == 16) ? 10 : (BlockSize == 24 ? 12 : 14)):((KeyLength == 24)?((BlockSize != 32) ? 12 : 14):(14));	
  this->iMode     = iMode;
+#ifndef RIJNDAEL_STATIC
+ if(!*sm_rcon)this->InitTables();
+#endif
 };   
 //------------------------------------------------------------------------------------		
 ~CRijndael(){};  // Memset this to 0?
@@ -79,8 +234,217 @@ void SetChain(char* chain){ memcpy(m_chain, chain, BlockSize); }
 //
 void MakeKey(unsigned char* key, unsigned char* chain)
 {                                          
-static const unsigned char sm_rcon[30] = {0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1B, 0x36, 0x6C, 0xD8, 0xAB, 0x4D, 0x9A, 0x2F, 0x5E, 0xBC, 0x63, 0xC6, 0x97, 0x35, 0x6A, 0xD4, 0xB3, 0x7D, 0xFA, 0xEF, 0xC5, 0x91};
-static const int sm_U1[256] =
+ int tk[MAX_KC];
+ if(chain)memcpy(m_chain, chain, BlockSize);   //Initialize the chain
+   else memset(m_chain, 0, BlockSize);
+	
+ int BC = BlockSize / 4;
+ for(int i=0; i<=RoundsNum; i++)
+   for(int j=0; j<BC; j++)m_Ke[i][j] = 0;
+  
+ for(int i=0; i<=RoundsNum; i++)
+   for(int j=0; j<BC; j++)m_Kd[i][j] = 0;
+  
+ int ROUND_KEY_COUNT = (RoundsNum + 1) * BC;
+ int   KC = KeyLength/4;	
+ int*  pi = tk;
+ unsigned char* pc = key;
+ for(int i=0; i<KC; i++)   //Copy user material bytes into temporary ints       // TODO: Optimize these SWAP loops
+  {
+   *pi  = *(pc++) << 24;
+   *pi |= *(pc++) << 16;
+   *pi |= *(pc++) << 8;
+   *(pi++) |= *(pc++);
+  }	
+ int t = 0;
+ for(int j=0; (j<KC)&&(t<ROUND_KEY_COUNT); j++,t++) //Copy values into round key arrays
+  {
+   m_Ke[t/BC][t%BC] = tk[j];
+   m_Kd[RoundsNum - (t/BC)][t%BC] = tk[j];
+  }
+ for(int rconpointer=0; t < ROUND_KEY_COUNT; rconpointer++)    // Extrapolate using phi (the round key evolution function)
+  {		
+   int tt = tk[KC-1];
+   tk[0] ^= (sm_S[unsigned char(tt >> 16)] << 24) ^ (sm_S[unsigned char(tt >> 8)] << 16) ^ (sm_S[unsigned char(tt)] << 8) ^ sm_S[unsigned char(tt >> 24)] ^ (sm_rcon[rconpointer] << 24);
+   if(KC != 8)
+     for(int i=1, j=0; i<KC;)tk[i++] ^= tk[j++];
+    else
+     {
+      for(int i=1, j=0; i<KC/2; )tk[i++] ^= tk[j++];
+      int tt = tk[KC/2-1];
+      tk[KC/2] ^= sm_S[unsigned char(tt)] ^ (sm_S[unsigned char(tt >> 8)] << 8) ^ (sm_S[unsigned char(tt >> 16)] << 16) ^ (sm_S[unsigned char(tt >> 24)] << 24);
+      for(int j = KC/2, i=j+1; i<KC; )tk[i++] ^= tk[j++];
+     }	
+   for(int j=0; (j<KC) && (t<ROUND_KEY_COUNT); j++, t++)  // Copy values into round key arrays
+    {
+     m_Ke[t/BC][t%BC] = tk[j];
+     m_Kd[RoundsNum - (t/BC)][t%BC] = tk[j];
+    }
+  }	
+ for(int r=1; r<RoundsNum; r++)  // Inverse MixColumn where needed
+   for(int j=0; j<BC; j++)
+    {
+     int tt = m_Kd[r][j];
+     m_Kd[r][j] = sm_U[0][unsigned char(tt >> 24)] ^ sm_U[1][unsigned char(tt >> 16)] ^ sm_U[2][unsigned char(tt >>  8)] ^ sm_U[3][unsigned char(tt)];
+    }  
+}
+//------------------------------------------------------------------------------------		
+//Encrypt exactly one block of plaintext.
+// in           - The plaintext.
+// result       - The ciphertext generated from a plaintext using the key.
+//
+void EncryptBlock(unsigned char* in, unsigned char* result)
+{
+ int a[MAX_BC];
+ int t[MAX_BC];
+ int BC  = BlockSize / 4;
+ int s1  = sm_shifts[sm_sidx[BC]][1][0]; 
+ int s2  = sm_shifts[sm_sidx[BC]][2][0]; 
+ int s3  = sm_shifts[sm_sidx[BC]][3][0]; 
+ int* pi = t;
+ for(int i=0; i < BC; i++)
+  {
+   *pi  = *(in++) << 24;
+   *pi |= *(in++) << 16;
+   *pi |= *(in++) << 8;
+   (*(pi++) |= *(in++)) ^= m_Ke[0][i];    // ?????????? // L-value here is 'pi' before ++!!!   // First 8 values of m_Ke is 0 
+  }	
+ for(int r=1; r<RoundsNum; r++)  // Apply Round Transforms
+  {
+   for(int i=0; i < BC; i++)a[i] = (sm_TS[0][unsigned char(t[i] >> 24)] ^ sm_TS[1][unsigned char(t[(i + s1) % BC] >> 16)] ^ sm_TS[2][unsigned char(t[(i + s2) % BC] >>  8)] ^ sm_TS[3][unsigned char(t[(i + s3) % BC])]) ^ m_Ke[r][i];
+   memcpy(t, a, 4*BC);
+  }
+ for(int i=0,j=0; i < BC; i++)     // Last Round is Special
+  {
+   int tt = m_Ke[RoundsNum][i];
+   result[j++] = sm_S[unsigned char(t[i] >> 24)] ^ (tt >> 24);
+   result[j++] = sm_S[unsigned char(t[(i + s1) % BC] >> 16)] ^ (tt >> 16);
+   result[j++] = sm_S[unsigned char(t[(i + s2) % BC] >>  8)] ^ (tt >>  8);
+   result[j++] = sm_S[unsigned char(t[(i + s3) % BC])] ^ tt;
+  }  
+}
+//------------------------------------------------------------------------------------		
+//Decrypt exactly one block of ciphertext.
+// in         - The ciphertext.
+// result     - The plaintext generated from a ciphertext using the session key.
+//
+void DecryptBlock(unsigned char* in, unsigned char* result)
+{
+ int a[MAX_BC];
+ int t[MAX_BC];
+ int BC  = BlockSize / 4;
+ int s1  = sm_shifts[sm_sidx[BC]][1][1];  
+ int s2  = sm_shifts[sm_sidx[BC]][2][1]; 
+ int s3  = sm_shifts[sm_sidx[BC]][3][1];  
+ int* pi = t;
+ for(int i=0; i < BC; i++)
+  {
+   *pi  = *(in++) << 24;
+   *pi |= *(in++) << 16;
+   *pi |= *(in++) << 8;
+   (*(pi++) |= *(in++)) ^= m_Kd[0][i];    // ?????????? // L-value here is 'pi' before ++!!!   // First 8 values of m_Kd is 0 
+  }	
+ for(int r=1; r < RoundsNum; r++) // Apply Round Transforms
+  {
+   for(int i=0; i < BC; i++)a[i] = (sm_TSi[0][unsigned char(t[i] >> 24)] ^ sm_TSi[1][unsigned char(t[(i + s1) % BC] >> 16)] ^ sm_TSi[2][unsigned char(t[(i + s2) % BC] >> 8)] ^ sm_TSi[3][unsigned char(t[(i + s3) % BC])]) ^ m_Kd[r][i];
+   memcpy(t, a, 4*BC);
+  }	
+ for(int i=0,j=0; i < BC; i++)    // Last Round is Special
+  {
+   int tt = m_Kd[RoundsNum][i];
+   result[j++] = sm_Si[unsigned char(t[i] >> 24)] ^ (tt >> 24);
+   result[j++] = sm_Si[unsigned char(t[(i + s1) % BC] >> 16)] ^ (tt >> 16);
+   result[j++] = sm_Si[unsigned char(t[(i + s2) % BC] >>  8)] ^ (tt >>  8);
+   result[j++] = sm_Si[unsigned char(t[(i + s3) % BC])] ^ tt;
+  }      
+}
+//------------------------------------------------------------------------------------	
+// n should be > 0 and multiple of BlockSize 	
+void Encrypt(unsigned char* in, unsigned char* out, size_t n)   // TODO: Padding? (For now a not full blocks are not encrypted(Meaning any blocks less than BlockSize are not encrypted!))
+{
+ if(CBC == iMode) // CBC mode, using the Chain
+  {
+   for(size_t i=0,e=n/BlockSize;i < e; i++, in += BlockSize, out += BlockSize)
+    {
+     XorBlk(m_chain, in, BlockSize);         // xoring the plaintext block with the previous ciphertext block
+     this->EncryptBlock(m_chain, m_chain);   // encrypting the resulting value
+     memcpy(out, m_chain, BlockSize);        // Next Block will be XOR`ed with an encrypted previous one
+    }  
+  }
+ else if(CFB == iMode) // CFB mode, using the Chain     // !!! NOT WORKING !!!
+  { 
+   for(size_t i=0,e=n/BlockSize;i < e; i++, in += BlockSize, out += BlockSize)
+    {
+     this->EncryptBlock(m_chain, m_chain);  // encrypting the previous ciphertext block
+     XorBlk(m_chain, in, BlockSize);        // xoring the resulting value with the plaintext 
+     memcpy(out, m_chain, BlockSize);       // Will be used to encrypt next block
+    }   
+  }
+ else // ECB mode, not using the Chain  (DEFAULT)
+  {
+   for(size_t i=0,e=n/BlockSize;i < e; i++, in += BlockSize, out += BlockSize)this->EncryptBlock(in, out);    
+  }
+}	
+//------------------------------------------------------------------------------------	
+// n should be > 0 and multiple of BlockSize 
+//
+void Decrypt(unsigned char* in, unsigned char* out, size_t n)
+{
+ if(CBC == iMode) // CBC mode, using the Chain
+  {
+   if(in == out)
+    {
+     BYTE Temp[MAX_BLOCK_SIZE];
+     for(size_t i=0,e=n/BlockSize;i < e; i++, in += BlockSize, out += BlockSize)
+      {
+       memcpy(Temp, in, BlockSize);      // Save it for naxt a block
+       this->DecryptBlock(in, out);      // Mods IN/OUT
+       XorBlk(out, m_chain, BlockSize);
+       memcpy(m_chain, Temp, BlockSize);
+      }
+    }
+     else 
+      {
+       for(size_t i=0,e=n/BlockSize;i < e; i++, in += BlockSize, out += BlockSize)
+        {
+         this->DecryptBlock(in, out);      // Mods IN/OUT
+         XorBlk(out, m_chain, BlockSize);
+         memcpy(m_chain, in, BlockSize);
+        }   
+      }
+  }
+ else if(CFB == iMode) // CFB mode, using the Chain, not using Decrypt()     // !!! NOT WORKING !!!
+  {
+   if(in == out)
+    {
+     BYTE Temp[MAX_BLOCK_SIZE];
+     for(size_t i=0,e=n/BlockSize;i < e; i++, in += BlockSize, out += BlockSize)
+      {
+       this->EncryptBlock(m_chain, m_chain);
+       memcpy(Temp, in, BlockSize); 
+       XorBlk(out, m_chain, BlockSize);
+       memcpy(m_chain, Temp, BlockSize);
+      }
+    }
+     else
+      {
+       for(size_t i=0,e=n/BlockSize;i < e; i++, in += BlockSize, out += BlockSize)
+        {
+         this->EncryptBlock(m_chain, m_chain);
+         XorBlk(out, m_chain, BlockSize);
+         memcpy(m_chain, in, BlockSize);
+        }
+     }
+  }
+ else // ECB mode, not using the Chain  (DEFAULT)
+  {
+   for(size_t i=0,e=n/BlockSize;i < e; i++, in += BlockSize, out += BlockSize)this->DecryptBlock(in, out);
+  }
+}
+//------------------------------------------------------------------------------------	
+#ifdef RIJNDAEL_STATIC	
+static inline unsigned char sm_rcon[30] = {0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1B, 0x36, 0x6C, 0xD8, 0xAB, 0x4D, 0x9A, 0x2F, 0x5E, 0xBC, 0x63, 0xC6, 0x97, 0x35, 0x6A, 0xD4, 0xB3, 0x7D, 0xFA, 0xEF, 0xC5, 0x91};
+static inline int sm_U[4][256] = {
 {
   0x00000000, 0x0E090D0B, 0x1C121A16, 0x121B171D, 0x3824342C, 0x362D3927, 0x24362E3A, 0x2A3F2331, 
   0x70486858, 0x7E416553, 0x6C5A724E, 0x62537F45, 0x486C5C74, 0x4665517F, 0x547E4662, 0x5A774B69, 
@@ -114,8 +478,7 @@ static const int sm_U1[256] =
   0x47E96422, 0x49E06929, 0x5BFB7E34, 0x55F2733F, 0x7FCD500E, 0x71C45D05, 0x63DF4A18, 0x6DD64713, 
   0xD731DCCA, 0xD938D1C1, 0xCB23C6DC, 0xC52ACBD7, 0xEF15E8E6, 0xE11CE5ED, 0xF307F2F0, 0xFD0EFFFB, 
   0xA779B492, 0xA970B999, 0xBB6BAE84, 0xB562A38F, 0x9F5D80BE, 0x91548DB5, 0x834F9AA8, 0x8D4697A3, 
-};
-static const int sm_U2[256] =
+},
 {
   0x00000000, 0x0B0E090D, 0x161C121A, 0x1D121B17, 0x2C382434, 0x27362D39, 0x3A24362E, 0x312A3F23, 
   0x58704868, 0x537E4165, 0x4E6C5A72, 0x4562537F, 0x74486C5C, 0x7F466551, 0x62547E46, 0x695A774B, 
@@ -149,8 +512,7 @@ static const int sm_U2[256] =
   0x2247E964, 0x2949E069, 0x345BFB7E, 0x3F55F273, 0x0E7FCD50, 0x0571C45D, 0x1863DF4A, 0x136DD647, 
   0xCAD731DC, 0xC1D938D1, 0xDCCB23C6, 0xD7C52ACB, 0xE6EF15E8, 0xEDE11CE5, 0xF0F307F2, 0xFBFD0EFF, 
   0x92A779B4, 0x99A970B9, 0x84BB6BAE, 0x8FB562A3, 0xBE9F5D80, 0xB591548D, 0xA8834F9A, 0xA38D4697, 
-};
-static const int sm_U3[256] =
+},
 {
   0x00000000, 0x0D0B0E09, 0x1A161C12, 0x171D121B, 0x342C3824, 0x3927362D, 0x2E3A2436, 0x23312A3F, 
   0x68587048, 0x65537E41, 0x724E6C5A, 0x7F456253, 0x5C74486C, 0x517F4665, 0x4662547E, 0x4B695A77, 
@@ -184,8 +546,7 @@ static const int sm_U3[256] =
   0x642247E9, 0x692949E0, 0x7E345BFB, 0x733F55F2, 0x500E7FCD, 0x5D0571C4, 0x4A1863DF, 0x47136DD6, 
   0xDCCAD731, 0xD1C1D938, 0xC6DCCB23, 0xCBD7C52A, 0xE8E6EF15, 0xE5EDE11C, 0xF2F0F307, 0xFFFBFD0E, 
   0xB492A779, 0xB999A970, 0xAE84BB6B, 0xA38FB562, 0x80BE9F5D, 0x8DB59154, 0x9AA8834F, 0x97A38D46, 
-};
-static const int sm_U4[256] =
+},
 {
   0x00000000, 0x090D0B0E, 0x121A161C, 0x1B171D12, 0x24342C38, 0x2D392736, 0x362E3A24, 0x3F23312A, 
   0x48685870, 0x4165537E, 0x5A724E6C, 0x537F4562, 0x6C5C7448, 0x65517F46, 0x7E466254, 0x774B695A, 
@@ -219,316 +580,10 @@ static const int sm_U4[256] =
   0xE9642247, 0xE0692949, 0xFB7E345B, 0xF2733F55, 0xCD500E7F, 0xC45D0571, 0xDF4A1863, 0xD647136D, 
   0x31DCCAD7, 0x38D1C1D9, 0x23C6DCCB, 0x2ACBD7C5, 0x15E8E6EF, 0x1CE5EDE1, 0x07F2F0F3, 0x0EFFFBFD, 
   0x79B492A7, 0x70B999A9, 0x6BAE84BB, 0x62A38FB5, 0x5D80BE9F, 0x548DB591, 0x4F9AA883, 0x4697A38D, 
-};
+} };
 
- int tk[MAX_KC];
- memcpy(m_chain, chain, BlockSize);   //Initialize the chain	
- int BC = BlockSize / 4;
- for(int i=0; i<=RoundsNum; i++)
-  {
-   for(int j=0; j<BC; j++)m_Ke[i][j] = 0;
-  }
- for(int i=0; i<=RoundsNum; i++)
-  {
-   for(int j=0; j<BC; j++)m_Kd[i][j] = 0;
-  }
- int ROUND_KEY_COUNT = (RoundsNum + 1) * BC;
- int   KC = KeyLength/4;	
- int*  pi = tk;
- unsigned char* pc = key;
- for(int i=0; i<KC; i++)   //Copy user material bytes into temporary ints       // TODO: Optimize these SWAP loops
-  {
-   *pi  = *(pc++) << 24;
-   *pi |= *(pc++) << 16;
-   *pi |= *(pc++) << 8;
-   *(pi++) |= *(pc++);
-  }	
- int t = 0;
- for(int j=0; (j<KC)&&(t<ROUND_KEY_COUNT); j++,t++) //Copy values into round key arrays
-  {
-   m_Ke[t/BC][t%BC] = tk[j];
-   m_Kd[RoundsNum - (t/BC)][t%BC] = tk[j];
-  }
- for(int rconpointer=0; t < ROUND_KEY_COUNT; rconpointer++)    // Extrapolate using phi (the round key evolution function)
-  {		
-   int tt = tk[KC-1];
-   tk[0] ^= (sm_S(tt >> 16) << 24) ^ (sm_S(tt >> 8) << 16) ^ (sm_S(tt) << 8) ^ sm_S(tt >> 24) ^ (sm_rcon[rconpointer] << 24);
-   if(KC != 8)
-     for(int i=1, j=0; i<KC;)tk[i++] ^= tk[j++];
-    else
-     {
-      for(int i=1, j=0; i<KC/2; )tk[i++] ^= tk[j++];
-      int tt = tk[KC/2-1];
-      tk[KC/2] ^= sm_S(tt) ^ (sm_S(tt >> 8) << 8) ^ (sm_S(tt >> 16) << 16) ^ (sm_S(tt >> 24) << 24);
-      for(int j = KC/2, i=j+1; i<KC; )tk[i++] ^= tk[j++];
-     }	
-   for(int j=0; (j<KC) && (t<ROUND_KEY_COUNT); j++, t++)  // Copy values into round key arrays
-    {
-     m_Ke[t/BC][t%BC] = tk[j];
-     m_Kd[RoundsNum - (t/BC)][t%BC] = tk[j];
-    }
-  }	
- for(int r=1; r<RoundsNum; r++)  // Inverse MixColumn where needed
-   for(int j=0; j<BC; j++)
-    {
-     int tt = m_Kd[r][j];
-     m_Kd[r][j] = sm_U1[(tt >> 24) & 0xFF] ^ sm_U2[(tt >> 16) & 0xFF] ^ sm_U3[(tt >>  8) & 0xFF] ^ sm_U4[tt & 0xFF];
-    }  
-}
-//------------------------------------------------------------------------------------		
-//Encrypt exactly one block of plaintext.
-// in           - The plaintext.
-// result       - The ciphertext generated from a plaintext using the key.
-//
-void EncryptBlock(unsigned char* in, unsigned char* result)
-{
- int a[MAX_BC];
- int t[MAX_BC];
- int BC  = BlockSize / 4;
- int s1  = GetShift(BC,1,0);     // sm_shifts[SC][1][0];
- int s2  = GetShift(BC,2,0);     // sm_shifts[SC][2][0];
- int s3  = GetShift(BC,3,0);	 // sm_shifts[SC][3][0];
- int* pi = t;
- for(int i=0; i<BC; i++)
-  {
-   *pi  = *(in++) << 24;
-   *pi |= *(in++) << 16;
-   *pi |= *(in++) << 8;
-   (*(pi++) |= *(in++)) ^= m_Ke[0][i];    // ?????????????????????????????
-  }	
- for(int r=1; r<RoundsNum; r++)  // Apply Round Transforms
-  {
-   for(int i=0; i<BC; i++)a[i] = (sm_T(0, t[i] >> 24) ^ sm_T(1, t[(i + s1) % BC] >> 16) ^ sm_T(2, t[(i + s2) % BC] >>  8) ^ sm_T(3, t[(i + s3) % BC])) ^ m_Ke[r][i];
-   memcpy(t, a, 4*BC);
-  }
- for(int i=0,j=0; i<BC; i++)     // Last Round is Special
-  {
-   int tt = m_Ke[RoundsNum][i];
-   result[j++] = sm_S(t[i] >> 24) ^ (tt >> 24);
-   result[j++] = sm_S(t[(i + s1) % BC] >> 16) ^ (tt >> 16);
-   result[j++] = sm_S(t[(i + s2) % BC] >>  8) ^ (tt >>  8);
-   result[j++] = sm_S(t[(i + s3) % BC]) ^ tt;
-  }  
-}
-//------------------------------------------------------------------------------------		
-//Decrypt exactly one block of ciphertext.
-// in         - The ciphertext.
-// result     - The plaintext generated from a ciphertext using the session key.
-//
-void DecryptBlock(unsigned char* in, unsigned char* result)
-{
- int a[MAX_BC];
- int t[MAX_BC];
- int BC  = BlockSize / 4;
- int s1  = GetShift(BC,1,1);  // sm_shifts[SC][1][1];
- int s2  = GetShift(BC,2,1);  // sm_shifts[SC][2][1];
- int s3  = GetShift(BC,3,1);  // sm_shifts[SC][3][1];
- int* pi = t;
- for(int i=0; i<BC; i++)
-  {
-   *pi  = *(in++) << 24;
-   *pi |= *(in++) << 16;
-   *pi |= *(in++) << 8;
-   (*(pi++) |= *(in++)) ^= m_Kd[0][i];    // ?????????????????????????????
-  }	
- for(int r=1; r<RoundsNum; r++) // Apply Round Transforms
-  {
-   for(int i=0; i<BC; i++)a[i] = (sm_T(4, t[i] >> 24) ^ sm_T(5, t[(i + s1) % BC] >> 16) ^ sm_T(6, t[(i + s2) % BC] >> 8) ^ sm_T(7, t[(i + s3) % BC])) ^ m_Kd[r][i];
-   memcpy(t, a, 4*BC);
-  }	
- for(int i=0,j=0; i<BC; i++)    // Last Round is Special
-  {
-   int tt = m_Kd[RoundsNum][i];
-   result[j++] = sm_Si(t[i] >> 24) ^ (tt >> 24);
-   result[j++] = sm_Si(t[(i + s1) % BC] >> 16) ^ (tt >> 16);
-   result[j++] = sm_Si(t[(i + s2) % BC] >>  8) ^ (tt >>  8);
-   result[j++] = sm_Si(t[(i + s3) % BC]) ^ tt;
-  }      
-}
-//------------------------------------------------------------------------------------	
-// n should be > 0 and multiple of BlockSize 
-// Input and output buffers must NOT be same for not ECB mode	
-void Encrypt(unsigned char* in, unsigned char* out, size_t n)
-{
- if(CBC == iMode) // CBC mode, using the Chain
-  {
-   for(size_t i=0;i < n/BlockSize; i++, in += BlockSize, out += BlockSize)
-    {
-     XorBlk(m_chain, in, BlockSize);            // Mods m_chain
-     EncryptBlock((unsigned char*)&m_chain, out);   // Mods IN/OUT
-     memcpy(m_chain, out, BlockSize);    // Next Block will be XOR`ed with an encrypted previous one
-    }  
-  }
- else if(CFB == iMode) // CFB mode, using the Chain     // !!! NOT WORKING !!!
-  {  
-   for(size_t i=0;i < n/BlockSize; i++, in += BlockSize, out += BlockSize)
-    {
-     EncryptBlock(m_chain, out);
-     XorBlk(out, in, BlockSize);        
-     memcpy(m_chain, out, BlockSize);
-    }
-  }
- else // ECB mode, not using the Chain
-  {
-   for(size_t i=0;i < n/BlockSize; i++, in += BlockSize, out += BlockSize)EncryptBlock(in, out);    
-  }
-}	
-//------------------------------------------------------------------------------------	
-// n should be > 0 and multiple of BlockSize 
-// Input and output buffers must NOT be same for not ECB mode	
-void Decrypt(unsigned char* in, unsigned char* out, size_t n)
-{
- if(CBC == iMode) // CBC mode, using the Chain
-  {
-   for(size_t i=0;i < n/BlockSize; i++, in += BlockSize, out += BlockSize)
-    {
-     DecryptBlock(in, out);      // Mods IN/OUT
-     XorBlk(out, m_chain, BlockSize);
-     memcpy(m_chain, in, BlockSize);
-    }    
-  }
- else if(CFB == iMode) // CFB mode, using the Chain, not using Decrypt()     // !!! NOT WORKING !!!
-  {
-   for(size_t i=0;i < n/BlockSize; i++, in += BlockSize, out += BlockSize)
-    {
-     EncryptBlock(m_chain, out);
-     memcpy(out, in, BlockSize);
-     XorBlk(out, in, BlockSize);
-     memcpy(m_chain, in, BlockSize);
-    }
-  }
- else // ECB mode, not using the Chain
-  {
-   for(size_t i=0;i < n/BlockSize; i++, in += BlockSize, out += BlockSize)DecryptBlock(in, out);
-  }
-}
-//------------------------------------------------------------------------------------	
-/*static inline void ReadInputWithPadding(unsigned char* Dst, unsigned char* Src, size_t SrcLeft, bool Padd)
-{
- if(SrcLeft < BlockSize)
-  {
-   memcpy(Dst, Src, SrcLeft);
-   int PaddLen = BlockSize-SrcLeft;
-   memset(&Dst[SrcLeft],Padd?PaddLen:0,PaddLen);    // Write Padding
-  }
-   else memcpy(Dst, Src, BlockSize);
-}
-//------------------------------------------------------------------------------------ 
-*/	
 
-private:	
-//------------------------------------------------------------------------------------
-static inline int GetShift(int a, int b, int c)
-{
-static const char idx[] = {0,0,0,0,0,0,1,2};   // 4,6,8 DWORDs is 128, 192, 256 bit key sizes    // int SC  = BC == 4 ? 0 : (BC == 6 ? 1 : 2);   
-static const int sm_shifts[3][4][2] =
-{
-	{ {0, 0}, {1, 3}, {2, 2}, {3, 1} },
-	{ {0, 0}, {1, 5}, {2, 4}, {3, 3} },
-	{ {0, 0}, {1, 7}, {3, 5}, {4, 4} }
-};
- return sm_shifts[idx[a]][b][c];
-}		
-//------------------------------------------------------------------------------------	
-static inline unsigned char sm_S(unsigned char idx)
-{
-static const unsigned char _sm_S[256] =
-{
-  0x63, 0x7C, 0x77, 0x7B, 0xF2, 0x6B, 0x6F, 0xC5, 0x30, 0x01, 0x67, 0x2B, 0xFE, 0xD7, 0xAB, 0x76, 
-  0xCA, 0x82, 0xC9, 0x7D, 0xFA, 0x59, 0x47, 0xF0, 0xAD, 0xD4, 0xA2, 0xAF, 0x9C, 0xA4, 0x72, 0xC0, 
-  0xB7, 0xFD, 0x93, 0x26, 0x36, 0x3F, 0xF7, 0xCC, 0x34, 0xA5, 0xE5, 0xF1, 0x71, 0xD8, 0x31, 0x15, 
-  0x04, 0xC7, 0x23, 0xC3, 0x18, 0x96, 0x05, 0x9A, 0x07, 0x12, 0x80, 0xE2, 0xEB, 0x27, 0xB2, 0x75, 
-  0x09, 0x83, 0x2C, 0x1A, 0x1B, 0x6E, 0x5A, 0xA0, 0x52, 0x3B, 0xD6, 0xB3, 0x29, 0xE3, 0x2F, 0x84, 
-  0x53, 0xD1, 0x00, 0xED, 0x20, 0xFC, 0xB1, 0x5B, 0x6A, 0xCB, 0xBE, 0x39, 0x4A, 0x4C, 0x58, 0xCF, 
-  0xD0, 0xEF, 0xAA, 0xFB, 0x43, 0x4D, 0x33, 0x85, 0x45, 0xF9, 0x02, 0x7F, 0x50, 0x3C, 0x9F, 0xA8, 
-  0x51, 0xA3, 0x40, 0x8F, 0x92, 0x9D, 0x38, 0xF5, 0xBC, 0xB6, 0xDA, 0x21, 0x10, 0xFF, 0xF3, 0xD2, 
-  0xCD, 0x0C, 0x13, 0xEC, 0x5F, 0x97, 0x44, 0x17, 0xC4, 0xA7, 0x7E, 0x3D, 0x64, 0x5D, 0x19, 0x73, 
-  0x60, 0x81, 0x4F, 0xDC, 0x22, 0x2A, 0x90, 0x88, 0x46, 0xEE, 0xB8, 0x14, 0xDE, 0x5E, 0x0B, 0xDB, 
-  0xE0, 0x32, 0x3A, 0x0A, 0x49, 0x06, 0x24, 0x5C, 0xC2, 0xD3, 0xAC, 0x62, 0x91, 0x95, 0xE4, 0x79, 
-  0xE7, 0xC8, 0x37, 0x6D, 0x8D, 0xD5, 0x4E, 0xA9, 0x6C, 0x56, 0xF4, 0xEA, 0x65, 0x7A, 0xAE, 0x08, 
-  0xBA, 0x78, 0x25, 0x2E, 0x1C, 0xA6, 0xB4, 0xC6, 0xE8, 0xDD, 0x74, 0x1F, 0x4B, 0xBD, 0x8B, 0x8A, 
-  0x70, 0x3E, 0xB5, 0x66, 0x48, 0x03, 0xF6, 0x0E, 0x61, 0x35, 0x57, 0xB9, 0x86, 0xC1, 0x1D, 0x9E, 
-  0xE1, 0xF8, 0x98, 0x11, 0x69, 0xD9, 0x8E, 0x94, 0x9B, 0x1E, 0x87, 0xE9, 0xCE, 0x55, 0x28, 0xDF, 
-  0x8C, 0xA1, 0x89, 0x0D, 0xBF, 0xE6, 0x42, 0x68, 0x41, 0x99, 0x2D, 0x0F, 0xB0, 0x54, 0xBB, 0x16, 
-};
- return _sm_S[idx];
-}
-//------------------------------------------------------------------------------------		
-static inline unsigned char sm_Si(unsigned char idx)
-{
-static const unsigned char _sm_Si[256] =
-{
-  0x52, 0x09, 0x6A, 0xD5, 0x30, 0x36, 0xA5, 0x38, 0xBF, 0x40, 0xA3, 0x9E, 0x81, 0xF3, 0xD7, 0xFB, 
-  0x7C, 0xE3, 0x39, 0x82, 0x9B, 0x2F, 0xFF, 0x87, 0x34, 0x8E, 0x43, 0x44, 0xC4, 0xDE, 0xE9, 0xCB, 
-  0x54, 0x7B, 0x94, 0x32, 0xA6, 0xC2, 0x23, 0x3D, 0xEE, 0x4C, 0x95, 0x0B, 0x42, 0xFA, 0xC3, 0x4E, 
-  0x08, 0x2E, 0xA1, 0x66, 0x28, 0xD9, 0x24, 0xB2, 0x76, 0x5B, 0xA2, 0x49, 0x6D, 0x8B, 0xD1, 0x25, 
-  0x72, 0xF8, 0xF6, 0x64, 0x86, 0x68, 0x98, 0x16, 0xD4, 0xA4, 0x5C, 0xCC, 0x5D, 0x65, 0xB6, 0x92, 
-  0x6C, 0x70, 0x48, 0x50, 0xFD, 0xED, 0xB9, 0xDA, 0x5E, 0x15, 0x46, 0x57, 0xA7, 0x8D, 0x9D, 0x84, 
-  0x90, 0xD8, 0xAB, 0x00, 0x8C, 0xBC, 0xD3, 0x0A, 0xF7, 0xE4, 0x58, 0x05, 0xB8, 0xB3, 0x45, 0x06, 
-  0xD0, 0x2C, 0x1E, 0x8F, 0xCA, 0x3F, 0x0F, 0x02, 0xC1, 0xAF, 0xBD, 0x03, 0x01, 0x13, 0x8A, 0x6B, 
-  0x3A, 0x91, 0x11, 0x41, 0x4F, 0x67, 0xDC, 0xEA, 0x97, 0xF2, 0xCF, 0xCE, 0xF0, 0xB4, 0xE6, 0x73, 
-  0x96, 0xAC, 0x74, 0x22, 0xE7, 0xAD, 0x35, 0x85, 0xE2, 0xF9, 0x37, 0xE8, 0x1C, 0x75, 0xDF, 0x6E, 
-  0x47, 0xF1, 0x1A, 0x71, 0x1D, 0x29, 0xC5, 0x89, 0x6F, 0xB7, 0x62, 0x0E, 0xAA, 0x18, 0xBE, 0x1B, 
-  0xFC, 0x56, 0x3E, 0x4B, 0xC6, 0xD2, 0x79, 0x20, 0x9A, 0xDB, 0xC0, 0xFE, 0x78, 0xCD, 0x5A, 0xF4, 
-  0x1F, 0xDD, 0xA8, 0x33, 0x88, 0x07, 0xC7, 0x31, 0xB1, 0x12, 0x10, 0x59, 0x27, 0x80, 0xEC, 0x5F, 
-  0x60, 0x51, 0x7F, 0xA9, 0x19, 0xB5, 0x4A, 0x0D, 0x2D, 0xE5, 0x7A, 0x9F, 0x93, 0xC9, 0x9C, 0xEF, 
-  0xA0, 0xE0, 0x3B, 0x4D, 0xAE, 0x2A, 0xF5, 0xB0, 0xC8, 0xEB, 0xBB, 0x3C, 0x83, 0x53, 0x99, 0x61, 
-  0x17, 0x2B, 0x04, 0x7E, 0xBA, 0x77, 0xD6, 0x26, 0xE1, 0x69, 0x14, 0x63, 0x55, 0x21, 0x0C, 0x7D, 
-};
- return _sm_Si[idx];
-}	
-//------------------------------------------------------------------------------------		
-static inline int sm_alog(unsigned char idx)
-{
-static const unsigned char _sm_alog[256] =
-{
-  0x01, 0x03, 0x05, 0x0F, 0x11, 0x33, 0x55, 0xFF, 0x1A, 0x2E, 0x72, 0x96, 0xA1, 0xF8, 0x13, 0x35, 
-  0x5F, 0xE1, 0x38, 0x48, 0xD8, 0x73, 0x95, 0xA4, 0xF7, 0x02, 0x06, 0x0A, 0x1E, 0x22, 0x66, 0xAA, 
-  0xE5, 0x34, 0x5C, 0xE4, 0x37, 0x59, 0xEB, 0x26, 0x6A, 0xBE, 0xD9, 0x70, 0x90, 0xAB, 0xE6, 0x31, 
-  0x53, 0xF5, 0x04, 0x0C, 0x14, 0x3C, 0x44, 0xCC, 0x4F, 0xD1, 0x68, 0xB8, 0xD3, 0x6E, 0xB2, 0xCD, 
-  0x4C, 0xD4, 0x67, 0xA9, 0xE0, 0x3B, 0x4D, 0xD7, 0x62, 0xA6, 0xF1, 0x08, 0x18, 0x28, 0x78, 0x88, 
-  0x83, 0x9E, 0xB9, 0xD0, 0x6B, 0xBD, 0xDC, 0x7F, 0x81, 0x98, 0xB3, 0xCE, 0x49, 0xDB, 0x76, 0x9A, 
-  0xB5, 0xC4, 0x57, 0xF9, 0x10, 0x30, 0x50, 0xF0, 0x0B, 0x1D, 0x27, 0x69, 0xBB, 0xD6, 0x61, 0xA3, 
-  0xFE, 0x19, 0x2B, 0x7D, 0x87, 0x92, 0xAD, 0xEC, 0x2F, 0x71, 0x93, 0xAE, 0xE9, 0x20, 0x60, 0xA0, 
-  0xFB, 0x16, 0x3A, 0x4E, 0xD2, 0x6D, 0xB7, 0xC2, 0x5D, 0xE7, 0x32, 0x56, 0xFA, 0x15, 0x3F, 0x41, 
-  0xC3, 0x5E, 0xE2, 0x3D, 0x47, 0xC9, 0x40, 0xC0, 0x5B, 0xED, 0x2C, 0x74, 0x9C, 0xBF, 0xDA, 0x75, 
-  0x9F, 0xBA, 0xD5, 0x64, 0xAC, 0xEF, 0x2A, 0x7E, 0x82, 0x9D, 0xBC, 0xDF, 0x7A, 0x8E, 0x89, 0x80, 
-  0x9B, 0xB6, 0xC1, 0x58, 0xE8, 0x23, 0x65, 0xAF, 0xEA, 0x25, 0x6F, 0xB1, 0xC8, 0x43, 0xC5, 0x54, 
-  0xFC, 0x1F, 0x21, 0x63, 0xA5, 0xF4, 0x07, 0x09, 0x1B, 0x2D, 0x77, 0x99, 0xB0, 0xCB, 0x46, 0xCA, 
-  0x45, 0xCF, 0x4A, 0xDE, 0x79, 0x8B, 0x86, 0x91, 0xA8, 0xE3, 0x3E, 0x42, 0xC6, 0x51, 0xF3, 0x0E, 
-  0x12, 0x36, 0x5A, 0xEE, 0x29, 0x7B, 0x8D, 0x8C, 0x8F, 0x8A, 0x85, 0x94, 0xA7, 0xF2, 0x0D, 0x17, 
-  0x39, 0x4B, 0xDD, 0x7C, 0x84, 0x97, 0xA2, 0xFD, 0x1C, 0x24, 0x6C, 0xB4, 0xC7, 0x52, 0xF6, 0x01, 
-};
- return _sm_alog[idx];
-}
-//------------------------------------------------------------------------------------		
-static inline int sm_log(unsigned char idx)
-{
-static const unsigned char _sm_log[256] =
-{
-  0x00, 0x00, 0x19, 0x01, 0x32, 0x02, 0x1A, 0xC6, 0x4B, 0xC7, 0x1B, 0x68, 0x33, 0xEE, 0xDF, 0x03, 
-  0x64, 0x04, 0xE0, 0x0E, 0x34, 0x8D, 0x81, 0xEF, 0x4C, 0x71, 0x08, 0xC8, 0xF8, 0x69, 0x1C, 0xC1, 
-  0x7D, 0xC2, 0x1D, 0xB5, 0xF9, 0xB9, 0x27, 0x6A, 0x4D, 0xE4, 0xA6, 0x72, 0x9A, 0xC9, 0x09, 0x78, 
-  0x65, 0x2F, 0x8A, 0x05, 0x21, 0x0F, 0xE1, 0x24, 0x12, 0xF0, 0x82, 0x45, 0x35, 0x93, 0xDA, 0x8E, 
-  0x96, 0x8F, 0xDB, 0xBD, 0x36, 0xD0, 0xCE, 0x94, 0x13, 0x5C, 0xD2, 0xF1, 0x40, 0x46, 0x83, 0x38, 
-  0x66, 0xDD, 0xFD, 0x30, 0xBF, 0x06, 0x8B, 0x62, 0xB3, 0x25, 0xE2, 0x98, 0x22, 0x88, 0x91, 0x10, 
-  0x7E, 0x6E, 0x48, 0xC3, 0xA3, 0xB6, 0x1E, 0x42, 0x3A, 0x6B, 0x28, 0x54, 0xFA, 0x85, 0x3D, 0xBA, 
-  0x2B, 0x79, 0x0A, 0x15, 0x9B, 0x9F, 0x5E, 0xCA, 0x4E, 0xD4, 0xAC, 0xE5, 0xF3, 0x73, 0xA7, 0x57, 
-  0xAF, 0x58, 0xA8, 0x50, 0xF4, 0xEA, 0xD6, 0x74, 0x4F, 0xAE, 0xE9, 0xD5, 0xE7, 0xE6, 0xAD, 0xE8, 
-  0x2C, 0xD7, 0x75, 0x7A, 0xEB, 0x16, 0x0B, 0xF5, 0x59, 0xCB, 0x5F, 0xB0, 0x9C, 0xA9, 0x51, 0xA0, 
-  0x7F, 0x0C, 0xF6, 0x6F, 0x17, 0xC4, 0x49, 0xEC, 0xD8, 0x43, 0x1F, 0x2D, 0xA4, 0x76, 0x7B, 0xB7, 
-  0xCC, 0xBB, 0x3E, 0x5A, 0xFB, 0x60, 0xB1, 0x86, 0x3B, 0x52, 0xA1, 0x6C, 0xAA, 0x55, 0x29, 0x9D, 
-  0x97, 0xB2, 0x87, 0x90, 0x61, 0xBE, 0xDC, 0xFC, 0xBC, 0x95, 0xCF, 0xCD, 0x37, 0x3F, 0x5B, 0xD1, 
-  0x53, 0x39, 0x84, 0x3C, 0x41, 0xA2, 0x6D, 0x47, 0x14, 0x2A, 0x9E, 0x5D, 0x56, 0xF2, 0xD3, 0xAB, 
-  0x44, 0x11, 0x92, 0xD9, 0x23, 0x20, 0x2E, 0x89, 0xB4, 0x7C, 0xB8, 0x26, 0x77, 0x99, 0xE3, 0xA5, 
-  0x67, 0x4A, 0xED, 0xDE, 0xC5, 0x31, 0xFE, 0x18, 0x0D, 0x63, 0x8C, 0x80, 0xC0, 0xF7, 0x70, 0x07, 
-};
- return _sm_log[idx];
-}
-//------------------------------------------------------------------------------------		
-static inline int sm_T(unsigned char x, unsigned char y)
-{
-static const int _sm_T[8][256] = {
+static inline int sm_TS[4][256] = {
 {
   0xC66363A5, 0xF87C7C84, 0xEE777799, 0xF67B7B8D, 0xFFF2F20D, 0xD66B6BBD, 0xDE6F6FB1, 0x91C5C554, 
   0x60303050, 0x02010103, 0xCE6767A9, 0x562B2B7D, 0xE7FEFE19, 0xB5D7D762, 0x4DABABE6, 0xEC76769A, 
@@ -664,7 +719,10 @@ static const int _sm_T[8][256] = {
   0x9B9BB62D, 0x1E1E223C, 0x87879215, 0xE9E920C9, 0xCECE4987, 0x5555FFAA, 0x28287850, 0xDFDF7AA5, 
   0x8C8C8F03, 0xA1A1F859, 0x89898009, 0x0D0D171A, 0xBFBFDA65, 0xE6E631D7, 0x4242C684, 0x6868B8D0, 
   0x4141C382, 0x9999B029, 0x2D2D775A, 0x0F0F111E, 0xB0B0CB7B, 0x5454FCA8, 0xBBBBD66D, 0x16163A2C, 
-},
+} };
+
+
+static inline int sm_TSi[4][256] = {
 {
   0x51F4A750, 0x7E416553, 0x1A17A4C3, 0x3A275E96, 0x3BAB6BCB, 0x1F9D45F1, 0xACFA58AB, 0x4BE30393, 
   0x2030FA55, 0xAD766DF6, 0x88CC7691, 0xF5024C25, 0x4FE5D7FC, 0xC52ACBD7, 0x26354480, 0xB562A38F, 
@@ -800,13 +858,49 @@ static const int _sm_T[8][256] = {
   0xD2DF599C, 0xF2733F55, 0x14CE7918, 0xC737BF73, 0xF7CDEA53, 0xFDAA5B5F, 0x3D6F14DF, 0x44DB8678, 
   0xAFF381CA, 0x68C43EB9, 0x24342C38, 0xA3405FC2, 0x1DC37216, 0xE2250CBC, 0x3C498B28, 0x0D9541FF, 
   0xA8017139, 0x0CB3DE08, 0xB4E49CD8, 0x56C19064, 0xCB84617B, 0x32B670D5, 0x6C5C7448, 0xB85742D0, 
-  }
-};
- return _sm_T[x][y];
-}
-//------------------------------------------------------------------------------------		
+  } };
 
+
+static inline unsigned char sm_S[256] =
+{
+  0x63, 0x7C, 0x77, 0x7B, 0xF2, 0x6B, 0x6F, 0xC5, 0x30, 0x01, 0x67, 0x2B, 0xFE, 0xD7, 0xAB, 0x76, 
+  0xCA, 0x82, 0xC9, 0x7D, 0xFA, 0x59, 0x47, 0xF0, 0xAD, 0xD4, 0xA2, 0xAF, 0x9C, 0xA4, 0x72, 0xC0, 
+  0xB7, 0xFD, 0x93, 0x26, 0x36, 0x3F, 0xF7, 0xCC, 0x34, 0xA5, 0xE5, 0xF1, 0x71, 0xD8, 0x31, 0x15, 
+  0x04, 0xC7, 0x23, 0xC3, 0x18, 0x96, 0x05, 0x9A, 0x07, 0x12, 0x80, 0xE2, 0xEB, 0x27, 0xB2, 0x75, 
+  0x09, 0x83, 0x2C, 0x1A, 0x1B, 0x6E, 0x5A, 0xA0, 0x52, 0x3B, 0xD6, 0xB3, 0x29, 0xE3, 0x2F, 0x84, 
+  0x53, 0xD1, 0x00, 0xED, 0x20, 0xFC, 0xB1, 0x5B, 0x6A, 0xCB, 0xBE, 0x39, 0x4A, 0x4C, 0x58, 0xCF, 
+  0xD0, 0xEF, 0xAA, 0xFB, 0x43, 0x4D, 0x33, 0x85, 0x45, 0xF9, 0x02, 0x7F, 0x50, 0x3C, 0x9F, 0xA8, 
+  0x51, 0xA3, 0x40, 0x8F, 0x92, 0x9D, 0x38, 0xF5, 0xBC, 0xB6, 0xDA, 0x21, 0x10, 0xFF, 0xF3, 0xD2, 
+  0xCD, 0x0C, 0x13, 0xEC, 0x5F, 0x97, 0x44, 0x17, 0xC4, 0xA7, 0x7E, 0x3D, 0x64, 0x5D, 0x19, 0x73, 
+  0x60, 0x81, 0x4F, 0xDC, 0x22, 0x2A, 0x90, 0x88, 0x46, 0xEE, 0xB8, 0x14, 0xDE, 0x5E, 0x0B, 0xDB, 
+  0xE0, 0x32, 0x3A, 0x0A, 0x49, 0x06, 0x24, 0x5C, 0xC2, 0xD3, 0xAC, 0x62, 0x91, 0x95, 0xE4, 0x79, 
+  0xE7, 0xC8, 0x37, 0x6D, 0x8D, 0xD5, 0x4E, 0xA9, 0x6C, 0x56, 0xF4, 0xEA, 0x65, 0x7A, 0xAE, 0x08, 
+  0xBA, 0x78, 0x25, 0x2E, 0x1C, 0xA6, 0xB4, 0xC6, 0xE8, 0xDD, 0x74, 0x1F, 0x4B, 0xBD, 0x8B, 0x8A, 
+  0x70, 0x3E, 0xB5, 0x66, 0x48, 0x03, 0xF6, 0x0E, 0x61, 0x35, 0x57, 0xB9, 0x86, 0xC1, 0x1D, 0x9E, 
+  0xE1, 0xF8, 0x98, 0x11, 0x69, 0xD9, 0x8E, 0x94, 0x9B, 0x1E, 0x87, 0xE9, 0xCE, 0x55, 0x28, 0xDF, 
+  0x8C, 0xA1, 0x89, 0x0D, 0xBF, 0xE6, 0x42, 0x68, 0x41, 0x99, 0x2D, 0x0F, 0xB0, 0x54, 0xBB, 0x16, 
+};
+
+static inline unsigned char sm_Si[256] =
+{
+  0x52, 0x09, 0x6A, 0xD5, 0x30, 0x36, 0xA5, 0x38, 0xBF, 0x40, 0xA3, 0x9E, 0x81, 0xF3, 0xD7, 0xFB, 
+  0x7C, 0xE3, 0x39, 0x82, 0x9B, 0x2F, 0xFF, 0x87, 0x34, 0x8E, 0x43, 0x44, 0xC4, 0xDE, 0xE9, 0xCB, 
+  0x54, 0x7B, 0x94, 0x32, 0xA6, 0xC2, 0x23, 0x3D, 0xEE, 0x4C, 0x95, 0x0B, 0x42, 0xFA, 0xC3, 0x4E, 
+  0x08, 0x2E, 0xA1, 0x66, 0x28, 0xD9, 0x24, 0xB2, 0x76, 0x5B, 0xA2, 0x49, 0x6D, 0x8B, 0xD1, 0x25, 
+  0x72, 0xF8, 0xF6, 0x64, 0x86, 0x68, 0x98, 0x16, 0xD4, 0xA4, 0x5C, 0xCC, 0x5D, 0x65, 0xB6, 0x92, 
+  0x6C, 0x70, 0x48, 0x50, 0xFD, 0xED, 0xB9, 0xDA, 0x5E, 0x15, 0x46, 0x57, 0xA7, 0x8D, 0x9D, 0x84, 
+  0x90, 0xD8, 0xAB, 0x00, 0x8C, 0xBC, 0xD3, 0x0A, 0xF7, 0xE4, 0x58, 0x05, 0xB8, 0xB3, 0x45, 0x06, 
+  0xD0, 0x2C, 0x1E, 0x8F, 0xCA, 0x3F, 0x0F, 0x02, 0xC1, 0xAF, 0xBD, 0x03, 0x01, 0x13, 0x8A, 0x6B, 
+  0x3A, 0x91, 0x11, 0x41, 0x4F, 0x67, 0xDC, 0xEA, 0x97, 0xF2, 0xCF, 0xCE, 0xF0, 0xB4, 0xE6, 0x73, 
+  0x96, 0xAC, 0x74, 0x22, 0xE7, 0xAD, 0x35, 0x85, 0xE2, 0xF9, 0x37, 0xE8, 0x1C, 0x75, 0xDF, 0x6E, 
+  0x47, 0xF1, 0x1A, 0x71, 0x1D, 0x29, 0xC5, 0x89, 0x6F, 0xB7, 0x62, 0x0E, 0xAA, 0x18, 0xBE, 0x1B, 
+  0xFC, 0x56, 0x3E, 0x4B, 0xC6, 0xD2, 0x79, 0x20, 0x9A, 0xDB, 0xC0, 0xFE, 0x78, 0xCD, 0x5A, 0xF4, 
+  0x1F, 0xDD, 0xA8, 0x33, 0x88, 0x07, 0xC7, 0x31, 0xB1, 0x12, 0x10, 0x59, 0x27, 0x80, 0xEC, 0x5F, 
+  0x60, 0x51, 0x7F, 0xA9, 0x19, 0xB5, 0x4A, 0x0D, 0x2D, 0xE5, 0x7A, 0x9F, 0x93, 0xC9, 0x9C, 0xEF, 
+  0xA0, 0xE0, 0x3B, 0x4D, 0xAE, 0x2A, 0xF5, 0xB0, 0xC8, 0xEB, 0xBB, 0x3C, 0x83, 0x53, 0x99, 0x61, 
+  0x17, 0x2B, 0x04, 0x7E, 0xBA, 0x77, 0xD6, 0x26, 0xE1, 0x69, 0x14, 0x63, 0x55, 0x21, 0x0C, 0x7D, 
+};
+#endif
 };
 //------------------------------------------------------------------------------------		
-#endif 
 

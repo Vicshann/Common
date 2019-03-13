@@ -857,7 +857,7 @@ int _stdcall ProcessRequestDbg(SMsgHdr* Req)
        else Status = this->NtDll.NtQueryVirtualMemory(NtCurrentProcess,BaseAddress,MemoryInformationClass,apo.PushBlk(MemoryInformationLength),MemoryInformationLength,&RetLen);
      apo.PushArg(RetLen);
      apo.PushArg(Status);
-     DBGMSG("miQueryVirtualMemory PutMsg: Status=%08X, Size=%u",Status,apo.GetLen());
+//     DBGMSG("miQueryVirtualMemory PutMsg: Status=%08X, Size=%u",Status,apo.GetLen());
      this->PutMsg(mtDbgRsp, miQueryVirtualMemory, Req->Sequence, apo.GetPtr(), apo.GetLen());      
     }
    break;
@@ -1010,7 +1010,7 @@ int _stdcall ProcessRequestDbg(SMsgHdr* Req)
      HRESULT Status = STATUS_SUCCESS;
      if(!this->ThList.SetContextVal(ThIdx, &ctx))Status = this->NtDll.NtSetContextThread(ThreadHandle, &ctx);
        else {DBGMSG("SetContext stored locally: %u",ThIdx);}
-     DBGMSG("SetContext %u: Dr0=%p, Dr1=%p, Dr2=%p, Dr3=%p",ThIdx,ctx.Dr0,ctx.Dr1,ctx.Dr2,ctx.Dr3);
+     DBGMSG("SetContext %u: DbgRegs=%u, Dr7=%p, Dr0=%p, Dr1=%p, Dr2=%p, Dr3=%p",ThIdx,bool(ctx.ContextFlags & CONTEXT_DEBUG_REGISTERS),ctx.Dr7,ctx.Dr0,ctx.Dr1,ctx.Dr2,ctx.Dr3);
      apo.PushArg(Status);
      if(!Status && ThreadHandle){if(this->OnlyOwnHwBP)this->ThList.UpdHardwareBp(ThIdx, &ctx); if(this->OnlyOwnTF)this->ThList.UpdTraceFlag(ThIdx, &ctx);}
      DBGMSG("miSetThreadContext PutMsg: Status=%08X, FLAGS=%08X, Size=%u",Status,ctx.ContextFlags, apo.GetLen());
@@ -1035,7 +1035,7 @@ int _stdcall ProcessRequestDbg(SMsgHdr* Req)
        else Status = this->NtDll.NtReadVirtualMemory(NtCurrentProcess, BaseAddress, apo.PushBlk(BufferLength), BufferLength, &RetLen); 
      apo.PushArg(RetLen);
      apo.PushArg(Status);
-     DBGMSG("miReadVirtualMemory PutMsg: Status=%08X, BaseAddress=%p, BufferLength=%08X, Size=%u",Status,BaseAddress,BufferLength,apo.GetLen());
+//     DBGMSG("miReadVirtualMemory PutMsg: Status=%08X, BaseAddress=%p, BufferLength=%08X, Size=%u",Status,BaseAddress,BufferLength,apo.GetLen());
      this->PutMsg(mtDbgRsp, miReadVirtualMemory, Req->Sequence, apo.GetPtr(), apo.GetLen());      
     }
    break;
@@ -1317,7 +1317,7 @@ static DWORD WINAPI IPCQueueThread(LPVOID lpThreadParameter)
   { 
    SMsgHdr* Cmd = DbgIPC->GetMsg();
    if(!Cmd)continue;   // Timeout and still no messages
-   DBGMSG("MsgType=%04X, MsgID=%04X, DataID=%08X, Sequence=%08X, DataSize=%08X",Cmd->MsgType,Cmd->MsgID,Cmd->DataID,Cmd->Sequence,Cmd->DataSize);
+////   DBGMSG("MsgType=%04X, MsgID=%04X, DataID=%08X, Sequence=%08X, DataSize=%08X",Cmd->MsgType,Cmd->MsgID,Cmd->DataID,Cmd->Sequence,Cmd->DataSize);   // These Debug messages make it hang!!!
    if(Cmd->MsgType & mtDbgReq)DbgIPC->ProcessRequestDbg(Cmd);
    if(Cmd->MsgType & mtUsrReq)DbgIPC->ProcessRequestUsr(Cmd);  
   }
@@ -1573,6 +1573,7 @@ int Report_LOAD_DLL_DEBUG_INFO(PVOID DllBase, LPSTR DllName="")
  evt.dwThreadId  = GetCurrentThreadId();  
  if(evt.dwThreadId == this->ClientThID)evt.dwThreadId = this->MainThID;    // Protect Client thread from debugger
  
+ *evt.FilePath                       = 0;
  evt.u.LoadDll.hFile                 = NULL;        // NOTE: TitanEngine will try to call CreateFileMappingA on it
  evt.u.LoadDll.lpBaseOfDll           = DllBase;
  evt.u.LoadDll.dwDebugInfoFileOffset = 0;
@@ -1580,7 +1581,7 @@ int Report_LOAD_DLL_DEBUG_INFO(PVOID DllBase, LPSTR DllName="")
  evt.u.LoadDll.lpImageName           = NULL;   // Find it in DLL or in PEB
  evt.u.LoadDll.fUnicode              = 0;
  evt.PathSize = GetModuleFileNameW((HMODULE)DllBase,(PWSTR)&evt.FilePath,MAX_PATH);   // Base is always same as HMODULE?
- DBGMSG("PutMsg: DllBase=%p, DllName='%s', Size=%u",DllBase,DllName,sizeof(evt));
+ DBGMSG("PutMsg: DllBase=%p, Size=%u, DllName='%s', DllPath='%ls'",DllBase,sizeof(evt),DllName,(PWSTR)&evt.FilePath);
  return this->PutMsg(mtDbgRsp, miWaitForDebugEvent, 0, &evt, sizeof(evt));  
 }
 //------------------------------------------------------------------------------------

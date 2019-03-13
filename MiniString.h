@@ -27,6 +27,8 @@
 //extern LPSTR _stdcall ConvertToDecDW(DWORD Value, LPSTR Number);
 //extern LPSTR _stdcall ConvertToHexStr(UINT64 Value, int MaxDigits, LPSTR Number, bool UpCase);
 
+// TODO: For TRIM return only a string descriptor with offset and size, not a copy of substring
+
 class CMiniStr
 {
  LPSTR  Data;
@@ -434,6 +436,20 @@ int Count(BYTE chr, int from=0)
    return *this;
   }
 //----------------------
+ bool ToWide(void)
+  {
+   UINT  TmpLen = (this->SLength*sizeof(WCHAR));   // twice as size of current string
+   PBYTE TmpBuf = (PBYTE)HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,TmpLen+64);
+   if(!TmpBuf)return false;
+   int wlen = MultiByteToWideChar(CP_ACP,0,this->Data,this->SLength,(PWSTR)TmpBuf,this->SLength);
+   if(wlen <= 0){HeapFree(GetProcessHeap(),0,TmpBuf); return false;}
+   this->SLength = wlen * 2;
+   this->ResizeFor(this->SLength);
+   memcpy(this->Data,TmpBuf,this->SLength);
+   HeapFree(GetProcessHeap(),0,TmpBuf);
+   return true;
+  }
+//----------------------
  bool ConvertCodePage(UINT FromCP, UINT ToCP)
   {
    UINT  TmpLen = (this->SLength*sizeof(WCHAR));   // twice as size of current string
@@ -470,6 +486,7 @@ int Count(BYTE chr, int from=0)
    HANDLE hFile;
    if(!((PBYTE)FileName)[1])hFile = CreateFileW((PWSTR)FileName,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
      else hFile = CreateFileA((LPSTR)FileName,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
+     int err = GetLastError();
    if(hFile == INVALID_HANDLE_VALUE)return false;
    DWORD Result   = 0;
    WriteFile(hFile,this->Data,this->SLength,&Result,NULL);
