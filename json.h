@@ -19,12 +19,13 @@
 */
 
 #include "MiniString.h"
+#include "FileStream.h"
 
 class CJSonItem;
 
 enum TJSArray  {jsArray=1000};
 enum TJSObject {jsObject=1001};
-enum EJSonType {jstEmpty,jstNULL,jstBool,jstInt,jstHexInt,jstFloat,jstString,jstObject,jstArray,jstAny=-1};  // Null is not a type AT ALL - it is a VALUE representation. We either must get rid of it or assume that an entities can stay typeless
+enum EJSonType {jstEmpty,jstNULL,jstBool,jstInt,jstHexInt,jstFloat,jstString,jstObject,jstArray,jstAny=-1}; // TODO: Replace jstEmpty with jstNULL // Null is not a type AT ALL - it is a VALUE representation. We either must get rid of it or assume that entities can stay typeless
 //enum EJSonType {jstEmpty=0,jstBool,jstInt,jstHexInt,jstFloat,jstString,jstObject,jstArray,jstAny=-1}; // Max: 00 - 0F for binary  // TODO: JSON Null must mean an Object or array with no members
 enum ECnvOpts  {coNone=0, coFormat=1, coWrUsrData=2, coNoUniCnv=4};
 enum EBFlags   {bfNamePresent=0x10,bfDataPresent=0x20,bfValuePresent=0x40,bfBoolValue=0x80};
@@ -45,6 +46,48 @@ BYTE Flags;
  DATA:[BYTE(DataSize:4,ValueSize:4), BYTE[]]    // Size Field also used for specifying size of Value
  VALUE:[BYTE(DataSize:4,ValueSize:4), BYTE[]]
  // Extended: NumArray: DWORD ElemCount, BYTE ElemSize,
+*/
+
+/* Single Item:
+ Value: 8
+ Type|Count: 4  // Type+Flags=6bit,Count=26Bit(67108863 items max)
+ Name: 4/8 pointer // Optional
+ Data: 0/4/8    // Optional at template level
+
+   Types:
+       jstNull      // Type by itself, name keeper
+       jstBool      // No value field, stored in Counter field
+       jstFloat     // Compact to Counter field if possible?
+       jstInt       // Input sized (24 bits can be stored in Counter field)
+       jstUInt      // Input sized   // Use extra bit?
+       jstString    // Pointer sized  // Size is in Counter field
+       jstObject    // Pointer sized
+       jstArray     // Pointer sized
+
+  0 BYTE
+  1 WORD
+  2 DWORD
+  3 QWORD
+
+  0 jstNull|jstBool
+  1 jstArray|jstObject
+  2 jstFloat|jstString
+  3 jstInt|jstUInt
+
+  10000  // Have name
+  01000  // Have Data     // Or just make NoSerialize flag for some temporary data fields? // Integers have no children items, but can have data fields // Adding later and reallocation problem? // Per Item(Reallocation or initial allocation only?)?
+  00100  // Magic bit     // Marks int as hex ?
+
+  ndmssttt   //n:HaveName,d:HaveData,m:Special,s:Size,t:Type
+   ss  // Additional DWORDs count
+    0  // Empedded into lower 24 bits of counter
+    1  // 24+32 bits value    // Pack pointers too?
+    2  // 24+64 bits value (or just 64 bits?)
+    3  // Use as reference???
+
+  Load unsigned: If it gave high bit set in its max size(B,W,D,Q) then mark it as jstUInt
+   'Static' flag when adding to make max compact values in memory
+   Use index for names? Then need some Json factory to hold string lists
 */
 
 class CJSonItem     // OPTIMIZE: Align Name sizes to CPU data size (x86/x64) and compare ad these data blocks
@@ -117,6 +160,7 @@ private:
    (*str)[Len] = 0;
   }
 //--------------
+public:    // Good spreading(No visible patterns)      // TODO:  Move these to some crypto utility HPP
  static void BinEncrypt(PBYTE data, UINT Size, BYTE Key)
   {
    BYTE Key2 = (Size & 0xFF) * ((Size >> 8) & 0xFF);
@@ -142,6 +186,7 @@ private:
 	 data[ctr] = val;
 	}
   }
+private:
 //--------------
  template<typename T> static T ValueFromBytes(PBYTE data, UINT size)
   {
@@ -469,6 +514,16 @@ public:
    return nitm;
   }
 //--------------
+bool Truncate(UINT NewCnt)
+{
+ if(!NewCnt){this->Clear(); return true;}
+ if(NewCnt > this->Count())return false;
+ if((this->Type != jstArray) && (this->Type != jstObject))return false;
+ ReAllocBuf(&this->Value.Items, NewCnt*sizeof(CJSonItem));
+ this->mCount = NewCnt;
+ return true;
+}
+//--------------
 
  void  Clear(void){ this->Cleanup(true); }     // this->Nullify();}
 
@@ -642,6 +697,33 @@ public:
   }
 
 //--------------
+ int FromFile(LPSTR FileName, UINT Flags=coNone, BYTE DecKey=0)
+  {
+   CMiniStr str;
+   this->Clear();
+   str.FromFile(FileName);
+   if(!str.Length())return -1;
+   this->FromString(str,Flags,DecKey);
+   return 0;
+  }
+//--------------
+ int ToFile(LPSTR FileName, UINT Flags=coNone, BYTE BinEncKey=0)  // Saving to CMiniStr vaw veeeery slooooow
+  {  
+   if(BinEncKey)
+    {
+     CMiniStr str;
+     this->ToBinary(str,BinEncKey);  
+     str.ToFile(FileName);
+    }
+    else 
+     {
+      CFileStr fstr;  
+      if(!fstr.SetFile(FileName))return -1;
+      this->EntityToStream<CFileStr>(fstr,Flags,0);
+     }
+   return 0;
+  }
+//--------------
  int FromString(const CMiniStr &str, UINT Flags=coNone, BYTE DecKey=0)
   {
    if(str.Length() < 3)return -1;
@@ -657,7 +739,7 @@ public:
    return soffs;
   }
 //--------------
- void EntityToString(CMiniStr &str, UINT Flags, int indent)
+ template<typename T> void EntityToStream(T &str, UINT Flags, int indent)
   {
    bool nouc   = (Flags & coNoUniCnv);
    bool format = (Flags & coFormat);
@@ -678,7 +760,10 @@ public:
 		else str += "false";
 	  break;
 	 case jstInt:
-	  str += (int)this->Value.IntVal;
+      {
+       BYTE Buf[64];
+	   str += DecNumToStrS<__int64>(this->Value.IntVal, (char*)&Buf);  // (int)this->Value.IntVal;
+      }
 	  break;
 	 case jstHexInt:
 	  {
@@ -720,7 +805,7 @@ public:
 	   indent++;
 	   for(CJSonItem* itm = this->First();itm;itm=this->Next(itm))
 		{
-		 itm->EntityToString(str,Flags,indent);
+		 itm->EntityToStream(str,Flags,indent);
 		 if(itm != this->Last())str.AddChars(',');
 		}
 	   indent--;
@@ -747,7 +832,7 @@ public:
 //--------------
  void ToString(CMiniStr &str, UINT Flags=coNone) // The resulting String is copied?
   {
-   EntityToString(str,Flags,0);
+   this->EntityToStream<CMiniStr>(str,Flags,0);
   }
 //---------------------------------------------------------------------------
  static int _fastcall IsBinaryEncrypted(PBYTE bindat)  // -1 = , 0 = Not Encrypted
@@ -995,6 +1080,7 @@ static CMiniStr _fastcall NormalStrToJsonStr(LPCSTR str, int len=0, bool nouc=fa
 	 case jstString:
 	  {
 	   UINT dsize = (BSize & 0x0F);
+       if(!dsize)break;
 	   UINT ssize = ValueFromBytes<UINT32>(&BinDat[offset], dsize);
 	   offset += dsize;
 	   SetString(&this->Value.StringVal,(const char*)&BinDat[offset],ssize);
@@ -1007,7 +1093,8 @@ static CMiniStr _fastcall NormalStrToJsonStr(LPCSTR str, int len=0, bool nouc=fa
 //--------------
  // DataSize is used for encryption
  // Set 'offset' at position after BINSIG
- int EntityToBinary(CMiniStr &str, int offset)
+// TODO: When saving to binary duplicated names(or even any strings), write offsets to already saved strings
+ int EntityToBinary(CMiniStr &str, int offset)   // Incompatible with stream!!!!!!!!!!!!!!!!!!!!!!!!!!
   {
    BYTE BFlags = this->Type;
    BYTE* PCtr;
@@ -1075,6 +1162,7 @@ static CMiniStr _fastcall NormalStrToJsonStr(LPCSTR str, int len=0, bool nouc=fa
 	 case jstString:
 	  {
 	   UINT32 SVLen = CountedStrLen(this->Value.StringVal);   // Value size specifies size of string field
+       if(!SVLen)break;
 	   ValLen = CountValueBytes(&SVLen);
 	   *PCtr |= (ValLen & 0x0F);
 	   str.SetLength(offset+ValLen+SVLen);
@@ -1101,7 +1189,130 @@ static CMiniStr _fastcall NormalStrToJsonStr(LPCSTR str, int len=0, bool nouc=fa
 	}
    return FullSize;
   }
-//--------------
+//----------------------------------------------------------------------------
+static int SkipSpaces(CMiniStr& str, UINT Pos, bool Back=false)     // NOTE: Static flag argiments can be excluded after inlining (Bot not something like negative Pos check)
+{
+ char* Str = str.c_str();
+ if(Back)     // Unsafe without begin of a string
+  {
+   while(Pos && (Str[Pos-1] <= 0x20))Pos--;
+   return Pos;
+  }
+ while(Str[Pos] && (Str[Pos] <= 0x20))Pos++;
+ return (Str[Pos])?(Pos):(-1);    // EOS can be reached
+}
+//------------------------------------------------------------------------------------
+static int SkipXmlVerHdr(CMiniStr& str)
+{
+ int ipos = str.Pos("?>");
+ if(ipos < 0)return 0;
+ ipos = str.Pos(0x20,CMiniStr::ComparatorG,ipos+2);
+ if(ipos < 0)return 0;
+ return ipos;
+}
+//------------------------------------------------------------------------------------
+static int FindXmlObjNameEnd(CMiniStr& str, int Pos)
+{
+ char* Str = str.c_str();
+ while(Str[Pos] && (Str[Pos] > 0x20) && (Str[Pos] != '>'))Pos++;      // Spaces, NL?
+ return (Str[Pos])?(Pos):(-1);
+}
+//------------------------------------------------------------------------------------
+int LoadXmlOjectsToJsn(CMiniStr& XmlStr, int From=0)  // Attributes and body
+{
+ int npbeg = XmlStr.Pos('<',CMiniStr::ComparatorE,From);
+ if(npbeg < 0)return -1;
+ npbeg = SkipSpaces(XmlStr, ++npbeg);
+ if(npbeg < 0)return -1;
+ int npend = FindXmlObjNameEnd(XmlStr, npbeg);   // XmlStr.Pos('<',CMiniStr::ComparatorE,From);
+ if(npend < 0)return -1;
+ int onlen = npend-npbeg;
+ this->SetName(&XmlStr.c_str()[npbeg], onlen);
+ npend = SkipSpaces(XmlStr,npend);
+ if(npend < 0)return -1;
+ CJSonItem* Arr = this->Add(CJSonItem(jsArray,"$"));   // Attrs  // First child entry is always reserved for it so content is always starts from 1
+ while(XmlStr.c_str()[npend] != '>')
+  {
+   if(XmlStr.c_str()[npend] == '/')return XmlStr.Pos('>',CMiniStr::ComparatorE,npend)+1;     // End of object, no body
+   int epos = XmlStr.Pos('=',CMiniStr::ComparatorE,npend);
+   if(epos < 0)return -7;
+   CJSonItem* Itm = Arr->Add(CJSonItem(""));
+   Itm->SetName(&XmlStr.c_str()[npend], SkipSpaces(XmlStr, epos, true)-npend);
+   epos  = XmlStr.Pos('"',CMiniStr::ComparatorE,epos);
+   if(epos < 0)return -8;
+   npend = XmlStr.Pos('"',CMiniStr::ComparatorE,++epos);
+   if(npend < 0)return -8;
+   int nlen = npend - epos;
+   if(nlen > 0)Itm->SetValStr(&XmlStr.c_str()[epos],nlen);
+   npend = SkipSpaces(XmlStr, ++npend);
+  }
+  
+ npend = SkipSpaces(XmlStr, npend+1);  // After this npend points to ObjBody or Child objects
+ if(npend < 0)return -1;
+
+ if(XmlStr.c_str()[npend] != '<')   // Load DataBody
+  {
+   int dend = XmlStr.Pos('<',CMiniStr::ComparatorE,npend);    // I.E.: <MyObjName>0AD1F9C900336BA32156C4DFE8BFC010C28CAB30</MyObjName>
+   if(npend < 0)return -5;
+   CJSonItem* Itm = this->Add(CJSonItem(""));
+   int slen = SkipSpaces(XmlStr, dend, true) - npend;
+   if(slen > 0)Itm->SetValStr(&XmlStr.c_str()[npend], slen);
+   npend = dend;    // Now npend should point to Closing (</MyObjName>)
+  }
+   else if(XmlStr.c_str()[npend+1] != '/')   // Not empty object   // Load Child objects
+    {
+     for(;;)
+      {
+       CJSonItem* Itm = this->Add(CJSonItem(jsObject));
+       npend = Itm->LoadXmlOjectsToJsn(XmlStr, npend);
+       npend = XmlStr.Pos('<',CMiniStr::ComparatorE,npend); 
+       if(npend < 0)return -6;
+       if(XmlStr.c_str()[npend+1] == '/')
+        {
+         if(!NSTR::IsStrEqualIC(&XmlStr.c_str()[npbeg], &XmlStr.c_str()[npend+2], onlen))return -4;   // Wrong closing: Must be same obj name
+         break;
+        }
+      }
+     return XmlStr.Pos('>',CMiniStr::ComparatorE,npend)+1;
+    }
+  if(!NSTR::IsStrEqualIC(&XmlStr.c_str()[npbeg], &XmlStr.c_str()[npend+2], onlen))return -3;   // Wrong closing: Must be same obj name
+  return XmlStr.Pos('>',CMiniStr::ComparatorE,npend)+1;  // After (</MyObjName>) 
+}
+//------------------------------------------------------------------------------------
+int SaveJsnOjectsToXml(CMiniStr& XmlStr, int Depth=0, int Ind=2)
+{
+ XmlStr.AddChars(0x20,Depth*Ind);
+ XmlStr += "<";
+ XmlStr += this->GetName();
+ CJSonItem* Arr = this->Get((UINT)0);
+ for(CJSonItem* Itm=Arr->First();Itm;Itm=Arr->Next(Itm))
+  {
+   XmlStr += " ";
+   XmlStr += Itm->GetName();
+   XmlStr += "=\"";
+   XmlStr += Itm->GetValStr();
+   XmlStr += "\"";
+  }
+ CJSonItem* Content = this->Get((UINT)1);
+ if(Content)
+  {
+   XmlStr += ">";
+   if(Content->GetNameLen())  // Child Objects
+    {
+     XmlStr += "\r\n";
+     for(CJSonItem* Itm=Content;Itm;Itm=this->Next(Itm))Itm->SaveJsnOjectsToXml(XmlStr, Depth+1);
+     XmlStr.AddChars(0x20,Depth*Ind);  // Close on a new line
+    }
+     else XmlStr.cAppend(Content->GetValStr(), Content->GetValStrLen());   // Will be closed on same line
+   XmlStr += "</";
+   XmlStr += this->GetName();
+   XmlStr += ">\r\n";  
+   return 0;
+  }
+ XmlStr += "/>\r\n"; 
+ return 0;
+}
+//------------------------------------------------------------------------------------
 
 };
 //----------------------------------------------------------------------------

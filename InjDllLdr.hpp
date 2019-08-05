@@ -141,8 +141,11 @@ __declspec(noinline) static void RedirRet(PBYTE OldBase, PBYTE NewBase)
 *(PVOID*)_AddressOfReturnAddress() = RetAddr;
 }
 //------------------------------------------------------------------------------------
-// Doesn`t uses LoadLibrary for RealDll mappinc because of LoaderLock in DLL main from which it may be called
-//
+// Doesn`t uses LoadLibrary for RealDll mapping because of LoaderLock in DLL main from which it may be called
+// NOTE: After hiding thes DLL call to LdrLoadDll will try to load it again
+// NOTE: Unicode strings of DLL path is incorrect, buffer will overflow and old memory will leak
+// NOTE: GetModuleHandle will return NULL
+// NOTE: Any already resolved import from this DLL will be wrong
 //
 static int HideSelfProxyDll(PVOID DllBase, PVOID pNtDll, LPSTR RealDllPath, PVOID* NewBase, PVOID* EntryPT)   // Call this from DllMain
 {    
@@ -179,9 +182,10 @@ static int HideSelfProxyDll(PVOID DllBase, PVOID pNtDll, LPSTR RealDllPath, PVOI
  if(NtUnmapViewOfSection(NtCurrentProcess, DllBase)){LOGMSG("Failed to unmap this proxy dll: %p", DllBase);return -3;}  
  DBGMSG("Proxy dll unmapped");                                                                  
  PVOID MapAddr = MapViewOfFileEx(hSec,FILE_MAP_EXECUTE|FILE_MAP_READ,0,0,0,DllBase);
+ int err = GetLastError();
  CloseHandle(hSec);
  CloseHandle(hFile);
- if(!MapAddr){LOGMSG("Failed to map a real DLL!"); return -4;}
+ if(!MapAddr){LOGMSG("Failed to map a real DLL(%u): %p!", err, DllBase); return -4;}
  DBGMSG("A real dll is unmapped");
  TSectionsProtectRW<PECURRENT>((PBYTE)MapAddr, false);
  DBGMSG("A real dll`s memory is unprotected");
@@ -249,7 +253,7 @@ static PVOID GetModuleBase(LPSTR ModName)
  for(LDR_DATA_TABLE_ENTRY_MO* me = ldr->InMemoryOrderModuleList.Flink;me != (LDR_DATA_TABLE_ENTRY_MO*)&ldr->InMemoryOrderModuleList;me = me->InMemoryOrderLinks.Flink)     // Or just use LdrFindEntryForAddress?
   {
    if(!me->BaseDllName.Length || !me->BaseDllName.Buffer)continue;
-   DBGMSG("Base=%p, Name='%ls'",me->DllBase,me->BaseDllName.Buffer);    // Zero terminated?
+//   DBGMSG("Base=%p, Name='%ls'",me->DllBase,me->BaseDllName.Buffer);    // Zero terminated?     // Spam
    bool Match = true;
    UINT ctr = 0;
    for(UINT tot=me->BaseDllName.Length/sizeof(WCHAR);ctr < tot;ctr++)

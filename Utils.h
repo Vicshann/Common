@@ -53,7 +53,7 @@
 #define DBGMSG LOGMSG
 #define DBGTXT LOGTXT
 #define DBGHEX LOGHEX
-#else
+#else   
 #define LOGMSG(msg,...) LogProc(_PRNM_,msg,__VA_ARGS__)
 #define LOGTXT(txt,len) LogProc((char*)1,txt,len);
 #define LOGHEX(buf,len) LOGMSG(NULL,len,buf)          // TODO: Optionally attach HEX buffer to a message that it and dump go in one sync logging  
@@ -65,9 +65,9 @@
 #define DBGMSG(msg,...)
 #define DBGTXT(txt,len)
 #define DBGHEX(buf,len)
-#endif
+#endif     
+#endif    
 
-#endif
 #define FOREGROUND_YELLOW (FOREGROUND_RED|FOREGROUND_GREEN)
 
 #ifdef __BORLANDC__
@@ -81,7 +81,7 @@ enum ELogModes {lmNone=0,lmFile=0x01,lmCons=0x02,lmSErr=0x04,lmProc=0x08,lmFileU
 void   _cdecl LogProc(char* ProcName, char* Message, ...);
 extern void (_cdecl *pLogProc)(LPSTR, UINT);
 extern int  LogMode;
-extern BYTE LogFilePath[MAX_PATH];
+extern wchar_t LogFilePath[MAX_PATH];
 
 
 #if !defined NTSTATUS
@@ -297,6 +297,8 @@ INLINE bool IsAligned(T ptr)
 
 */
 
+template<typename T> constexpr size_t countof(T& a){return (sizeof(T) / sizeof(*a));}         // Not for array classes or pointers!
+
 template<class R, class T> __inline R GetAddress(T Src){return reinterpret_cast<R>(reinterpret_cast<void* &>(Src));}
 //template<class T> __inline void ZeroStruct(T &Stru){FastZeroMemory(&Stru,sizeof(Stru));}  
 //template<class T> __inline void ZeroPointer(T Stru){FastZeroMemory(Stru,sizeof(*Stru));}
@@ -447,6 +449,18 @@ template<typename O, typename T> O _fastcall HexStrToNum(T Str, long* Size=nullp
  return x;
 }
 //---------------------------------------------------------------------------
+template<typename T> void _fastcall ReverseElements(T* Array, UINT Count)
+{
+ T* ArrEnd = &Array[Count-1];   // Last Element
+ Count = Count / 2;
+ for(UINT ctr=0;ctr < Count;ctr++)
+  {
+   T val = Array[ctr];
+   Array[ctr] = ArrEnd[-ctr];
+   ArrEnd[-ctr] = val;
+  }
+}
+//---------------------------------------------------------------------------
 template<typename T> int _stdcall GetSubStrOffs(T* Str, T* SubStr, int Length=0, bool CaseSens=false)   // if constexpr (...)   // Zero-Terminated strings only! - Fix this
 {
  Length = lstrlen(SubStr);
@@ -581,6 +595,30 @@ template<typename S> void _stdcall CreateDirectoryPath(S Path) // Must end with 
   }
 } 
 //---------------------------------------------------------------------------
+// File.* supported        // NOTE: GetFileAttributes can succeed on a deleted file
+template<typename S> int IsFileExist(S Path)
+{
+ if(!Path)return -1;
+ HANDLE hFile = INVALID_HANDLE_VALUE;
+ if constexpr (sizeof(Path[0]) > 1)
+  {
+   WIN32_FIND_DATAW fdat;
+   hFile = FindFirstFileW(Path, &fdat);
+  }
+   else
+    {
+     WIN32_FIND_DATAA fdat;
+     hFile = FindFirstFileA(Path, &fdat);
+    }
+ if(hFile == INVALID_HANDLE_VALUE)
+  {
+   if(GetLastError() == ERROR_FILE_NOT_FOUND)return 0;
+   return -2;
+  }
+ FindClose(hFile);
+ return 1;
+}
+//---------------------------------------------------------------------------
 // Return address always points to Number[16-MaxDigits];
 //
 template<typename T, typename S> S ConvertToHexStr(T Value, int MaxDigits, S NumBuf, bool UpCase, UINT* Len=0) 
@@ -648,6 +686,7 @@ template<typename T> int HexStrToByteArray(PBYTE Buffer, T SrcStr, UINT HexByteC
  return true;
 } */
 //---------------------------------------------------------------------------
+// 'buf' is for storage only, DO NOT expect result to be at beginning of it
 template<typename T, typename S> S DecNumToStrS(T Val, S buf, UINT* Len=0)     
 {
  if(Val == 0){if(Len)*Len = 1; *buf = '0'; buf[1] = 0; return buf;}

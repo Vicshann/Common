@@ -882,6 +882,7 @@ template<typename T> static int _stdcall TResolveImportsForMod(LPSTR ImpModName,
       {	                                                         
        T Ord = Table[actr].Value & ~OMask;
        LOGMSG("Ordinal: %u",Ord);
+       if(!OldProt && !VirtualProtect(LtRVA,0x1000,PAGE_EXECUTE_READWRITE,&OldProt)){LOGMSG("VP failed: %u", GetLastError()); return -2;}  // TODO: IAT may span multiple pages
        LtRVA[actr].Value = (SIZE_T)TGetProcedureAddress<T>(ExpModase, (LPSTR)Ord);
       }
        else    // Have an import API name
@@ -904,7 +905,7 @@ template<typename T> static int _stdcall TResolveImportsForMod(LPSTR ImpModName,
            PAddr = TGetProcedureAddress<T>(ImpModBaseF, PNamePtr, &Forwarder);    // No more forwarding?
           }
 //         if(IsBadWritePtr(&LtRVA[actr].Value,sizeof(PVOID))){LOGMSG("Import table is not writable at %p !",&LtRVA[actr].Value); return -2;}      // Make optional?   // Avoid  IsBadReadPtr?
-         if(!OldProt && !VirtualProtect(LtRVA,0x1000,PAGE_EXECUTE_READWRITE,&OldProt)){LOGMSG("VP failed: %u", GetLastError()); return -2;}
+         if(!OldProt && !VirtualProtect(LtRVA,0x1000,PAGE_EXECUTE_READWRITE,&OldProt)){LOGMSG("VP failed: %u", GetLastError()); return -2;}   // TODO: IAT may span multiple pages
          LtRVA[actr].Value = (SIZE_T)PAddr;  
         }
      if(!LtRVA[actr].Value)return -3;  // Leaving OldProt unrestored is OK?

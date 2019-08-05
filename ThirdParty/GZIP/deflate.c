@@ -451,7 +451,8 @@ int ZEXPORT deflate (strm, flush)
 	(s->status == FINISH_STATE && flush != Z_FINISH)) {
         ERR_RETURN(strm, Z_STREAM_ERROR);
     }
-    if (strm->avail_out == 0) ERR_RETURN(strm, Z_BUF_ERROR);
+    if (strm->avail_out == 0)
+         ERR_RETURN(strm, Z_BUF_ERROR);
 
     s->strm = strm; /* just in case */
     old_flush = s->last_flush;

@@ -371,7 +371,7 @@ void Encrypt(unsigned char* in, unsigned char* out, size_t n)   // TODO: Padding
      memcpy(out, m_chain, BlockSize);        // Next Block will be XOR`ed with an encrypted previous one
     }  
   }
- else if(CFB == iMode) // CFB mode, using the Chain     // !!! NOT WORKING !!!
+ else if(CFB == iMode) // CFB mode, using the Chain     // Working?
   { 
    for(size_t i=0,e=n/BlockSize;i < e; i++, in += BlockSize, out += BlockSize)
     {
@@ -413,7 +413,7 @@ void Decrypt(unsigned char* in, unsigned char* out, size_t n)
         }   
       }
   }
- else if(CFB == iMode) // CFB mode, using the Chain, not using Decrypt()     // !!! NOT WORKING !!!
+ else if(CFB == iMode) // CFB mode, using the Chain, not using Decrypt()     // Working?
   {
    if(in == out)
     {

@@ -49,7 +49,7 @@ public:
   this->cAppend(str.c_str(), str.Length());
  }
 //----------------------
- void cAppend(const char* str, int Len)
+ void cAppend(const char* str, UINT Len)
  {
   DWORD Result;
   WriteFile(this->hFile,str,Len,&Result,NULL);
@@ -58,10 +58,10 @@ public:
 //----------------------
  void iAppend(const int val)
  {
-  int  len = 0;
+  UINT len = 0;
   char Tmpb[64];
-  DecNumToStrS(val, Tmpb, &len);
-  this->cAppend((LPSTR)&Tmpb,len);
+  char* res = DecNumToStrS(val, Tmpb, &len);
+  this->cAppend(res,len);
  }
 //----------------------
  LPSTR iAppend(const unsigned long val)

@@ -17,7 +17,7 @@
 //---------------------------------------------------------------------------
 // TODO: Preprocessor Flags to make it relocatable and static but with generated chars table to remove it from a binary  // And make MiniString optional
 
-class CBase64
+class CBase64          // TODO: Derive this from CAlphaCoder <type,alphabet>
 {
  static const char PaddChar  = '='; 
  static const int  CharsNum  = 64;
@@ -117,8 +117,14 @@ static int Decode(CMiniStr &str)
  CBase64::Initialize();
  int pos  = 0;
  int Padd = 0;
- int Size = (str.Length() - (str.Length() % 4)); // Is minimum = 4?
- if(Size < 4)return -1; // Too small for a Base64 message!
+ int Size = str.Length();  
+ int PExt = (Size % 4);
+ if(PExt)
+  {
+   str.SetLength(Size + (4-PExt));
+   PExt = (PExt-1)-3;     // 1,2,3 -> -3,-2,-1
+  }
+ if(Size < 4)return -1; // Too small for a Base64 message!  // TODO: Allow incomplete and unpadded segments
  for(int ctr = 0;ctr < Size;ctr+=4,pos+=3)
   {
    Padd = 0;
@@ -126,11 +132,11 @@ static int Decode(CMiniStr &str)
    BYTE ByteB = GetByteFromIndex(str[ctr+1],Padd);
    BYTE ByteC = GetByteFromIndex(str[ctr+2],Padd);
    BYTE ByteD = GetByteFromIndex(str[ctr+3],Padd);
-   str[pos+0] = (ByteA << 2) | ((ByteB & 0x30) >> 4);
-   str[pos+1] = ((ByteB & 0x0F) << 4) | ((ByteC & 0x3C) >> 2);
-   str[pos+2] = ((ByteC & 0x03) << 6) | ByteD;
+   str[pos+0] = (ByteA << 2) | ((ByteB & 0x30) >> 4);           // 2 chars make 1 complete byte
+   str[pos+1] = ((ByteB & 0x0F) << 4) | ((ByteC & 0x3C) >> 2);  // 3 chars make 2 complete bytes
+   str[pos+2] = ((ByteC & 0x03) << 6) | ByteD;                  // 4 chars make 3 complete bytes
   }
- pos += Padd;   //for(;pos > 0;pos--){if(str[pos-1]!=0)break;}
+ pos += Padd + PExt;   //for(;pos > 0;pos--){if(str[pos-1]!=0)break;}
  str.SetLength(pos);
  return pos;
 }

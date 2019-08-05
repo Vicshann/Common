@@ -81,6 +81,7 @@ public:
  CMiniStr Path;
 
 SOCKET GetSocket(void){return this->soc;}
+bool   IsConnected(void){return this->Connected;}   // TODO: Checks
 //------------------------------------------------------------------------------------------------------------
 bool  SetSocTimeout(UINT sec)
 {
@@ -160,6 +161,7 @@ int Connect(LPSTR Url, USHORT port, PCCERT_CONTEXT Cert=NULL)
   }
  if(this->Timeout)this->SetSocTimeout(this->Timeout);
  this->Connected = true;
+ LOGMSG("connected socket: %u",this->soc);
  return 0;
 }
 //------------------------------------------------------------------------------------------------------------
@@ -240,7 +242,7 @@ int ComposeRequest(ENetReqType Type, CMiniStr& Header, CMiniStr& Params, CMiniSt
  ResReq += " HTTP/1.1\r\n";
  ResReq += Header;
  ResReq += "\r\n";
- if(Type == rtPOST){ResReq += Params; ResReq += "\r\n";}
+ if((Type == rtPOST) && Params.Length()){ResReq += Params; if(Data.Length())ResReq += "\r\n";}  // Double "\r\n" if no params? // UPD: if(Type == rtPOST){ResReq += Params; ResReq += "\r\n";}  
  ResReq += Data;
  return 0;
 }
@@ -252,6 +254,11 @@ int SendRequest(CMiniStr& Req)
  return res;
 }
 //------------------------------------------------------------------------------------------------------------
+int DoRecv(PBYTE Data, UINT Size)
+{
+ return (UseHttps)?(this->SSoc.s_recv((char*)Data,Size)):(recv(this->soc,(char*)Data,Size,0));
+}
+//------------------------------------------------------------------------------------------------------------
 int GetResponse(CMiniStr& Rsp)
 {
  int   rpos   = 0;
@@ -260,7 +267,7 @@ int GetResponse(CMiniStr& Rsp)
  for(int RecvBlkLen=16384;(RecvBlkLen > 0);)
   {
    Rsp.SetLength(Total + RecvBlkLen);
-   int rval = (UseHttps)?(this->SSoc.s_recv((char*)&Rsp.c_data()[Total],RecvBlkLen)):(recv(this->soc,(char*)&Rsp.c_data()[Total],RecvBlkLen,0));     
+   int rval = this->DoRecv(&Rsp.c_data()[Total],RecvBlkLen);  // (UseHttps)?(this->SSoc.s_recv((char*)&Rsp.c_data()[Total],RecvBlkLen)):(recv(this->soc,(char*)&Rsp.c_data()[Total],RecvBlkLen,0));     
    if(!rval || (rval == SOCKET_ERROR))break;  // WSAETIMEDOUT == WSAGetLastError();
 /*   if(!Total)  // First Block
     {
@@ -275,7 +282,7 @@ int GetResponse(CMiniStr& Rsp)
  return Rsp.Length();
 }
 //------------------------------------------------------------------------------------------------------------
-int GetResponseContent(CMiniStr& Rsp, CMiniStr& Content, bool NeedOK=false)    // TODO: Decode Url encoded content?
+static int GetResponseContent(CMiniStr& Rsp, CMiniStr& Content, bool NeedOK=false)    // TODO: Decode Url encoded content?
 {
  Content.Clear();
  if((Rsp.Length() < 5) || (NSTR::CompareIC("HTTP/", Rsp.c_str()) >= 0)){Content = Rsp; return 1;}
@@ -323,6 +330,7 @@ int GetResponseContent(CMiniStr& Rsp, CMiniStr& Content, bool NeedOK=false)    /
 int Disconnect(void)
 {
  if(!this->Connected)return -1;
+ LOGMSG("disconnecting socket: %u",this->soc);
  closesocket(this->soc); 
  if(this->UseHttps)this->SSoc.Destroy();
  this->Connected = false;
@@ -369,11 +377,4 @@ static ULONG netServerDataExchange(SOCKET Soc, CMiniStr* Req, CMiniStr* Rsp, int
 
 };
 //===========================================================================================================
-
-
-
-
-
-
-//------------------------------------------------------------------------------------------------------------
 #endif

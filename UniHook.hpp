@@ -29,7 +29,7 @@
 #define APIWRAPPER(LibPathName,NameAPI) extern "C" _declspec(dllexport) void __cdecl NameAPI(PVOID ParA, PVOID ParB, PVOID ParC, PVOID ParD, PVOID ParE, PVOID ParF, PVOID ParG, PVOID ParH, PVOID ParIF, PVOID ParJ, PVOID ParK, PVOID ParL) \
 { \
  static void* Address; \
- if(!Address)Address = GetProcAddress(LoadLibrary(LibPathName),#NameAPI); \
+ if(!Address)Address = GetProcAddress((sizeof(*LibPathName)==2)?(LoadLibraryW((PWSTR)LibPathName)):(LoadLibraryA((LPSTR)LibPathName)),#NameAPI); \
  if(Address)((DWORD (__cdecl *)(...))(Address))(ParA, ParB, ParC, ParD, ParE, ParF, ParG, ParH, ParIF, ParJ, ParK, ParL); \
 }
 
@@ -39,7 +39,7 @@
 { \
  static void* Address; \
  DBGMSG("Name: %s",#NameAPI); \
- if(!Address)Address = GetProcAddress(LoadLibrary(LibPathName),#NameAPI); \
+ if(!Address)Address = GetProcAddress((sizeof(*LibPathName)==2)?(LoadLibraryW((PWSTR)LibPathName)):(LoadLibraryA((LPSTR)LibPathName)),#NameAPI); \
  __asm mov EAX, [Address] \
  __asm jmp EAX \
 }
@@ -61,10 +61,10 @@ _inline PVOID RelAddrToAddr(PVOID CmdAddr, DWORD CmdLen, long TgtOffset){return 
 //====================================================================================
 //
 //------------------------------------------------------------------------------------
-#define VHOOK(proc) SVftHook<decltype(proc), &proc>              
-template<typename T, void* HookProc> struct SVftHook      //  'T HProc' will crash the MSVC compiler!
+#define VHOOK(proc) SVftHook<&proc>       // SVftHook<decltype(proc), &proc>         
+template<auto HookProc> struct SVftHook      //  'T HProc' will crash the MSVC compiler!
 {
- T* OrigProc;
+ decltype(HookProc) OrigProc;  //T* OrigProc;
 
  void SetHook(void** ProcAddr)
   {
@@ -72,6 +72,34 @@ template<typename T, void* HookProc> struct SVftHook      //  'T HProc' will cra
    *ProcAddr = HookProc; 
   }
 };
+
+#define VHOOKEX(proc,idx) SVftHookEx<&proc, idx>  
+template<auto HookProc, int VftIdx> struct SVftHookEx      //  'T HProc' will crash the MSVC compiler!
+{
+ decltype(HookProc) OrigProc;
+ void** TargetVFT;
+
+ void SetHook(void* TgtThis)   // Class addr
+  {
+   if(this->TargetVFT == *(void***)TgtThis)return;  // Already hooked
+   this->TargetVFT = *(void***)TgtThis;
+   *(void**)&this->OrigProc = this->TargetVFT[VftIdx]; 
+   DWORD OldProt = 0;
+   VirtualProtect(&this->TargetVFT[VftIdx],sizeof(PVOID),PAGE_EXECUTE_READWRITE,&OldProt);  // TODO: Test if it is writable first
+   *(decltype(HookProc)*)&this->TargetVFT[VftIdx] = HookProc;
+   VirtualProtect(&this->TargetVFT[VftIdx],sizeof(PVOID),OldProt,&OldProt);     
+  }
+//------------------------
+ void Remove(void)
+  {
+   if(!this->TargetVFT)return;
+   DWORD OldProt = 0;
+   VirtualProtect(&this->TargetVFT[VftIdx],sizeof(PVOID),PAGE_EXECUTE_READWRITE,&OldProt);
+   *(decltype(HookProc)*)&this->TargetVFT[VftIdx] = this->OrigProc;
+   VirtualProtect(&this->TargetVFT[VftIdx],sizeof(PVOID),OldProt,&OldProt);     
+  }
+};
+
 //====================================================================================
 //                                   SProcHook<decltype(&proc), &proc>            <typename T, T HProc=0> struct SProcHook   
 //------------------------------------------------------------------------------------
@@ -196,17 +224,29 @@ bool SetHookIntr(PBYTE ProcAddr=NULL, UINT Flags=EHookFlg::hfFillNop|EHookFlg::h
   }
  if((dhde.opcode == 0xFF)&&(dhde.modrm == 0x25))    // jmp qword ptr [REL32] 
   {
-   PVOID  Addr = RelAddrToAddr(DisAddr,dhde.len,dhde.disp.disp32);           //   &DisAddr[(int)dhde.len + (int)dhde.disp.disp32];
-   PDWORD Carr = (PDWORD)&this->StolenCode[CodeLen];
-   Addr = *(PVOID*)Addr;
+   if(((int)TrLen - (int)this->HookLen) <= 0)     // Fits as a last only    // <<<<<<<<< !!!!!!!!!! 
+    {
+     PVOID  Addr = RelAddrToAddr(DisAddr,dhde.len,dhde.disp.disp32);           //   &DisAddr[(int)dhde.len + (int)dhde.disp.disp32];
+     PDWORD Carr = (PDWORD)&this->StolenCode[CodeLen];
+     Addr = *(PVOID*)Addr;
   // LOGMSG("jmp at %p to %p, disp32 = %08X, imm32 = %08X",DisAddr,Addr,dhde.disp.disp32,dhde.imm.imm32);
-   Carr[0]  = 0xF82444C7;	// mov [RSP-8], DWORD
-   Carr[2]  = 0xFC2444C7;	// mov [RSP-4], DWORD
-   Carr[4]  = 0xF82464FF;   // jmp [RSP-8] 
-   Carr[1]  = ((PDWORD)&Addr)[0];
-   Carr[3]  = ((PDWORD)&Addr)[1];
-   CodeLen += 20;
-   continue;
+     Carr[0]  = 0xF82444C7;	// mov [RSP-8], DWORD
+     Carr[2]  = 0xFC2444C7;	// mov [RSP-4], DWORD
+     Carr[4]  = 0xF82464FF;   // jmp [RSP-8] 
+     Carr[1]  = ((PDWORD)&Addr)[0];
+     Carr[3]  = ((PDWORD)&Addr)[1];
+     CodeLen += 20;
+     continue;
+    }
+     else   
+      {
+       PVOID  Addr = RelAddrToAddr(DisAddr,dhde.len,dhde.disp.disp32);
+       ProcAddr = DisAddr = *(PBYTE*)Addr;
+       dhde.len = 0;
+       this->HookLen = 0;
+       CodeLen  = 0;
+       continue;
+      }
   } 
 #else
  if(dhde.opcode == 0xE8) // call rel32     

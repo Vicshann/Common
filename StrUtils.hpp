@@ -25,7 +25,7 @@ namespace NSTR        // TODO: Goes to FRAMEWORK
 //
 template<typename T=wchar_t> union ChrOpNone {static const int Dir=1; static T DoOp(T val){return val;}};      
 template<typename T=wchar_t> union ChrOpSiLC {static const int Dir=0; static T DoOp(T val){return (((val >= 'A')&&(val <= 'Z'))?(val + 0x20):(val));}};  
-template<typename T=wchar_t> union ChrOpSiUC {static const int Dir=0; static T DoOp(T val){return (((val >= 'a')&&(val <= 'z'))?(val - 0x20):(val));}};    // TODO: Use taples(Optional)
+template<typename T=wchar_t> union ChrOpSiUC {static const int Dir=0; static T DoOp(T val){return (((val >= 'a')&&(val <= 'z'))?(val - 0x20):(val));}};    // TODO: Use tables(Optional)
 
 // Return: 0 if strings match
 //   UNRELIABLE !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!

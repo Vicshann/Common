@@ -5,7 +5,7 @@
 #pragma once
 
 #include <Windows.h>
-#include "MiniString.h"
+//#include "MiniString.h"
 
 
 //----------------------------------------------------------------------------

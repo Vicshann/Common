@@ -21,7 +21,7 @@ HANDLE hLogFile = INVALID_HANDLE_VALUE;
 HANDLE hConsOut = INVALID_HANDLE_VALUE;
 HANDLE hConsErr = INVALID_HANDLE_VALUE;
 
-BYTE   LogFilePath[MAX_PATH];	
+wchar_t   LogFilePath[MAX_PATH];	
 int    LogMode = lmNone;	
 void _cdecl DummyLogProc(LPSTR, UINT){}
 void (_cdecl *pLogProc)(LPSTR, UINT) = DummyLogProc;			   
@@ -95,6 +95,11 @@ extern "C" void* __cdecl calloc(size_t _Count, size_t _Size)
  return HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,_Size*_Count);
 }
 //---------------------------------------------------------------------------
+extern "C" void* __cdecl realloc(void* _Block, size_t _Size)
+{
+ return HeapReAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,_Block,_Size);
+}
+//---------------------------------------------------------------------------
 extern "C" void __cdecl free(void* _Block)
 {
  HeapFree(GetProcessHeap(),0,_Block);
@@ -135,6 +140,12 @@ void __cdecl operator delete[](void* p)
  HeapFree(GetProcessHeap(),0,p);
 }
 //---------------------------------------------------------------------------
+void __cdecl operator delete[](void* p, size_t n)
+{
+ HeapFree(GetProcessHeap(),0,p);
+}
+//---------------------------------------------------------------------------
+
 
 #ifndef NOMINIRTL 
 
@@ -353,9 +364,10 @@ void  _cdecl LogProc(char* ProcName, char* Message, ...)
    static void _cdecl DoLogFile(HANDLE none1, PVOID data, DWORD datalen, PDWORD none2, PVOID none3){pLogProc((LPSTR)data,datalen);}  
   };
 static CRITICAL_SECTION csec;
+
+ if(!LogMode)return;                          // || !Message || !*Message
  if(!csec.DebugInfo)InitializeCriticalSection(&csec);
 
- if(!LogMode/* || !Message || !*Message*/)return;
  int msglen;
  LPSTR MsgPtr;
  DWORD Result;
@@ -399,13 +411,13 @@ static CRITICAL_SECTION csec;
 	 MsgPtr = Message;
 	}
  EnterCriticalSection(&csec);
- if(LogMode & lmCons){if(hConsOut == INVALID_HANDLE_VALUE){hConsOut = GetStdHandle(STD_OUTPUT_HANDLE); SetConsoleTextAttribute(hConsOut,FOREGROUND_YELLOW);}}
+ if(LogMode & lmCons){if(hConsOut == INVALID_HANDLE_VALUE){hConsOut = GetStdHandle(STD_OUTPUT_HANDLE); SetConsoleTextAttribute(hConsOut,FOREGROUND_YELLOW);}}     // {if(!AttachConsole(-1) && (GetLastError() != ERROR_ACCESS_DENIED))AllocConsole();} 
  if(LogMode & lmSErr){if(hConsErr == INVALID_HANDLE_VALUE){hConsErr = GetStdHandle(STD_ERROR_HANDLE);}}
  if((LogMode & lmFile) && *LogFilePath)
   {
    if(hLogFile == INVALID_HANDLE_VALUE)
     {
-     hLogFile = CreateFile((LPSTR)&LogFilePath,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,((LogMode & lmFileUpd)?(OPEN_ALWAYS):(CREATE_ALWAYS)),FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL); 
+     hLogFile = CreateFileW(LogFilePath,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,((LogMode & lmFileUpd)?(OPEN_ALWAYS):(CREATE_ALWAYS)),FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL); 
      if(LogMode & lmFileUpd)SetFilePointer(hLogFile,0,NULL,FILE_END);
     }
   } 
@@ -441,7 +453,7 @@ static CRITICAL_SECTION csec;
     if((LogMode & lmFile)&&(hLogFile != INVALID_HANDLE_VALUE))WriteFile(hLogFile,"\r\n",2,&Result,NULL);
    }
  LeaveCriticalSection(&csec);
- va_end(args);
+ va_end(args);  
 }
 //---------------------------------------------------------------------------
 void _stdcall SetINIValueInt(LPSTR SectionName, LPSTR ValueName, int Value, LPSTR FileName)
@@ -561,7 +573,7 @@ SIZE_T _stdcall GetRealModuleSize(PVOID ModuleBase)
  return ModuleSize;
 }
 //---------------------------------------------------------------------------
-// Some pages of some system DLLs may be not mapped
+// Some pages of some system DLLs may not be mapped
 // TODO: Get rid of this function or at least rename it!
 ULONG_PTR _stdcall GetRealModuleSizeHardWay(ULONG_PTR ModuleBase)
 {
@@ -964,7 +976,7 @@ bool _stdcall IsMemSignatureMatch(PVOID Address, LPSTR Signature, UINT SigLen)
  for(;*Signature && !Value && (SigLen >= 2);Signature++,SigLen--) // Scan by Half byte
   {
    if(*Signature == ' ')continue;   // Skip spaces
-   if(*Signature == ':')return true;      // Start of a comments
+   if(*Signature == ':')return true;      // Start of comments
    if(*Signature == '*')            // *SkipNum*    
     {
      UINT Len = 0;

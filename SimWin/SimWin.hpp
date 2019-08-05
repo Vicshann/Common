@@ -25,6 +25,7 @@
 
 WM_SETFONT
 
+TODO: Event notify: local(The control only),Parent(Also a parent control), Form(Only an owning form(First control in hierarhy)), Global(All controls on the form(But not the form itself?))
 ------------------------------------------------------------------
 http://www.mctrl.org/about.php
 
@@ -93,7 +94,7 @@ SendMessage(s_hWndButton, WM_SETFONT, (WPARAM)s_hFont, (LPARAM)MAKELONG(TRUE, 0)
 enum EWNotify {wnChildren=1, wnDeepChld=2, wnDeepPrnt=4};
 enum EEdgeSnap {esLeft=1, esRight=2, esTop=4, esBottom=8};
 
-struct SWDim
+struct SWDim   // TODO: Rework to support anchoring
 {
  int PosX; 
  int PosY; 
@@ -149,12 +150,18 @@ bool IsDerivedFrom(const char* FromId)
  return true;
 }
 //------------------------------------------------------------------------------------------------------------
+HMODULE GetHInstance(void)
+{
+ if(!this->hOwnerMod)this->SetHInstance();
+ return this->hOwnerMod;
+}
+//------------------------------------------------------------------------------------------------------------
 void* operator new(size_t Size){return HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, Size);}
 void  operator delete(void* Ptr) { HeapFree(GetProcessHeap(), 0, Ptr); }
 //------------------------------------------------------------------------------------------------------------
 template<typename T> static void DeleteCtrl(T& pCtrl){auto Ptr=pCtrl; pCtrl=nullptr; delete(Ptr);}
 template<typename P, typename C> static void SetCallback(P& Ptr, C Callback){Ptr = static_cast<P>(Callback);}  
-template<class T, typename... Args> T* AddObj(Args&&... args)     // NOTE: copy of this method`s body is created for every instance!   // Move allocator for children to a separate proc and NEW to a controls themselves?
+template<class T, typename... Args> T* AddObj(Args&&... args)     // NOTE: copy of this method`s body is created for every instance!   // Move allocator for children to a separate proc and NEW to a controls themselves?          //TODO: Order of visual objects affects their TabStop?
 {
  T* Ctrl = new T();
  Ctrl->OwnerObj  = this;            // Must be done BEFORE call to 'create' method   
@@ -186,6 +193,7 @@ virtual ~CObjBase()
 class CWndBase: public CObjBase     
 {
 protected:
+ bool       bClosed     = false;
  HWND       hWindow     = nullptr;   // Handle to this window control
  ATOM       WndClass    = 0;         // NULL for a system windows
  WNDPROC    OrigWndProc = DefWindowProcA;
@@ -276,6 +284,7 @@ void NotifyParents(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam, UINT Notif
 //------------------------------------------------------------------------------------------------------------  enum EWNotify {wnChildren=1, wnDeepChld=2, wnDeepPrnt=4};
 
 public:
+ void (_fastcall CWndBase::*OnClose)(CWndBase* Sender) = nullptr; 
  void (_fastcall CWndBase::*OnPaint)(CWndBase* Sender) = nullptr; 
  void (_fastcall CWndBase::*OnResize)(CWndBase* Sender, UINT Type, WORD Width, WORD Height) = nullptr; 
  void (_fastcall CWndBase::*OnMouseBtnDn)(CWndBase* Sender, WORD EvtKey, WORD KeyState, int x, int y) = nullptr;
@@ -316,6 +325,7 @@ UINT ChildWindowsCount(void)
  return 0;
 }
 //------------------------------------------------------------------------------------------------------------
+bool IsClosed(void){return IsWindow(this->hWindow);}
 HWND GetHandle(void){return this->hWindow;}
 HWND GetOwnerHandle(void){return (this->OwnerObj)?(((CWndBase*)this->OwnerObj)->hWindow):(NULL);}
 //------------------------------------------------------------------------------------------------------------
@@ -327,9 +337,22 @@ virtual ~CWndBase()    // A thread cannot use DestroyWindow to destroy a window 
 //------------------------------------------------------------------------------------------------------------
 virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, LRESULT& lResult)      // Returns TRUE if the message processed
 {
+ switch(Msg)
+ {
+   case WM_CLOSE:
+     if(this->OnClose)(this->*OnClose)(this);   // If called after CallWindowProcA then all children controls are already destroyed and it is impossible to read anything from them in OnClose handler  
+     break;
+//  case WM_SETCURSOR:
+//    break;
+ }
+
  lResult = CallWindowProcA(this->OrigWndProc, hWnd, Msg, wParam, lParam);   // Process on original WindowProc
  switch(Msg)
   {
+//   case WM_CLOSE:
+//     if(this->OnClose)(this->*OnClose)(this);     
+//     break;
+
    case WM_VSCROLL:  // Hello! We need these in a child control handler, not here!
    case WM_HSCROLL:
     if(lParam)       // Pass it down to a child Scroll Bar    // TODO: Pass other scroll bar messages back to it
@@ -379,6 +402,36 @@ virtual void  SetFont(HFONT Font, bool Redraw=false){SendMessageA(this->hWindow,
 //------------------------------------------------------------------------------------------------------------
 virtual BOOL  Show(bool Show){return ShowWindow(this->hWindow, (Show)?(SW_SHOW):(SW_HIDE));}
 //------------------------------------------------------------------------------------------------------------
+/*virtual HCURSOR SetCursor(HCURSOR cur)
+{
+ HCURSOR res = (HCURSOR)SetClassLongPtrW(this->hWindow,GCLP_HCURSOR,(LONG_PTR)cur);   // No effect and a bad idea to to it globally
+ SendMessageW(this->hWindow, WM_SETCURSOR, 0, (LPARAM)cur);
+ return res;
+} */
+//------------------------------------------------------------------------------------------------------------
+int GetTextLen(void)
+{       
+ return SendMessageA(this->GetHandle(),WM_GETTEXTLENGTH,0,0);
+}
+//------------------------------------------------------------------------------------------------------------
+template<typename T> int SetText(T Str)
+{
+ if(sizeof(*Str) == sizeof(wchar_t))return SendMessageW(this->GetHandle(),WM_SETTEXT,0,(LPARAM)Str);
+  else if(sizeof(*Str) == sizeof(char))return SendMessageA(this->GetHandle(),WM_SETTEXT,0,(LPARAM)Str);
+ return -9;
+}
+//------------------------------------------------------------------------------------------------------------
+template<typename T> int GetText(T Buffer, UINT Size)              // Size is in chars
+{
+ LRESULT len = this->GetTextLen();
+ if(len <= 0){*Buffer=0; return 0;}
+ if(len > Size)len = len;
+ if(sizeof(*Buffer) == sizeof(wchar_t))return SendMessageW(this->GetHandle(),WM_GETTEXT,len+1,(LPARAM)Buffer);    // No need for specialization because it will still fail if you pass a wrong buffer type 
+  else if(sizeof(*Buffer) == sizeof(char))return SendMessageA(this->GetHandle(),WM_GETTEXT,len+1,(LPARAM)Buffer);
+ return -1;
+}
+//------------------------------------------------------------------------------------------------------------
+
 };
 //==========================================================================================================================
 //                                               WINDOW FORM CLASS
@@ -393,7 +446,7 @@ public:
 //------------------------------------------------------------------------------------------------------------
 CWndForm(void){ }
 //------------------------------------------------------------------------------------------------------------
-int Create(LPCSTR WndName, SWDim& Wdim, HWND hParentWnd, DWORD Style, DWORD ExStyle, HBRUSH hBgrBrush=GetSysColorBrush(COLOR_BTNFACE))
+int Create(LPCSTR WndName, SWDim& Wdim, HWND hParentWnd, DWORD Style, DWORD ExStyle, HICON hWndIcon=LoadIconA(NULL, IDI_APPLICATION), HBRUSH hBgrBrush=GetSysColorBrush(COLOR_BTNFACE))
 {
  WNDCLASSEX wcls; 
  char WCName[256];
@@ -408,8 +461,8 @@ int Create(LPCSTR WndName, SWDim& Wdim, HWND hParentWnd, DWORD Style, DWORD ExSt
    wcls.cbClsExtra    = sizeof(PVOID);   // To store DefWindowProc
    wcls.cbWndExtra    = 0;
    wcls.hInstance     = this->hOwnerMod; 
-   wcls.hIcon         = LoadIcon(NULL, IDI_APPLICATION);                 
-   wcls.hCursor       = LoadCursor(0, (LPCSTR)IDC_ARROW);
+   wcls.hIcon         = hWndIcon;                 
+   wcls.hCursor       = LoadCursorA(0, (LPCSTR)IDC_ARROW);
    wcls.hbrBackground = hBgrBrush;//GetSysColorBrush(COLOR_BTNFACE); // (HBRUSH)(COLOR_BACKGROUND+1);  
    wcls.lpszClassName = (LPSTR)&WCName;
    wcls.lpszMenuName  = 0;
@@ -511,27 +564,92 @@ virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, L
 //------------------------------------------------------------------------------------------------------------
 
 };
+
+//==========================================================================================================================
+//                                                STATIC TEXT CLASS
+//==========================================================================================================================
+/*
+ Styles:
+   ES_PASSWORD
+   ES_READONLY
+*/
+class CSWStatic: public CCldBase
+{            
+public:
+CSWStatic(void){ }
+//------------------------------------------------------------------------------------------------------------
+int Create(LPCSTR EdText, SWDim& Wdim, DWORD Style, DWORD ExStyle)
+{        
+ if(!this->SuperClassSysCtrl("STATIC", "CSWStatic"))return -1;
+ return (this->CreateWnd((LPCSTR)this->WndClass, EdText, Style|WS_CHILD, ExStyle, Wdim.PosX, Wdim.PosY, Wdim.Width, Wdim.Height, NULL))?(0):(-2);    // WS_EX_CLIENTEDGE  WS_EX_WINDOWEDGE
+}
+//------------------------------------------------------------------------------------------------------------
+/*virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, LRESULT& lResult)
+{  
+ if(WM_CTLCOLORSTATIC == Msg)
+  {
+   Sleep(1);
+  }
+ CCldBase::WindowProc(hWnd, Msg, wParam, lParam, lResult);   
+// LRESULT Result = 0;
+// bool    NoOrig = false;
+ switch(Msg)
+  {
+ //  case WM_CHAR:
+//    if(this->OnMouseBtnUp)(this->GetOwnerWnd()->*OnMouseBtnUp)(this, Msg, wParam, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+//    Sleep(1);
+ //   break;
+  } 
+// if(NoOrig)return Result;        
+ return true;
+} */
+//------------------------------------------------------------------------------------------------------------
+
+};
 //==========================================================================================================================
 //                                                  EDIT CLASS
 //==========================================================================================================================
+// https://docs.microsoft.com/en-us/windows/win32/controls/edit-controls-text-operations
+/*
+ Styles:
+   ES_PASSWORD
+   ES_READONLY
+*/
 class CSWEdit: public CCldBase
-{
+{            
 public:
 CSWEdit(void){ }
 //------------------------------------------------------------------------------------------------------------
-int Create(LPCSTR EdText, SWDim& Wdim, bool Passw=false)
-{
- DWORD Style = 0;           
- if(Passw)Style |= ES_PASSWORD;
+int Create(LPCSTR EdText, SWDim& Wdim, DWORD Style, DWORD ExStyle)
+{        
  if(!this->SuperClassSysCtrl("EDIT", "CSWEdit"))return -1;
- return (this->CreateWnd((LPCSTR)this->WndClass, EdText, Style|WS_CHILD, 0, Wdim.PosX, Wdim.PosY, Wdim.Width, Wdim.Height, NULL))?(0):(-2);
+ return (this->CreateWnd((LPCSTR)this->WndClass, EdText, Style|WS_CHILD, ExStyle, Wdim.PosX, Wdim.PosY, Wdim.Width, Wdim.Height, NULL))?(0):(-2);    // WS_EX_CLIENTEDGE  WS_EX_WINDOWEDGE
 }
 //------------------------------------------------------------------------------------------------------------
+virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, LRESULT& lResult)
+{  
+ CCldBase::WindowProc(hWnd, Msg, wParam, lParam, lResult);   
+// LRESULT Result = 0;
+// bool    NoOrig = false;
+ switch(Msg)
+  {
+   case WM_CHAR:
+//    if(this->OnMouseBtnUp)(this->GetOwnerWnd()->*OnMouseBtnUp)(this, Msg, wParam, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+    Sleep(1);
+    break;
+  } 
+// if(NoOrig)return Result;        
+ return true;
+}
+//------------------------------------------------------------------------------------------------------------
+
+
 };
 //==========================================================================================================================
 //                                                 BUTTON CLASS
 //==========================================================================================================================
-class CSWButton: public CCldBase
+// https://docs.microsoft.com/en-us/windows/win32/controls/button-messages          // See redirection from parent
+class CSWButton: public CCldBase     // Todo: Separaate Styles
 {
 public:
 // bool (_fastcall CWndBase::*OnMouseBtnUp)(CWndBase* Sender, LRESULT* Result, WORD WMsg, WORD KeyEx, int x, int y);    // If a callback returns true then no need to pass this message next to original WindowProc
@@ -539,11 +657,11 @@ public:
 
 CSWButton(void){ }
 //------------------------------------------------------------------------------------------------------------
-int Create(LPCSTR BtnName, SWDim& Wdim)  // Separate from constructor to allow some additional configuration
+int Create(LPCSTR BtnName, SWDim& Wdim, DWORD Style, DWORD ExStyle)  // Separate from constructor to allow some additional configuration
 { 
- DWORD Style = WS_CHILD|BS_CENTER|BS_DEFPUSHBUTTON; 
+// DWORD Style = WS_CHILD|BS_CENTER|BS_DEFPUSHBUTTON; 
  if(!this->SuperClassSysCtrl("BUTTON", "CSWButton"))return -1;
- return (this->CreateWnd((LPCSTR)this->WndClass, BtnName, Style, 0, Wdim.PosX, Wdim.PosY, Wdim.Width, Wdim.Height, 0))?(0):(-2);
+ return (this->CreateWnd((LPCSTR)this->WndClass, BtnName, Style|WS_CHILD, ExStyle, Wdim.PosX, Wdim.PosY, Wdim.Width, Wdim.Height, 0))?(0):(-2);
 }
 //------------------------------------------------------------------------------------------------------------
 virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, LRESULT& lResult)
@@ -563,6 +681,28 @@ virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, L
  return true;
 }
 //------------------------------------------------------------------------------------------------------------
+int GetChecked(void)
+{
+ int res = SendMessageA(this->GetHandle(),BM_GETCHECK,0,0);
+ if(res == BST_CHECKED)return 1;
+ if(res == BST_UNCHECKED)return 0;
+ return -1;
+}
+//------------------------------------------------------------------------------------------------------------
+int GetState(void)
+{
+ return SendMessageA(this->GetHandle(),BM_GETSTATE,0,0);
+}
+//------------------------------------------------------------------------------------------------------------
+void SetChecked(int Chk)
+{
+ int Val = BST_INDETERMINATE;
+ if(Chk > 0)Val = BST_CHECKED;
+  else if(Chk == 0)Val = BST_UNCHECKED;
+ SendMessageA(this->GetHandle(),BM_SETCHECK,Val,0);
+}
+//------------------------------------------------------------------------------------------------------------
+
 };
 //==========================================================================================================================
 //                                               SCROLL BAR CLASS
@@ -706,6 +846,8 @@ int GetPos(void)
 
 };
 //==========================================================================================================================
+//                                                 COMBO BOX CLASS
+//==========================================================================================================================
 /*
 CBS_SIMPLE: 	Displays the list at all times, and shows the selected item in an edit control.
 CBS_DROPDOWN: 	Displays the list when the icon is clicked, and shows the selected item in an edit control.
@@ -718,10 +860,10 @@ public:
 
 CSWComboBox(void){ }
 //------------------------------------------------------------------------------------------------------------
-int Create(LPCSTR Text, SWDim& Wdim, DWORD Style)  // Separate from constructor to allow some additional configuration
+int Create(LPCSTR Text, SWDim& Wdim, DWORD Style, DWORD ExStyle)  // Separate from constructor to allow some additional configuration
 {                     
- if(!this->SuperClassSysCtrl("ComboBox", "CSWButton"))return -1;
- return (this->CreateWnd((LPCSTR)this->WndClass, Text, Style|WS_CHILD, 0, Wdim.PosX, Wdim.PosY, Wdim.Width, Wdim.Height, 0))?(0):(-2);
+ if(!this->SuperClassSysCtrl("ComboBox", "CSWComboBox"))return -1;
+ return (this->CreateWnd((LPCSTR)this->WndClass, Text, Style|WS_CHILD, ExStyle, Wdim.PosX, Wdim.PosY, Wdim.Width, Wdim.Height, 0))?(0):(-2);
 }           
 //------------------------------------------------------------------------------------------------------------
 virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, LRESULT& lResult)    // No Effect!!!!!!!!!
@@ -731,7 +873,7 @@ virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, L
    case WM_KEYDOWN:
  //  case WM_RBUTTONUP:
  //  case WM_MBUTTONUP:
-     Sleep(1);// if(this->OnMouseBtnUp)(this->GetOwnerWnd()->*OnMouseBtnUp)(this, Msg, wParam, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+//     Sleep(1);// if(this->OnMouseBtnUp)(this->GetOwnerWnd()->*OnMouseBtnUp)(this, Msg, wParam, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
     break;
   } 
  
@@ -743,13 +885,65 @@ virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, L
    case WM_KEYDOWN:
  //  case WM_RBUTTONUP:
  //  case WM_MBUTTONUP:
-     Sleep(1);// if(this->OnMouseBtnUp)(this->GetOwnerWnd()->*OnMouseBtnUp)(this, Msg, wParam, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+ //    Sleep(1);// if(this->OnMouseBtnUp)(this->GetOwnerWnd()->*OnMouseBtnUp)(this, Msg, wParam, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
     break;
   } 
 // if(NoOrig)return Result;        
  return true;
 }
 //------------------------------------------------------------------------------------------------------------
+};
+//==========================================================================================================================
+//                                          DATE TIME PICKER CLASS
+//==========================================================================================================================
+class CSWDTPicker: public CCldBase
+{
+public:
+// void (_fastcall CWndBase::*OnMouseBtnUp)(CWndBase* Sender, WORD WMsg, WORD KeyEx, int x, int y) = nullptr;    // If a callback returns true then no need to pass this message next to original WindowProc
+
+CSWDTPicker(void){ }
+//------------------------------------------------------------------------------------------------------------
+int Create(LPCSTR Text, SWDim& Wdim, DWORD Style, DWORD ExStyle)  // Separate from constructor to allow some additional configuration
+{                     
+ if(!this->SuperClassSysCtrl("SysDateTimePick32", "CSWDTPicker"))return -1;
+ return (this->CreateWnd((LPCSTR)this->WndClass, Text, Style|WS_CHILD, ExStyle, Wdim.PosX, Wdim.PosY, Wdim.Width, Wdim.Height, 0))?(0):(-2);
+}           
+//------------------------------------------------------------------------------------------------------------
+/*virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, LRESULT& lResult)    // No Effect!!!!!!!!!
+{ 
+ switch(Msg)
+  {
+   case WM_KEYDOWN:
+ //  case WM_RBUTTONUP:
+ //  case WM_MBUTTONUP:
+//     Sleep(1);// if(this->OnMouseBtnUp)(this->GetOwnerWnd()->*OnMouseBtnUp)(this, Msg, wParam, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+    break;
+  } 
+ 
+ CCldBase::WindowProc(hWnd, Msg, wParam, lParam, lResult);   
+// LRESULT Result = 0;
+// bool    NoOrig = false;
+ switch(Msg)
+  {
+   case WM_KEYDOWN:
+ //  case WM_RBUTTONUP:
+ //  case WM_MBUTTONUP:
+ //    Sleep(1);// if(this->OnMouseBtnUp)(this->GetOwnerWnd()->*OnMouseBtnUp)(this, Msg, wParam, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+    break;
+  } 
+// if(NoOrig)return Result;        
+ return true;
+}  */
+//------------------------------------------------------------------------------------------------------------
+int GetSysTime(SYSTEMTIME* stime)
+{
+ int res = SendMessageA(this->GetHandle(),DTM_GETSYSTEMTIME,0,(LPARAM)stime);
+ if(GDT_VALID == res)return 1;
+ if(GDT_NONE == res)return 0;
+ return -1;
+}
+//------------------------------------------------------------------------------------------------------------
+
 };
 //==========================================================================================================================
 
