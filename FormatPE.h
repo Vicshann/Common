@@ -1,12 +1,26 @@
 
-
 #pragma once
+
+/*
+  Copyright (c) 2018 Victor Sheinmann, Vicshann@gmail.com
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), 
+  to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, 
+  and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, 
+  WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. 
+*/
+
+//#ifndef FormatPEH
+//#define FormatPEH
 
 #include <intrin.h>
 #include "ntdll.h"
 
-//#ifndef FormatPEH
-//#define FormatPEH
 
 #pragma warning(push)
 #pragma warning(disable:4200)     // Overflow in a key transformation is expected
@@ -143,7 +157,8 @@ struct FILE_HEADER
 template<typename T> struct OPTIONAL_HEADER
 {
  WORD  Magic;           // 0107-ROM projection;010B-Normal projection   0x18
- WORD  LinkerVer;       // Linker version number                        0x1A
+ BYTE  MajLinkerVer;    // Linker version number                        0x1A
+ BYTE  MinLinkerVer;    // Linker version number                        0x1B
  DWORD CodeSize;        // Sum of sizes all code sections(ordinary one) 0x1C
  DWORD InitDataSize;    // Size of the initialized data                 0x20
  DWORD UnInitDataSize;  // Size of the uninitialized data section (BSS) 0x24
@@ -160,9 +175,12 @@ template<typename T> struct OPTIONAL_HEADER
   };
  DWORD SectionAlign;    // Alignment of sections when loaded into mem   0x38
  DWORD FileAlign;       // Align. of sections in file(mul of 512 bytes) 0x3C
- DWORD OperSystemVer;   // Version number of required OS                0x40
- DWORD ImageVersion;    // Version number of image                      0x44
- DWORD SubSystemVer;    // Version number of subsystem                  0x48
+ WORD  MajOperSysVer;   // Version number of required OS                0x40
+ WORD  MinOperSysVer;   // Version number of required OS                0x42
+ WORD  MajImageVer;     // Version number of image                      0x44
+ WORD  MinImageVer;     // Version number of image                      0x46
+ WORD  MajSubSysVer;    // Version number of subsystem                  0x48
+ WORD  MinSubSysVer;    // Version number of subsystem                  0x4A
  DWORD Win32Version;    // Dunno! But I guess for future use.           0x4C
  DWORD SizeOfImage;     // Total size of the PE image in memory         0x50
  DWORD SizeOfHeaders;   // Size of all headers & section table          0x54
@@ -210,16 +228,16 @@ struct IMPORT_DESC
 //---------------------------------------------------------------------------
 struct SECTION_HEADER
 {
- char  SectionName[8];
- DWORD VirtualSize;
- DWORD SectionRva;
- DWORD PhysicalSize;
- DWORD PhysicalOffset;
- DWORD PtrToRelocations;
- DWORD PtrToLineNumbers;
- WORD  NumOfRelocations;
- WORD  NumOfLineNumbers;
- DWORD Characteristics;
+ char  SectionName[8];        // 00
+ DWORD VirtualSize;           // 08
+ DWORD SectionRva;            // 0C
+ DWORD PhysicalSize;          // 10
+ DWORD PhysicalOffset;        // 14
+ DWORD PtrToRelocations;      // 18
+ DWORD PtrToLineNumbers;      // 1C
+ WORD  NumOfRelocations;      // 20
+ WORD  NumOfLineNumbers;      // 22
+ DWORD Characteristics;       // 24
 };
 //---------------------------------------------------------------------------
 struct DEBUG_DIR
@@ -396,6 +414,31 @@ static UINT _stdcall RvaToFileOffsConvert(PVOID ModuleBase, UINT Rva)
  return TRvaToFileOffset<PETYPE32>((PBYTE)ModuleBase, Rva);
 }
 //---------------------------------------------------------------------------
+template<typename T> static UINT _stdcall TFileOffsetToRva(PBYTE ModuleBase, UINT Offset)
+{
+ DOS_HEADER     *DosHdr = (DOS_HEADER*)ModuleBase;
+ WIN_HEADER<T>  *WinHdr = (WIN_HEADER<T>*)&ModuleBase[DosHdr->OffsetHeaderPE];
+ UINT            HdrLen = DosHdr->OffsetHeaderPE+WinHdr->FileHeader.HeaderSizeNT+sizeof(FILE_HEADER)+sizeof(DWORD);
+ SECTION_HEADER *CurSec = (SECTION_HEADER*)&ModuleBase[HdrLen];
+ for(int ctr = 0;ctr < WinHdr->FileHeader.SectionsNumber;ctr++,CurSec++)
+  {
+   if((Offset >= CurSec->PhysicalOffset)&&(Offset < (CurSec->PhysicalOffset+CurSec->PhysicalSize)))
+	{
+	 return ((Offset-CurSec->PhysicalOffset)+CurSec->SectionRva);
+	}
+  }
+ return 0;
+}
+//---------------------------------------------------------------------------
+static UINT _stdcall FileOffsetToRvaConvert(PVOID ModuleBase, UINT Offset)
+{           
+ if(!IsValidPEHeader(ModuleBase))return 0;
+ if(IsValidModuleX64(ModuleBase))return TFileOffsetToRva<PETYPE64>((PBYTE)ModuleBase, Offset);
+ return TFileOffsetToRva<PETYPE32>((PBYTE)ModuleBase, Offset);
+}
+//---------------------------------------------------------------------------
+
+
 static PWSTR _stdcall FindVerValue(VERSION_INFO* RootBlk, PWSTR Name, UINT Type)
 {
  //if(RootBlk->ValueLength && ((Type == (UINT)-1)||(Type == RootBlk->Type)) && (lstrcmpW((PWSTR)&RootBlk->Key,Name)==0)return (PWSTR)&RootBlk->Key;
@@ -600,7 +643,6 @@ static BOOL _stdcall IsNamesEqualIC(CHAR *NameA, CHAR *NameB)
  return TRUE;
 }
 //------------------------------------------------------------------------------
-
 template<typename T> static bool _stdcall TGetModuleSection(PVOID ModuleBase, CHAR *SecName, SECTION_HEADER **ResSec)
 {
  DOS_HEADER     *DosHdr = (DOS_HEADER*)ModuleBase;
@@ -617,6 +659,34 @@ template<typename T> static bool _stdcall TGetModuleSection(PVOID ModuleBase, CH
     }
   }
  return false;
+}
+//---------------------------------------------------------------------------
+template<typename T> static UINT _stdcall TCalcRawModuleSize(PVOID ModuleBase)
+{
+ DOS_HEADER     *DosHdr = (DOS_HEADER*)ModuleBase;
+ WIN_HEADER<T>  *WinHdr = (WIN_HEADER<T>*)&((PBYTE)ModuleBase)[DosHdr->OffsetHeaderPE];
+ UINT            HdrLen = DosHdr->OffsetHeaderPE+WinHdr->FileHeader.HeaderSizeNT+sizeof(FILE_HEADER)+sizeof(DWORD);
+ SECTION_HEADER *CurSec = (SECTION_HEADER*)&((BYTE*)ModuleBase)[HdrLen];
+ if(!WinHdr->FileHeader.SectionsNumber)return WinHdr->OptionalHeader.SizeOfHeaders + WinHdr->OptionalHeader.CodeSize + WinHdr->OptionalHeader.InitDataSize + WinHdr->OptionalHeader.UnInitDataSize;
+ SECTION_HEADER *LstSec = CurSec;
+ for(UINT ctr = 0;ctr < WinHdr->FileHeader.SectionsNumber;ctr++,CurSec++)
+  {
+   if(CurSec->PhysicalOffset > LstSec->PhysicalOffset)LstSec = CurSec; 
+  }
+ return LstSec->PhysicalOffset + LstSec->PhysicalSize;
+}
+//---------------------------------------------------------------------------
+static bool _stdcall GetModuleSizes(PBYTE ModuleBase, UINT* RawSize, UINT* VirSize)
+{
+ DOS_HEADER     *DosHdr = (DOS_HEADER*)ModuleBase;
+ WIN_HEADER<PECURRENT> *WinHdr = (WIN_HEADER<PECURRENT>*)&((PBYTE)ModuleBase)[DosHdr->OffsetHeaderPE];
+ if(VirSize)*VirSize = WinHdr->OptionalHeader.SizeOfImage;     
+ if(RawSize)   
+  {
+   if(IsValidModuleX64(ModuleBase))*RawSize = TCalcRawModuleSize<PETYPE64>(ModuleBase);
+     else *RawSize = TCalcRawModuleSize<PETYPE32>(ModuleBase);
+  }
+ return true;
 }
 //---------------------------------------------------------------------------
 // Works with a Mapped in memory or a Raw file
@@ -731,7 +801,7 @@ static PVOID _stdcall ResolveImportRecord(PVOID ModuleBase, SImportRec* IRec)
  return TResolveImportRecord<PETYPE32>(ModuleBase,IRec);
 }
 //---------------------------------------------------------------------------
-template<typename T, bool Raw=false> static PVOID _stdcall TGetProcedureAddress(PBYTE ModuleBase, LPSTR ProcName, LPSTR* Forwarder=NULL, PVOID* ProcEntry=NULL)  // No forwarding support, no ordinals
+template<typename T, bool Raw=false> _declspec(noinline) static PVOID _stdcall TGetProcedureAddress(PBYTE ModuleBase, LPSTR ProcName, LPSTR* Forwarder=NULL, PVOID* ProcEntry=NULL)  // No forwarding support, no ordinals
 {
  DOS_HEADER* DosHdr        = (DOS_HEADER*)ModuleBase;
  WIN_HEADER<T>* WinHdr     = (WIN_HEADER<T>*)&ModuleBase[DosHdr->OffsetHeaderPE];
@@ -925,7 +995,7 @@ template<typename T> static int _stdcall TResolveImports(PBYTE ModuleBase, PVOID
  WIN_HEADER<T>  *WinHdr = (WIN_HEADER<T>*)&((PBYTE)ModuleBase)[DosHdr->OffsetHeaderPE];
  UINT            HdrLen = DosHdr->OffsetHeaderPE+WinHdr->FileHeader.HeaderSizeNT+sizeof(FILE_HEADER)+sizeof(DWORD);
  DATA_DIRECTORY *ImportDir = &WinHdr->OptionalHeader.DataDirectories.ImportTable;
- if(!ImportDir->DirectoryRVA)return -1;
+ if(!ImportDir->DirectoryRVA)return 1;     // Not Present
  IMPORT_DESC *Import = (IMPORT_DESC*)&ModuleBase[ImportDir->DirectoryRVA];
  T OMask = ((T)1 << ((sizeof(T)*8)-1));
  for(DWORD tctr=0;Import[tctr].AddressTabRVA;tctr++)
@@ -936,7 +1006,7 @@ template<typename T> static int _stdcall TResolveImports(PBYTE ModuleBase, PVOID
    PBYTE ImpModBase;
    if(Flags & fmOwnLDib)ImpModBase = NULL;  // TODO: Own Load library (Hidden)
     else if(pLdrLoadDll)ImpModBase = (PBYTE)LLLoadLibrary(MNamePtr, pLdrLoadDll);
-   if(!ImpModBase)return -2;                // No logging in case of self import resolving
+   if(!ImpModBase)return -1;                // No logging in case of self import resolving
    SImportThunk<T>* Table = (SImportThunk<T>*)&ModuleBase[Import[tctr].LookUpTabRVA];
    SImportThunk<T>* LtRVA = (SImportThunk<T>*)&ModuleBase[Import[tctr].AddressTabRVA];
    for(DWORD actr=0;Table[actr].Value;actr++)
@@ -963,7 +1033,7 @@ template<typename T> static int _stdcall TResolveImports(PBYTE ModuleBase, PVOID
            if(!OutProcName[0])PNamePtr = (LPSTR)Ord;
              else PNamePtr = (LPSTR)&OutProcName;
            PBYTE ImpModBaseF = (PBYTE)LLLoadLibrary((LPSTR)&OutDllName, pLdrLoadDll);
-           if(!ImpModBaseF)return -4;
+           if(!ImpModBaseF)return -2;
            PAddr = TGetProcedureAddress<T>(ImpModBaseF, PNamePtr, &Forwarder);    // No more forwarding?
           }
          LtRVA[actr].Value = (SIZE_T)PAddr;        
@@ -1078,8 +1148,7 @@ template<typename T> static int _stdcall TCryptSensitiveParts(PBYTE ModuleBase, 
 //---------------------------------------------------------------------------
 __declspec(noinline) static PBYTE RetAddrProc(void) {return (PBYTE)_ReturnAddress();}   // Helps to avoid problems with inlining of functions, called from a thread`s EP (Or we may get address in ntdll.dll instead of our module)
 
-// Returns module`s entry point 
-template<typename T> __declspec(noinline) static PVOID _stdcall TFixUpModuleInplace(PBYTE ModuleBase, PVOID pNtDll, UINT Flags=0, UINT* pRetFix=NULL)   // Buffer at ModuleBase must be large enough to contain all sections
+template<typename T> __declspec(noinline) static int _stdcall TFixUpModuleInplace(PBYTE ModuleBase, PVOID pNtDll, UINT& Flags, UINT* pRetFix=NULL)   // Buffer at ModuleBase must be large enough to contain all sections
 {
  if(!ModuleBase)    // Will move Self if Base is not specified
   {
@@ -1121,7 +1190,7 @@ template<typename T> __declspec(noinline) static PVOID _stdcall TFixUpModuleInpl
  if((Flags & fmEncKeyMsk) && (Flags & (fmCryHdr|fmCryImp|fmCryExp|fmCryRes)))
   {
    TCryptSensitiveParts<T>(ModuleBase, Flags, (Flags & fmFixSec));   // fmFixSec == Raw module?
-   if(ModuleBase[1] != 'Z')return NULL;      // Invalid
+   if(ModuleBase[1] != 'Z')return -1;        // Invalid
    if(*ModuleBase != 'M')*ModuleBase = 'M';  // May be invalidated on purpose 
   }
  WIN_HEADER<T>  *WinHdr = (WIN_HEADER<T>*)&((PBYTE)ModuleBase)[DosHdr->OffsetHeaderPE];
@@ -1130,13 +1199,19 @@ template<typename T> __declspec(noinline) static PVOID _stdcall TFixUpModuleInpl
   {
    UINT SecArrOffs = DosHdr->OffsetHeaderPE+WinHdr->FileHeader.HeaderSizeNT+sizeof(FILE_HEADER)+sizeof(DWORD);
    UINT SecsNum    = WinHdr->FileHeader.SectionsNumber;
+   if(!(Flags & fmSelfMov))   // Check if this code is inside of this PE image to move
+    {
+     PBYTE ThisProcAddr = RetAddrProc();  
+     SIZE_T RawSize = TCalcRawModuleSize<T>(ModuleBase);
+     if((ThisProcAddr >= ModuleBase)&&(ThisProcAddr < &ModuleBase[RawSize]))Flags |= fmSelfMov;    // Inside
+    }
    if(Flags & fmSelfMov)
     {
      PBYTE MProcAddr = (PBYTE)&MoveSections;    // On x64 it will be a correct address of 'MoveSections' because of usage of LEA instruction for RIP addressing
 #ifndef _AMD64_ 
      MProcAddr = &ModuleBase[TRvaToFileOffset<T>(ModuleBase,(MProcAddr - (PBYTE)TBaseOfImage<T>(ModuleBase)))];    // Fix section in a Raw module image    // Assume that &MoveSections originally will be as for default image base
 #endif  
-     BYTE Header[0x400];  // Must be enough to save full header 
+     BYTE Header[0x400];  // Must be enough to save a full PE header 
      memcpy(&Header,ModuleBase,sizeof(Header));   // Save an original PE header
      memcpy(ModuleBase, MProcAddr, sizeof(Header));
      RetFix = ((decltype(&MoveSections))ModuleBase)(SecArrOffs, SecsNum, ModuleBase, (PBYTE)&Header, sizeof(Header));  // (UINT (_stdcall *)(UINT,UINT,PBYTE,PBYTE,UINT))
@@ -1147,19 +1222,19 @@ template<typename T> __declspec(noinline) static PVOID _stdcall TFixUpModuleInpl
      else MoveSections(SecArrOffs, SecsNum, ModuleBase);   // Not this module, just move its sections   
   }
  if(Flags & fmFixRel)TFixRelocations<T>(ModuleBase, false);
- if(Flags & fmFixImp)  
+ if((Flags & fmFixImp) && WinHdr->OptionalHeader.DataDirectories.ImportTable.DirectoryRVA)  
   {
    DWORD NLdrLoadDll[] = {~0x4C72644C, ~0x4464616F, ~0x00006C6C};  // LdrLoadDll     
    NLdrLoadDll[0] = ~NLdrLoadDll[0];
    NLdrLoadDll[1] = ~NLdrLoadDll[1];
    NLdrLoadDll[2] = ~NLdrLoadDll[2];
    PVOID Proc = TGetProcedureAddress<T>((PBYTE)pNtDll, (LPSTR)&NLdrLoadDll);
-   if(TResolveImports<T>(ModuleBase, Proc, Flags) < 0)return NULL;
+   if(TResolveImports<T>(ModuleBase, Proc, Flags) < 0)return -2;
   }
- return ((WinHdr->OptionalHeader.EntryPointRVA)?(&ModuleBase[WinHdr->OptionalHeader.EntryPointRVA]):(NULL));
+ return 0;    //((WinHdr->OptionalHeader.EntryPointRVA)?(&ModuleBase[WinHdr->OptionalHeader.EntryPointRVA]):(NULL));
 }
 //---------------------------------------------------------------------------
-static PVOID _stdcall FixUpModuleInplace(PBYTE ModuleBase, PVOID pNtDll, UINT Flags=0, UINT* pRetFix=NULL)
+static int _stdcall FixUpModuleInplace(PBYTE ModuleBase, PVOID pNtDll, UINT Flags=0, UINT* pRetFix=NULL)
 {
  if(IsValidModuleX64(ModuleBase))return TFixUpModuleInplace<PETYPE64>(ModuleBase, pNtDll, Flags, pRetFix);
  return TFixUpModuleInplace<PETYPE32>(ModuleBase, pNtDll, Flags, pRetFix);

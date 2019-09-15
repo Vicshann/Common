@@ -21,14 +21,8 @@
  */
 
 #include <Windows.h>
-//#include <cstddef>
-//#include "internal.h"
-//#include "wow64ext.h"
 
-
-//HANDLE g_heap;
-//BOOL g_isWow64;
-class SWOW64Ext
+class SWOW64Ext    
 {
 //------------------------------------------------------------------------------------------------------------
 class CMemPtr
@@ -59,7 +53,6 @@ public:
     watch_##ptr.disableWatch()
 
 //------------------------------------------------------------------------------------------------------------
-
 #define EMIT(a) __asm __emit (a)
 
 #define X64_Start_with_CS(_cs) \
@@ -158,8 +151,8 @@ static DWORD64 __cdecl X64Call(DWORD64 func, int argC, ...)
     va_start(args, argC);
     reg64 _rcx = { (argC > 0) ? argC--, va_arg(args, DWORD64) : 0 };
     reg64 _rdx = { (argC > 0) ? argC--, va_arg(args, DWORD64) : 0 };
-    reg64 _r8 = { (argC > 0) ? argC--, va_arg(args, DWORD64) : 0 };
-    reg64 _r9 = { (argC > 0) ? argC--, va_arg(args, DWORD64) : 0 };
+    reg64 _r8  = { (argC > 0) ? argC--, va_arg(args, DWORD64) : 0 };
+    reg64 _r9  = { (argC > 0) ? argC--, va_arg(args, DWORD64) : 0 };
     reg64 _rax = { 0 };
 
     reg64 restArgs = { (DWORD64)&va_arg(args, DWORD64) };
@@ -167,8 +160,8 @@ static DWORD64 __cdecl X64Call(DWORD64 func, int argC, ...)
     // conversion to QWORD for easier use in inline assembly
     reg64 _argC = { (DWORD64)argC };
     DWORD back_esp = 0;
-	WORD back_fs = 0;
-
+	WORD  back_fs  = 0;
+#ifndef _AMD64_
     __asm
     {
         ;// reset FS segment, to properly handle RFG
@@ -249,6 +242,7 @@ _ls_e:                                                  ;//
         mov    ax, back_fs
         mov    fs, ax
     }
+#endif
     return _rax.v;
 }
 #pragma warning(pop)
@@ -259,7 +253,7 @@ static void getMem64(void* dstMem, DWORD64 srcMem, size_t sz)
         return;
 
     reg64 _src = { srcMem };
-
+#ifndef _AMD64_
     __asm
     {
         X64_Start();
@@ -299,6 +293,7 @@ _move_0:                            ;//
 
         X64_End();
     }
+#endif
 }
 //------------------------------------------------------------------------------------------------------------
 static bool cmpMem64(void* dstMem, DWORD64 srcMem, size_t sz)
@@ -308,6 +303,7 @@ static bool cmpMem64(void* dstMem, DWORD64 srcMem, size_t sz)
 
     bool result = false;
     reg64 _src = { srcMem };
+#ifndef _AMD64_
     __asm
     {
         X64_Start();
@@ -353,26 +349,26 @@ _ret_false:                         ;//
 
         X64_End();
     }
-
+#endif
     return result;
 }
 //------------------------------------------------------------------------------------------------------------
-static DWORD64 getTEB64()
+static DWORD64 getTEB64()                   // TODO: NTDLL::NtCurrentTeb (Optional)
 {
     reg64 reg;
     reg.v = 0;
-    
+#ifndef _AMD64_    
     X64_Start();
     // R12 register should always contain pointer to TEB64 in WoW64 processes
     X64_Push(_R12);
     // below pop will pop QWORD from stack, as we're in x64 mode now
     __asm pop reg.dw[0]
     X64_End();
-
+#endif
     return reg.v;
 }
 //------------------------------------------------------------------------------------------------------------
-static DWORD64 __cdecl GetModuleHandle64(wchar_t* lpModuleName)
+static DWORD64 __cdecl GetModuleHandle64(wchar_t* lpModuleName)   // TODO: ntdll::LdrGetDllHandleEx
 {
 //	if (!g_isWow64)
 //		return 0;
@@ -385,7 +381,7 @@ static DWORD64 __cdecl GetModuleHandle64(wchar_t* lpModuleName)
     PEB_LDR_DATA64 ldr;
     getMem64(&ldr, peb64.Ldr, sizeof(PEB_LDR_DATA64));
 
-    DWORD64 LastEntry = peb64.Ldr + offsetof(PEB_LDR_DATA64, InLoadOrderModuleList);
+    DWORD64 LastEntry =0;// peb64.Ldr + offsetof(PEB_LDR_DATA64, InLoadOrderModuleList);
     LDR_DATA_TABLE_ENTRY64 head;
     head.InLoadOrderLinks.Flink = ldr.InLoadOrderModuleList.Flink;
     do
@@ -416,7 +412,7 @@ static DWORD64 getNTDLL64()
     return ntdll64;
 }
 //------------------------------------------------------------------------------------------------------------
-static DWORD64 getLdrGetProcedureAddress()
+static DWORD64 getLdrGetProcedureAddress()             // TODO: NTDLL::LdrGetProcedureAddress
 {
     DWORD64 modBase = getNTDLL64();
 	if (0 == modBase)
@@ -465,7 +461,7 @@ static DWORD64 getLdrGetProcedureAddress()
     return 0;
 }
 //------------------------------------------------------------------------------------------------------------
-static VOID __cdecl SetLastErrorFromX64Call(DWORD64 status)
+/*static VOID __cdecl SetLastErrorFromX64Call(DWORD64 status)
 {
 	typedef ULONG (WINAPI *RtlNtStatusToDosError_t)(NTSTATUS Status);
 	typedef ULONG (WINAPI *RtlSetLastWin32Error_t)(NTSTATUS Status);
@@ -484,7 +480,7 @@ static VOID __cdecl SetLastErrorFromX64Call(DWORD64 status)
 	{
 		RtlSetLastWin32Error(RtlNtStatusToDosError((DWORD)status));
 	}
-}
+} */
 //------------------------------------------------------------------------------------------------------------
 static DWORD64 __cdecl GetProcAddress64(DWORD64 hModule, char* funcName)
 {
@@ -505,173 +501,138 @@ static DWORD64 __cdecl GetProcAddress64(DWORD64 hModule, char* funcName)
     return funcRet;
 }
 //------------------------------------------------------------------------------------------------------------
-static SIZE_T __cdecl QueryVirtualMemory64(HANDLE hProcess, DWORD64 lpAddress, DWORD MemInfoClass, PVOID lpBuffer, SIZE_T dwLength)
+static NTSTATUS _stdcall QuerySystemInformation(SYSTEM_INFORMATION_CLASS SystemInformationClass, PVOID SystemInformation, ULONG SystemInformationLength, PULONG ReturnLength)
 {
-    static DWORD64 ntqvm = 0;
-    if (0 == ntqvm)
-    {
-        ntqvm = GetProcAddress64(getNTDLL64(), "NtQueryVirtualMemory");
-        if (0 == ntqvm)
-            return 0;
-    }
-    DWORD64 ret = 0;
-    DWORD64 status = X64Call(ntqvm, 6, (DWORD64)hProcess, lpAddress, (DWORD64)MemInfoClass, (DWORD64)lpBuffer, (DWORD64)dwLength, (DWORD64)&ret);
-	if (STATUS_SUCCESS != status)
-		SetLastErrorFromX64Call(status);
-	return (SIZE_T)ret;
+ static DWORD64 xproc = 0;
+ if(!xproc)
+  {
+   xproc = GetProcAddress64(getNTDLL64(), "NtQuerySystemInformation");
+   if(!xproc)return -1; 
+  }
+ return X64Call(xproc, 4, (DWORD64)SystemInformationClass, (DWORD64)SystemInformation, (DWORD64)SystemInformationLength, (DWORD64)ReturnLength);
 }
 //------------------------------------------------------------------------------------------------------------
-static DWORD64 __cdecl VirtualAllocEx64(HANDLE hProcess, DWORD64 lpAddress, SIZE_T dwSize, DWORD flAllocationType, DWORD flProtect)
+static NTSTATUS _stdcall QueryInformationThread(HANDLE ThreadHandle, THREADINFOCLASS ThreadInformationClass, PVOID ThreadInformation, ULONG ThreadInformationLength, PULONG ReturnLength)
 {
-    static DWORD64 ntavm = 0;
-    if (0 == ntavm)
-    {
-        ntavm = GetProcAddress64(getNTDLL64(), "NtAllocateVirtualMemory");
-        if (0 == ntavm)
-            return 0;
-    }
+ static DWORD64 xproc = 0;
+ if(!xproc)
+  {
+   xproc = GetProcAddress64(getNTDLL64(), "NtQueryInformationThread");
+   if(!xproc)return -1; 
+  }
+ return X64Call(xproc, 5, (DWORD64)ThreadHandle, (DWORD64)ThreadInformationClass, (DWORD64)ThreadInformation, (DWORD64)ThreadInformationLength, (DWORD64)ReturnLength);
+}
+//------------------------------------------------------------------------------------------------------------
+static NTSTATUS _stdcall SetInformationThread(HANDLE ThreadHandle, THREADINFOCLASS ThreadInformationClass, PVOID ThreadInformation, ULONG ThreadInformationLength)
+{
+ static DWORD64 xproc = 0;
+ if(!xproc)
+  {
+   xproc = GetProcAddress64(getNTDLL64(), "NtSetInformationThread");
+   if(!xproc)return -1; 
+  }
+ return X64Call(xproc, 4, (DWORD64)ThreadHandle, (DWORD64)ThreadInformationClass, (DWORD64)ThreadInformation, (DWORD64)ThreadInformationLength);
+}
+//------------------------------------------------------------------------------------------------------------
+// Can`t read anything if range includes a ME_RESERVE segment. (.NET modules have this)
+static NTSTATUS _stdcall ReadVirtualMemory(HANDLE ProcessHandle, DWORD64 BaseAddress, PVOID Buffer, SIZE_T BufferSize, DWORD64* NumberOfBytesRead)
+{
+ static DWORD64 xproc = 0;
+ if(!xproc)
+  {
+   xproc = GetProcAddress64(getNTDLL64(), "NtReadVirtualMemory");
+   if(!xproc)return -1; 
+  }
+ return X64Call(xproc, 5, (DWORD64)ProcessHandle, (DWORD64)BaseAddress, (DWORD64)Buffer, (DWORD64)BufferSize, (DWORD64)NumberOfBytesRead);
+}
+//------------------------------------------------------------------------------------------------------------
+static NTSTATUS _stdcall WriteVirtualMemory(HANDLE ProcessHandle, DWORD64 BaseAddress, PVOID Buffer, SIZE_T BufferSize, DWORD64* NumberOfBytesWritten)
+{
+ static DWORD64 xproc = 0;
+ if(!xproc)
+  {
+   xproc = GetProcAddress64(getNTDLL64(), "NtWriteVirtualMemory");
+   if(!xproc)return -1;  
+  }
+ return X64Call(xproc, 5, (DWORD64)ProcessHandle, (DWORD64)BaseAddress, (DWORD64)Buffer, (DWORD64)BufferSize, (DWORD64)NumberOfBytesWritten);
+}
+//------------------------------------------------------------------------------------------------------------
+static NTSTATUS _stdcall GetContextThread(HANDLE ThreadHandle, _CONTEXT64* ThreadContext)
+{
+ static DWORD64 xproc = 0;
+ if(!xproc)
+  {
+   xproc = GetProcAddress64(getNTDLL64(), "NtGetContextThread");
+   if(!xproc)return -1;  
+  }
+ return X64Call(xproc, 2, (DWORD64)ThreadHandle, (DWORD64)ThreadContext);
+}
+//------------------------------------------------------------------------------------------------------------
+static NTSTATUS _stdcall SetContextThread(HANDLE ThreadHandle, _CONTEXT64* ThreadContext)
+{
+ static DWORD64 xproc = 0;
+ if(!xproc)
+  {
+   xproc = GetProcAddress64(getNTDLL64(), "NtSetContextThread");
+   if(!xproc)return -1;  
+  }
+ return X64Call(xproc, 2, (DWORD64)ThreadHandle, (DWORD64)ThreadContext);
+}
+//------------------------------------------------------------------------------------------------------------
+static NTSTATUS _stdcall UnmapViewOfSection(HANDLE ProcessHandle, DWORD64 BaseAddress)
+{
+ static DWORD64 xproc = 0;
+ if(!xproc)
+  {
+   xproc = GetProcAddress64(getNTDLL64(), "NtUnmapViewOfSection");
+   if(!xproc)return -1;  
+  }
+ return X64Call(xproc, 2, (DWORD64)ProcessHandle, (DWORD64)BaseAddress);
+}
+//------------------------------------------------------------------------------------------------------------
+static NTSTATUS _stdcall MapViewOfSection(HANDLE SectionHandle, HANDLE ProcessHandle, DWORD64* BaseAddress, DWORD64 ZeroBits, DWORD64 CommitSize, PLARGE_INTEGER SectionOffset, DWORD64* ViewSize, SECTION_INHERIT InheritDisposition, ULONG AllocationType, ULONG Win32Protect)
+{
+ static DWORD64 xproc = 0;
+ if(!xproc)
+  {
+   xproc = GetProcAddress64(getNTDLL64(), "NtMapViewOfSection");
+   if(!xproc)return -1;     
+  }
+ return X64Call(xproc, 10, (DWORD64)SectionHandle, (DWORD64)ProcessHandle, (DWORD64)BaseAddress, (DWORD64)ZeroBits, (DWORD64)CommitSize, (DWORD64)SectionOffset, (DWORD64)ViewSize, (DWORD64)InheritDisposition, (DWORD64)AllocationType, (DWORD64)Win32Protect);
+}
+//------------------------------------------------------------------------------------------------------------
+static NTSTATUS _stdcall ProtectVirtualMemory(HANDLE ProcessHandle, DWORD64* BaseAddress, DWORD64* RegionSize, ULONG NewProtect, PULONG OldProtect)
+{
+ static DWORD64 xproc = 0;
+ if(!xproc)
+  {
+   xproc = GetProcAddress64(getNTDLL64(), "NtProtectVirtualMemory");
+   if(!xproc)return -1;  
+  }
+ return X64Call(xproc, 5, (DWORD64)ProcessHandle, (DWORD64)BaseAddress, (DWORD64)RegionSize, (DWORD64)NewProtect, (DWORD64)OldProtect);
+}
+//------------------------------------------------------------------------------------------------------------
+static NTSTATUS _stdcall QueryVirtualMemory(HANDLE ProcessHandle, DWORD64 BaseAddress, MEMORY_INFORMATION_CLASS MemoryInformationClass, PVOID MemoryInformation, SIZE_T MemoryInformationLength, DWORD64* ReturnLength)
+{
+ static DWORD64 xproc = 0;
+ if(!xproc)
+  {
+   xproc = GetProcAddress64(getNTDLL64(), "NtQueryVirtualMemory");
+   if(!xproc)return -1;  
+  }
+ return X64Call(xproc, 6, (DWORD64)ProcessHandle, (DWORD64)BaseAddress, (DWORD64)MemoryInformationClass, (DWORD64)MemoryInformation, (DWORD64)MemoryInformationLength, (DWORD64)ReturnLength);
+}
+//------------------------------------------------------------------------------------------------------------
+static NTSTATUS _stdcall memcpy(DWORD64 Dst, DWORD64 Src, DWORD64 Size)
+{
+ static DWORD64 xproc = 0;
+ if(!xproc)
+  {
+   xproc = GetProcAddress64(getNTDLL64(), "memcpy");
+   if(!xproc)return -1;  
+  }
+ return X64Call(xproc, 3, (DWORD64)Dst, (DWORD64)Src, (DWORD64)Size);
+}
+//------------------------------------------------------------------------------------------------------------
 
-    DWORD64 tmpAddr = lpAddress;
-    DWORD64 tmpSize = dwSize;
-    DWORD64 ret = X64Call(ntavm, 6, (DWORD64)hProcess, (DWORD64)&tmpAddr, (DWORD64)0, (DWORD64)&tmpSize, (DWORD64)flAllocationType, (DWORD64)flProtect);
-	if (STATUS_SUCCESS != ret)
-	{
-		SetLastErrorFromX64Call(ret);
-		return FALSE;
-	}
-    else
-        return tmpAddr;
-}
-//------------------------------------------------------------------------------------------------------------
-static BOOL __cdecl VirtualFreeEx64(HANDLE hProcess, DWORD64 lpAddress, SIZE_T dwSize, DWORD dwFreeType)
-{
-    static DWORD64 ntfvm = 0;
-    if (0 == ntfvm)
-    {
-        ntfvm = GetProcAddress64(getNTDLL64(), "NtFreeVirtualMemory");
-        if (0 == ntfvm)
-            return 0;
-    }
-
-    DWORD64 tmpAddr = lpAddress;
-    DWORD64 tmpSize = dwSize;
-    DWORD64 ret = X64Call(ntfvm, 4, (DWORD64)hProcess, (DWORD64)&tmpAddr, (DWORD64)&tmpSize, (DWORD64)dwFreeType);
-	if (STATUS_SUCCESS != ret)
-	{
-		SetLastErrorFromX64Call(ret);
-		return FALSE;
-	}
-    else
-        return TRUE;
-}
-//------------------------------------------------------------------------------------------------------------
-static BOOL __cdecl VirtualProtectEx64(HANDLE hProcess, DWORD64 lpAddress, SIZE_T dwSize, DWORD flNewProtect, DWORD* lpflOldProtect)
-{
-    static DWORD64 ntpvm = 0;
-    if (0 == ntpvm)
-    {
-        ntpvm = GetProcAddress64(getNTDLL64(), "NtProtectVirtualMemory");
-        if (0 == ntpvm)
-            return 0;
-    }
-
-    DWORD64 tmpAddr = lpAddress;
-    DWORD64 tmpSize = dwSize;
-    DWORD64 ret = X64Call(ntpvm, 5, (DWORD64)hProcess, (DWORD64)&tmpAddr, (DWORD64)&tmpSize, (DWORD64)flNewProtect, (DWORD64)lpflOldProtect);
-	if (STATUS_SUCCESS != ret)
-	{
-		SetLastErrorFromX64Call(ret);
-		return FALSE;
-	}
-    else
-        return TRUE;
-}
-//------------------------------------------------------------------------------------------------------------
-// Can`t read anything if range includes a ME_RESERVE segment.  .NET modules have this
-static BOOL __cdecl ReadProcessMemory64(HANDLE hProcess, DWORD64 lpBaseAddress, LPVOID lpBuffer, SIZE_T nSize, SIZE_T *lpNumberOfBytesRead)
-{
-    static DWORD64 nrvm = 0;
-    if (0 == nrvm)
-    {
-        nrvm = GetProcAddress64(getNTDLL64(), "NtReadVirtualMemory");
-        if (0 == nrvm)
-            return 0;
-    }
-    DWORD64 numOfBytes = lpNumberOfBytesRead ? *lpNumberOfBytesRead : 0;
-    DWORD64 ret = X64Call(nrvm, 5, (DWORD64)hProcess, lpBaseAddress, (DWORD64)lpBuffer, (DWORD64)nSize, (DWORD64)&numOfBytes);
-	if (STATUS_SUCCESS != ret)
-	{
-		SetLastErrorFromX64Call(ret);
-		return FALSE;
-	}
-    else
-    {
-        if (lpNumberOfBytesRead)
-            *lpNumberOfBytesRead = (SIZE_T)numOfBytes;
-        return TRUE;
-    }
-}
-//------------------------------------------------------------------------------------------------------------
-static BOOL __cdecl WriteProcessMemory64(HANDLE hProcess, DWORD64 lpBaseAddress, LPVOID lpBuffer, SIZE_T nSize, SIZE_T *lpNumberOfBytesWritten)
-{
-    static DWORD64 nrvm = 0;
-    if (0 == nrvm)
-    {
-        nrvm = GetProcAddress64(getNTDLL64(), "NtWriteVirtualMemory");
-        if (0 == nrvm)
-            return 0;
-    }
-    DWORD64 numOfBytes = lpNumberOfBytesWritten ? *lpNumberOfBytesWritten : 0;
-    DWORD64 ret = X64Call(nrvm, 5, (DWORD64)hProcess, lpBaseAddress, (DWORD64)lpBuffer, (DWORD64)nSize, (DWORD64)&numOfBytes);
-	if (STATUS_SUCCESS != ret)
-	{
-		SetLastErrorFromX64Call(ret);
-		return FALSE;
-	}
-    else
-    {
-        if (lpNumberOfBytesWritten)
-            *lpNumberOfBytesWritten = (SIZE_T)numOfBytes;
-        return TRUE;
-    }
-}
-//------------------------------------------------------------------------------------------------------------
-static BOOL __cdecl GetThreadContext64(HANDLE hThread, _CONTEXT64* lpContext)
-{
-    static DWORD64 gtc = 0;
-    if (0 == gtc)
-    {
-        gtc = GetProcAddress64(getNTDLL64(), "NtGetContextThread");
-        if (0 == gtc)
-            return 0;
-    }
-    DWORD64 ret = X64Call(gtc, 2, (DWORD64)hThread, (DWORD64)lpContext);
-	if(STATUS_SUCCESS != ret)
-	{
-		SetLastErrorFromX64Call(ret);
-		return FALSE;
-	}
-    else
-        return TRUE;
-}
-//------------------------------------------------------------------------------------------------------------
-static BOOL __cdecl SetThreadContext64(HANDLE hThread, _CONTEXT64* lpContext)
-{
-    static DWORD64 stc = 0;
-    if (0 == stc)
-    {
-        stc = GetProcAddress64(getNTDLL64(), "NtSetContextThread");
-        if (0 == stc)
-            return 0;
-    }
-    DWORD64 ret = X64Call(stc, 2, (DWORD64)hThread, (DWORD64)lpContext);
-	if (STATUS_SUCCESS != ret)
-	{
-		SetLastErrorFromX64Call(ret);
-		return FALSE;
-	}
-    else
-        return TRUE;
-}
-//------------------------------------------------------------------------------------------------------------
 };

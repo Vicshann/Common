@@ -60,7 +60,7 @@ void*  __cdecl memset(void* _Dst, int _Val, size_t _Size)      // TODO: Aligned,
  return _Dst;
 } 
 //---------------------------------------------------------------------------
-int    __cdecl memcmp(const void* _Buf1, const void* _Buf2, size_t _Size) // '(*((ULONG**)&_Buf1))++;'	// TODO: Using Ptr increment will be faster than indexing?    
+int    __cdecl memcmp(const void* _Buf1, const void* _Buf2, size_t _Size) // '(*((ULONG**)&_Buf1))++;'
 {
  unsigned char* BufA = (unsigned char*)_Buf1;
  unsigned char* BufB = (unsigned char*)_Buf2; 
@@ -158,6 +158,13 @@ extern "C" int __cdecl atexit( void (__cdecl *func )( void ) )   // MINIRTL ?
  if(func)func();
  return 0;
 }
+
+/*extern "C" const DWORD_PTR __security_cookie = 0xE64EBB40;
+
+extern "C" void __fastcall __security_check_cookie(DWORD_PTR cookie)
+{
+
+} */
 //---------------------------------------------------------------------------
 #ifndef _M_X64
 extern "C" __declspec(naked) float _cdecl _CIsqrt(float &Value)
@@ -2144,7 +2151,7 @@ int _stdcall BinaryPackToBlobStr(LPSTR ApLibPath, LPSTR SrcBinPath, LPSTR OutBin
  if(OutLen == (UINT)-1){LOGMSG("Failed to pack the Binary!"); return -2;}     // APLIB_ERROR
  *(PDWORD)(&Packed.c_data()[OutLen]) = (MapModSize > OutLen)?(MapModSize):(OutLen);
  OutLen += sizeof(DWORD);  // Store original size at end of block
- if(BinToBlobArray(DstFile, Packed.c_data(), OutLen, Key) <= 0){LOGMSG("Failed to convert the Binary!"); return -3;}
+ if(BinDataToCArray(DstFile, Packed.c_data(), OutLen, "Blob", Key) <= 0){LOGMSG("Failed to convert the Binary!"); return -3;}
  DstFile.ToFile(OutBinPath);
  LOGMSG("Saved the Binary blob: %s",OutBinPath);
  Packed.SetLength(OutLen);
@@ -2191,7 +2198,27 @@ bool _stdcall IsWow64(void)
  BOOL Result = 0;
  return ((BOOL (_stdcall *)(HANDLE,PBOOL))Proc) (GetCurrentProcess(), &Result) && Result;
 }
-//---------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------
+int __stdcall SetProcessPrivilegeState(bool bEnable, LPSTR PrName, HANDLE hProcess)
+{
+ TOKEN_PRIVILEGES tp;
+ HANDLE hToken = NULL;	
+ bool   bOk = FALSE;
+ if(!OpenProcessToken(hProcess, TOKEN_ADJUST_PRIVILEGES, &hToken))return -1; 	// 	|TOKEN_QUERY  ??? 		
+ if(!LookupPrivilegeValueA(NULL, PrName, &tp.Privileges[0].Luid)){CloseHandle(hToken); return -2;}
+ tp.PrivilegeCount = 1;
+ tp.Privileges[0].Attributes = bEnable ? SE_PRIVILEGE_ENABLED : 0;
+ if(!AdjustTokenPrivileges(hToken, FALSE, &tp, sizeof(tp), NULL, NULL)){CloseHandle(hToken); return -3;}
+ bool res = (GetLastError() == ERROR_SUCCESS);		
+ CloseHandle(hToken);	
+ if(!res)return 1;    // ???
+ return 0;
+}
+//------------------------------------------------------------------------------------------------------------
+
+//------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------
 
 /*
 PVOID _stdcall GetProcessImageBase(HANDLE hProcess)   // Requires ntdef header

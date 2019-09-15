@@ -1,5 +1,5 @@
 
-//#pragma once
+#pragma once
 
 #ifndef UniHookH
 #define UniHookH
@@ -54,9 +54,8 @@
 //------------------------------------------------------------------------------------
 #pragma pack(push,1)
 
-_inline long  AddrToRelAddr(PVOID CmdAddr, DWORD CmdLen, PVOID TgtAddr){return -(((size_t)CmdAddr + CmdLen) - (size_t)TgtAddr);}
-_inline PVOID RelAddrToAddr(PVOID CmdAddr, DWORD CmdLen, long TgtOffset){return (PVOID)((((PBYTE)CmdAddr) + CmdLen) + TgtOffset);}
-
+template<typename T> _inline long  AddrToRelAddr(T CmdAddr, UINT CmdLen, T TgtAddr){return -((CmdAddr + CmdLen) - TgtAddr);}
+template<typename T> _inline T     RelAddrToAddr(T CmdAddr, UINT CmdLen, long TgtOffset){return ((CmdAddr + CmdLen) + TgtOffset);}
 
 //====================================================================================
 //
@@ -488,14 +487,14 @@ bool _stdcall SetHook(THookProc ProcBefore, THookProc ProcAfter)
  *(PDWORD)&PatchEnd[2] = 0;
  *(PVOID*)&PatchEnd[6] = &CodeEnd;
 #else
- *(long*)&CodeBeg[16] = AddrToRelAddr(&CodeBeg[15],5,ProcBefore);
- *(long*)&CodeEnd[16] = AddrToRelAddr(&CodeEnd[15],5,ProcAfter);
+ *(long*)&CodeBeg[16] = AddrToRelAddr<PBYTE>(&CodeBeg[15],5,(PBYTE)ProcBefore);
+ *(long*)&CodeEnd[16] = AddrToRelAddr<PBYTE>(&CodeEnd[15],5,(PBYTE)ProcAfter);
  BPtr[0] = 0xE9;
- *(long*)&BPtr[1]     = AddrToRelAddr(&BPtr[0],5,&this->ProcBegPtr[this->BegCodeLen]);  // Retr from a stolen code 
+ *(long*)&BPtr[1]     = AddrToRelAddr<PBYTE>(&BPtr[0],5,&this->ProcBegPtr[this->BegCodeLen]);  // Retr from a stolen code 
  PatchBeg[0]  = 0xE9;     // Uses CodeBeg address
- *(long*)&PatchBeg[1] = AddrToRelAddr(&this->ProcBegPtr[0],5,&CodeBeg);
+ *(long*)&PatchBeg[1] = AddrToRelAddr<PBYTE>(&this->ProcBegPtr[0],5,&CodeBeg[0]);
  PatchEnd[0]  = 0xE9;     // Uses CodeBeg address
- *(long*)&PatchEnd[1] = AddrToRelAddr(&this->ProcEndPtr[0],5,&CodeEnd);
+ *(long*)&PatchEnd[1] = AddrToRelAddr<PBYTE>(&this->ProcEndPtr[0],5,&CodeEnd[0]);
 #endif
  DWORD PrevProt;
  VirtualProtect(this->ProcBegPtr,sizeof(PatchBeg),PAGE_EXECUTE_READWRITE,&PrevProt);

@@ -17,6 +17,23 @@ typedef unsigned char  U8;
 typedef unsigned short U16;
 typedef unsigned int   U32;
 
+// This two std functions are invisible for some reason
+static inline int _fastcall abs(int n){return n < 0 ? -n : n;}
+static inline int _fastcall atoi(const char *str)
+{
+ int sign = 1, base = 0, i = 0;  
+ if(!str)return 0;   
+ while(str[i] == 0x20)i++;   // Skip whitespaces at begin               
+ if (str[i] == '-' || str[i] == '+')sign = 1 - 2 * (str[i++] == '-');  // sign of number         
+ while (str[i] >= '0' && str[i] <= '9')  // checking for valid input 
+  {       
+   if(base > MAXINT / 10 || (base == MAXINT / 10 && str[i] - '0' > 7))return (sign == 1)?(MAXINT):(MININT);    // handling overflow test case  
+   base = 10 * base + (str[i++] - '0'); 
+  } 
+ return base * sign; 
+}
+
+
 // min, max functions
 //#ifndef WINDOWS
 //inline int min(int a, int b) {return a<b?a:b;}
@@ -41,6 +58,7 @@ static const int PEOF      = -1;
 virtual int  getc(void){return 0;}
 virtual int  putc(int Character){return 0;}
 virtual int  fseek(unsigned long Offset, int Origin){return 0;}
+virtual unsigned long fsize(void){return 0;}
 virtual unsigned long ftell(void){return 0;}
 virtual unsigned long fwrite(void* Buffer, unsigned long ElementSize, unsigned long ElementCount){return 0;}    // Into the stream
 virtual unsigned long fread(void*  Buffer, unsigned long ElementSize, unsigned long ElementCount){return 0;}    // From the stream
@@ -102,7 +120,7 @@ int AssignFrom(void* Buffer, unsigned long Size)
 {
  this->ResetBuffer(); 
  if(!this->GrowSize(Size))return -1;
- memcpy(this->DataBuf, Buffer, Size);
+ if(Buffer)memcpy(this->DataBuf, Buffer, Size);
  return 0;
 }
 //------------------------
@@ -139,6 +157,7 @@ virtual int  fseek(unsigned long Offset, int Origin)
  return 0;
 }
 //------------------------
+virtual unsigned long fsize(void){return this->Len;}
 virtual unsigned long ftell(void){return this->Pos;}
 virtual unsigned long fread(void*  Buffer, unsigned long ElementSize, unsigned long ElementCount)
 {

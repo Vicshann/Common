@@ -349,4 +349,110 @@ struct _CONTEXT64
 #define CONTEXT64_ALL (CONTEXT64_CONTROL | CONTEXT64_INTEGER | CONTEXT64_SEGMENTS | CONTEXT64_FLOATING_POINT | CONTEXT64_DEBUG_REGISTERS)
 #define CONTEXT64_XSTATE (CONTEXT_AMD64 | 0x20L)
 
+//--------------------------------------------------------------------------------------------------------
+template <typename T> struct MEMORY_BASIC_INFORMATION alignas(16)
+{
+    T BaseAddress;
+    T AllocationBase;
+    union
+     {
+      DWORD AllocationProtect;
+      T Dummy01;
+     };    
+    T RegionSize;        // SIZE_T
+    DWORD State;
+    DWORD Protect;
+    union
+     {
+      DWORD Type;
+      T Dummy02;
+     };     
+};
+
+template <typename T> struct SYSTEM_THREAD_INFORMATION
+{
+    LARGE_INTEGER KernelTime;
+    LARGE_INTEGER UserTime;
+    LARGE_INTEGER CreateTime;
+    union
+     {
+      ULONG WaitTime;
+      T Dummy01;
+     };
+    T StartAddress;
+    _CLIENT_ID<T> ClientId;        // !!!
+    KPRIORITY Priority;
+    LONG BasePriority;
+    ULONG ContextSwitches;
+    ULONG ThreadState;
+    union
+     {
+      KWAIT_REASON WaitReason;
+      T Dummy02;
+     };
+}; 
+
+template <typename T> struct SYSTEM_EXTENDED_THREAD_INFORMATION
+{
+    SYSTEM_THREAD_INFORMATION<T> ThreadInfo;
+    T StackBase;        // kernel mode 
+    T StackLimit;       // kernel mode 
+    T Win32StartAddress;
+    T TebBase; // Since Vista      // PTEB
+    T Reserved2;   // ULONG_PTR
+    T Reserved3;   // ULONG_PTR
+    T Reserved4;   // ULONG_PTR
+};
+
+template <typename T> struct SYSTEM_PROCESS_INFORMATION
+{
+    ULONG NextEntryOffset;
+    ULONG NumberOfThreads;
+    LARGE_INTEGER WorkingSetPrivateSize; // Since Vista
+    ULONG HardFaultCount; // Since Windows 7
+    ULONG NumberOfThreadsHighWatermark; // Since Windows 7
+    ULONGLONG CycleTime; // Since Windows 7
+    LARGE_INTEGER CreateTime;
+    LARGE_INTEGER UserTime;
+    LARGE_INTEGER KernelTime;
+    _UNICODE_STRING_T<T> ImageName;     // !!!
+    union
+     {
+      KPRIORITY BasePriority;       // !!!
+      T Dummy01;
+     };
+    T UniqueProcessId;       // !!! HANDLE  // Alignment needs to be fixed here
+    T InheritedFromUniqueProcessId;    // !!! HANDLE
+    ULONG HandleCount;
+    ULONG SessionId;
+    T UniqueProcessKey;   // Since Vista (requires SystemExtendedProcessInformation)       // ULONG_PTR
+    T PeakVirtualSize;    // SIZE_T
+    T VirtualSize;        // SIZE_T
+    union 
+     {
+      ULONG PageFaultCount;
+      T Dummy02;
+     };
+    T PeakWorkingSetSize;    // SIZE_T
+    T WorkingSetSize;           // SIZE_T
+    T QuotaPeakPagedPoolUsage;   // SIZE_T
+    T QuotaPagedPoolUsage;        // SIZE_T
+    T QuotaPeakNonPagedPoolUsage;  // SIZE_T
+    T QuotaNonPagedPoolUsage;      // SIZE_T
+    T PagefileUsage;                // SIZE_T
+    T PeakPagefileUsage;            // SIZE_T
+    T PrivatePageCount;             // SIZE_T
+    LARGE_INTEGER ReadOperationCount;
+    LARGE_INTEGER WriteOperationCount;
+    LARGE_INTEGER OtherOperationCount;
+    LARGE_INTEGER ReadTransferCount;
+    LARGE_INTEGER WriteTransferCount;
+    LARGE_INTEGER OtherTransferCount;
+    alignas(T) BYTE  Threads[1];      // SYSTEM_THREAD_INFORMATION or SYSTEM_EXTENDED_THREAD_INFORMATION
+};
+
+typedef SYSTEM_PROCESS_INFORMATION<DWORD64> SYSTEM_PROCESS_INFORMATION_64;              
+typedef SYSTEM_THREAD_INFORMATION<DWORD64> SYSTEM_THREAD_INFORMATION_64;
+typedef SYSTEM_EXTENDED_THREAD_INFORMATION<DWORD64> SYSTEM_EXTENDED_THREAD_INFORMATION_64;
+
 #pragma pack(pop)

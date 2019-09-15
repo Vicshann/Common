@@ -96,7 +96,7 @@ struct SDecodeCtx
 private:
   Random rnd;
   Predictor predictor;
-  const EMode mode;       // Compress or decompress?
+  const EMode mode;      // Compress or decompress?
   STRM* archive;         // Compressed data file
   U32 x1, x2;            // Range, initially [0, 1), scaled by 2^32
   U32 x;                 // Decompress mode: last 4 input bytes of archive
@@ -130,6 +130,10 @@ private:
   }
 
 public:
+unsigned long ArchPos(void){return this->archive->ftell();}
+unsigned long ArchSize(void){return this->archive->fsize();}
+unsigned long BlkLeft(void){return this->dctx.len;}
+
 Encoder(int lvl, EMode m, STRM* f): level(lvl), mode(m), archive(f), x1(0), x2(0xffffffff), x(0), alt(0), predictor(lvl, y, c0, c4, bpos, buf, rnd) 
 {
   if (level>0 && mode==DECOMPRESS) {  // x = first 4 bytes of archive

@@ -18,6 +18,12 @@
 #define CompTimeH    // Defuned just for detection of this file presense
 #endif
 
+// ctDISENCSTR           // Disable encryption
+// ctNoProtStack         // Do not clean the stack when destructing decrypted string objects
+// ctEncSlow             // Use a slow and more complex encryption
+// ctCPLSEED             // Specify a custom SEED
+// ctMSEDITANDCONT       // Use when comiling with EditAndContinue
+
 #pragma warning(push)
 #pragma warning(disable:4307)     // Overflow in a key transformation is expected
 
@@ -195,7 +201,7 @@ __forceinline C* Decrypt(void)  // Run-time decryption   // There will be a copy
 #define ctOENCSA(Str, Name) CT::ctStrHldr<char, CT::ctCplIndexes<sizeof(Str)>::Result> Name(Str)   
 #define ctOENCSW(Str, Name) CT::ctStrHldr<wchar_t, CT::ctCplIndexes<sizeof(Str)/sizeof(wchar_t)>::Result> Name(Str)   
 
-#define ctCENCSA(Str) (Str) CT::ctStrHldr<char, CT::ctCplIndexes<sizeof(Str)>::Result>(Str) 
+#define ctCENCSA(Str) (Str) CT::ctStrHldr<char, CT::ctCplIndexes<sizeof(Str)>::Result>(Str)                     // TODO: Use xmm registers should not be allowed because they are stored in data section
 #define ctCENCSW(Str) (Str) CT::ctStrHldr<wchar_t, CT::ctCplIndexes<sizeof(Str)/sizeof(wchar_t)>::Result>(Str)   
 
 #define ctENCSA(Str) (Str)

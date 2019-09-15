@@ -1,7 +1,7 @@
 //---------------------------------------------------------------------------
 #pragma once
 /*
-  Copyright (c) 2018 Victor Sheinmann, Vicshann@gmail.com
+  Copyright (c) 2019 Victor Sheinmann, Vicshann@gmail.com
 
   Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), 
   to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, 
@@ -101,6 +101,8 @@ typedef LONG NTSTATUS;
 
 #define _L(quote) _L2(quote)
 #define _L2(quote) L##quote
+
+#define _S( x ) #x
 //====================================================================================
 // RandomInRange function is missing?
 
@@ -158,6 +160,7 @@ int _stdcall BinaryPackToBlobStr(LPSTR ApLibPath, LPSTR SrcBinPath, LPSTR OutBin
 UINT _stdcall NextItemASN1(PBYTE DataPtr, PBYTE* Body, PBYTE Type, UINT* Size);
 int _stdcall FormatDateForHttp(SYSTEMTIME* st, LPSTR DateStr);
 bool _stdcall IsWow64(void);
+int __stdcall SetProcessPrivilegeState(bool bEnable, LPSTR PrName, HANDLE hProcess=GetCurrentProcess());
 //---------------------------------------------------------------------------
 
 
@@ -220,6 +223,10 @@ template<typename P, typename M> __inline M PercToNum(P Per, M MaxVal){return ((
 
 template<class N, class M> __inline M AlignFrwd(N Value, M Alignment){return ((((Value)/(Alignment))+((bool)((Value)%(Alignment))))*(Alignment));}
 template<class N, class M> __inline M AlignBkwd(N Value, M Alignment){return (((Value)/(Alignment))*(Alignment));}
+
+// 2,4,8,16,...
+template<typename N> __inline N AlignP2Frwd(N Value, unsigned int Alignment){return (Value+(Alignment-1)) & ~(Alignment-1);}
+template<typename N> __inline N AlignP2Bkwd(N Value, unsigned int Alignment){return Value & ~(Alignment-1);}
 
 
 struct SAsm   // Data section must be executable to use this
@@ -449,6 +456,13 @@ template<typename O, typename T> O _fastcall HexStrToNum(T Str, long* Size=nullp
  return x;
 }
 //---------------------------------------------------------------------------
+template<typename T> static T ReverseBytes(T Val)
+{
+ T Res;
+ for(int ctr=0;ctr < sizeof(T);ctr++)((unsigned char*)&Res)[ctr] = ((unsigned char*)&Val)[sizeof(T)-ctr-1];
+ return Res;
+}
+//------------------------------------------------------------------------------------------------------------
 template<typename T> void _fastcall ReverseElements(T* Array, UINT Count)
 {
  T* ArrEnd = &Array[Count-1];   // Last Element
@@ -619,6 +633,47 @@ template<typename S> int IsFileExist(S Path)
  return 1;
 }
 //---------------------------------------------------------------------------
+template<typename S> int INIRefreshValueInt(S SectionName, S ValueName, int Default, S FileName)
+{
+ int Result = 0;
+ if(!ValueName)return 0;   // WritePrivateProfileString will remove section if ValueName is NULL
+ if constexpr (sizeof(FileName[0]) > 1)
+  {
+   wchar_t Buffer[128];
+   Result = GetPrivateProfileIntW(SectionName,ValueName,Default,FileName);
+   wsprintfW(Buffer,L"%i",Result);
+   WritePrivateProfileStringW(SectionName,ValueName,Buffer,FileName);
+  }
+   else
+    {
+     char Buffer[128];
+     Result = GetPrivateProfileIntA(SectionName,ValueName,Default,FileName);
+     wsprintfA(Buffer,"%i",Result);
+     WritePrivateProfileStringA(SectionName,ValueName,Buffer,FileName);
+    }
+ return Result;
+}
+//---------------------------------------------------------------------------
+template<typename S> int INIRefreshValueStr(S SectionName, S ValueName, S Default, S RetString, UINT Size, S FileName)
+{
+ int Result = 0;
+ if(!ValueName)return 0;   // WritePrivateProfileString will remove section if ValueName is NULL
+ if constexpr (sizeof(FileName[0]) > 1)
+  {
+   Result = GetPrivateProfileStringW(SectionName, ValueName, Default, RetString, Size, FileName);
+   WritePrivateProfileStringW(SectionName,ValueName,RetString,FileName);  
+  }
+   else
+    {
+     Result = GetPrivateProfileStringA(SectionName, ValueName, Default, RetString, Size, FileName);
+     WritePrivateProfileStringA(SectionName,ValueName,RetString,FileName);
+    }
+ return Result;
+}
+//---------------------------------------------------------------------------
+
+
+
 // Return address always points to Number[16-MaxDigits];
 //
 template<typename T, typename S> S ConvertToHexStr(T Value, int MaxDigits, S NumBuf, bool UpCase, UINT* Len=0) 
@@ -732,20 +787,19 @@ inline void DecryptStrSimple(LPSTR SrcStr, LPSTR DstStr, BYTE Key, UINT Size=0)
   }
 }
 //---------------------------------------------------------------------------
-template<typename S> UINT BinToBlobArray(S& OutStrm, PBYTE BinPtr, UINT SizeInBytes, BYTE XorKey=0, UINT ESize=sizeof(void*))
+template<typename S> UINT BinDataToCArray(S& OutStrm, PBYTE BinPtr, UINT SizeInBytes, LPSTR Name, BYTE XorKey=0, UINT ESize=sizeof(void*))
 {
- BYTE Line[768];
- wsprintfA((LPSTR)&Line,"unsigned int BSize = %u;\r\n",SizeInBytes);
+ const char* TypeArr[] = {"char","short","long","__int64"}; // 1,2,4,8 -> 0,1,2,3
+ BYTE Line[512];
+ int  idx=0;
+ while((idx < 4)&&!(ESize & (1 << idx)))idx++;
+ wsprintfA((LPSTR)&Line,"unsigned long BSize%s = %u;\r\nunsigned %s %s[] = {\r\n",Name,SizeInBytes,TypeArr[idx],Name);    // ByteSize required if a element size is more than a byte
  OutStrm += (LPSTR)&Line;
- if(ESize == 1)OutStrm += "unsigned char Blob[] = {\r\n";
- else if(ESize == 2)OutStrm += "unsigned short Blob[] = {\r\n";
- else if(ESize == 4)OutStrm += "unsigned long Blob[] = {\r\n";
-  else OutStrm += "unsigned __int64 Blob[] = {\r\n";
  UINT ElemSize = ESize*sizeof(WORD);  
  while(SizeInBytes > 0)
   {       
    UINT Offs = 0;
-   Line[Offs++] = '\t'; 
+   Line[Offs++] = '\t';    // Signle tab for a new line
    while(((Offs+ElemSize) < (sizeof(Line)-3))&&(SizeInBytes > 0))    // 3 = 0x,
     { 
      Line[Offs++] = '0';
@@ -770,6 +824,60 @@ template<typename S> UINT BinToBlobArray(S& OutStrm, PBYTE BinPtr, UINT SizeInBy
  return OutStrm.Length();
 }
 //---------------------------------------------------------------------------
+template<class T> struct NakedType { typedef T type; };
+template<class T> struct NakedType<T*> : NakedType<T> {};
+template<class T> struct NakedType<T&> : NakedType<T> {};
+template<class T> struct NakedType<T&&> : NakedType<T> {};
+template<class T> struct NakedType<T const> : NakedType<T> {};
+template<class T> struct NakedType<T volatile> : NakedType<T> {};
+template<class T> struct NakedType<T const volatile> : NakedType<T> {};
+//template<class T> struct NakedType<T[]> : NakedType<T> {};
+//template<class T, int n> struct NakedType<T[n]> : NakedType<T> {};
+
+template<typename S> int RegDeleteKeyRecursive(HKEY hKeyRoot, S lpSubKey)
+{
+ HKEY hKey;
+ LONG lResult;
+ UINT SubKeyLen;
+ static const int ChrLen = sizeof(*lpSubKey);
+ static const bool IsWS  = (ChrLen > 1);
+ NakedType<decltype(*lpSubKey)>::type szName[MAX_PATH];    // decltype(remove_reference_t<*lpSubKey>::type)    wchar_t
+
+ if constexpr (IsWS)lResult = RegDeleteKeyW(hKeyRoot, lpSubKey);  // First, see if we can delete the key without having to recurse.
+   else lResult = RegDeleteKeyA(hKeyRoot, lpSubKey); 
+ if(lResult == ERROR_SUCCESS)return 0;
+
+ if constexpr (IsWS)lResult = RegOpenKeyExW(hKeyRoot, lpSubKey, 0, KEY_READ, &hKey);
+   else lResult = RegOpenKeyExA(hKeyRoot, lpSubKey, 0, KEY_READ, &hKey);
+ if(lResult != ERROR_SUCCESS) 
+  {
+   if(lResult == ERROR_FILE_NOT_FOUND)return 0;   // Key not found
+    else return -1;    // Error opening the key
+  }
+
+ if constexpr (IsWS)SubKeyLen = lstrlenW(lpSubKey);
+   else SubKeyLen = lstrlenA(lpSubKey);
+ if((lpSubKey[SubKeyLen-1] == '\\')||(lpSubKey[SubKeyLen-1] == '/'))SubKeyLen--;    // In chars
+
+ for(;;)
+  {
+   DWORD dwSize = MAX_PATH;    // in chars
+   if constexpr (IsWS)lResult = RegEnumKeyExW(hKey, 0, szName, &dwSize, NULL, NULL, NULL, NULL); // Enumerate the keys
+     else lResult = RegEnumKeyExA(hKey, 0, szName, &dwSize, NULL, NULL, NULL, NULL);
+   if(lResult != ERROR_SUCCESS)break;
+   memmove(&szName[SubKeyLen+1], &szName[0], (dwSize+1)*ChrLen);
+   memcpy(&szName[0], lpSubKey, SubKeyLen*ChrLen);
+   szName[SubKeyLen] = '\\';
+   if(RegDeleteKeyRecursive(hKeyRoot, szName) < 0)break;  // Can`t continue!
+  }
+
+ RegCloseKey(hKey);
+ if constexpr (IsWS)lResult = RegDeleteKeyW(hKeyRoot, lpSubKey);   // Try again to delete the key.
+   else lResult = RegDeleteKeyA(hKeyRoot, lpSubKey);
+ if(lResult == ERROR_SUCCESS)return 0;
+ return -2;
+}
+//------------------------------------------------------------------------------------
 
 
 //#if defined _M_X64
@@ -857,6 +965,8 @@ VOID
      */
 //#pragma pack(pop)
 //---------------------------------------------------------------------------
+inline bool IsValidHandle(HANDLE hndl){return (((ULONG_PTR)hndl + 1) > 1);}   // NULL or INVALID_HANDLE_VALUE
+                        
 template<typename T> class SAlloc
 {
  PVOID  Mem;
@@ -881,7 +991,9 @@ public:
  CHndl(HANDLE hVal){this->hHand = hVal;}
  ~CHndl(){this->Close();}
  void Close(void){if(this->IsValid()){CloseHandle(this->hHand); this->hHand = INVALID_HANDLE_VALUE;}}
- bool IsValid(void){return (((ULONG_PTR)this->hHand + 1) > 1);}
+ bool IsValid(void){return (((ULONG_PTR)this->hHand + 1) > 1);}  // Not 0 or -1(INVALID_HANDLE_VALUE)
+ HANDLE Get(void){return this->hHand;}
+ HANDLE Invalidate(void){HANDLE val = this->hHand; this->hHand = INVALID_HANDLE_VALUE; return val;}
  operator   const HANDLE() {return this->hHand;}
  operator   const bool() {return this->IsValid();}
 }; 
@@ -897,7 +1009,7 @@ public:
  operator  T*() {return this->AData;}    // operator   const T*() {return this->AData;}
  T* Data(void){return this->AData;}
  T* c_data(void){return this->AData;}   // For name compatibility in a templates
- UINT Count(void){return (this->Size / sizeof(T));}
+ UINT Count(void){return (this->Size() / sizeof(T));}
  UINT Size(void){return ((this->AData)?(((size_t*)this->AData)[-1]):(0));}
  UINT Length(void){return this->Size();}
 //----------------------------------------------------------
@@ -950,7 +1062,7 @@ public:
    return (Result / sizeof(T));
   }
 //----------------------------------------------------------
- UINT ToFile(LPSTR FileName)       // TODO: Bool Append    // From - To
+ UINT ToFile(PVOID FileName)       // TODO: Bool Append    // From - To
   {
    HANDLE hFile;
    UINT SavLen = this->Size();
@@ -978,21 +1090,37 @@ public:
  T* c_data(void){return this->Data;}
  T* Resize(UINT Elems) // Only enlarges the array // Used to avoid excess reallocations of a small blocks
  {
-  if(!Elems){if(this->Data)HeapFree(GetProcessHeap(),0,&((PDWORD)this->Data)[-2]);}
+  if(!Elems)
+   {
+    if(this->Data){HeapFree(GetProcessHeap(),0,&((PDWORD)this->Data)[-2]); this->Data=NULL;} 
+    return NULL;
+   }
+  PDWORD Val = &((PDWORD)this->Data)[-2];
+  UINT Size = (Elems*sizeof(T))+(sizeof(DWORD)*3);
+  if(!this->Data)Val = (PDWORD)HeapAlloc(GetProcessHeap(),0,Size);   // Make HEAP_ZERO_MEMORY optional?
    else
-	{
-	 PDWORD Val = &((PDWORD)this->Data)[-2];
-	 UINT Size = (Elems*sizeof(T))+(sizeof(DWORD)*3);
-	 if(!this->Data)Val = (PDWORD)HeapAlloc(GetProcessHeap(),0,Size);
-	   else
-		{
-		 if(Elems <= Val[1]){Val[0] = Elems;return this->Data;}  // Only update the Count
-		 Val = (PDWORD)HeapReAlloc(GetProcessHeap(),0,Val,Size);
-		}
-	 Val[0] = Val[1] = Elems;
-	 this->Data = (T*)&Val[2];
-	}
+    {
+     if(Elems <= Val[1]){Val[0] = Elems;return this->Data;}  // Only update the Count
+     Val = (PDWORD)HeapReAlloc(GetProcessHeap(),0,Val,Size);
+    }
+  Val[0] = Val[1] = Elems;
+  this->Data = (T*)&Val[2];
   return this->Data;
+ }
+ T* Assign(T* Data, UINT Cnt=1)
+ {
+  this->Resize(Cnt);
+  if(Data)memcpy(this->c_data(), Data, sizeof(T)*Cnt);
+   else memset(this->c_data(), 0, sizeof(T)*Cnt);
+  return this->c_data();
+ }
+ T* Append(T* Data, UINT Cnt=1)
+ {
+  UINT OldCnt = this->Count();
+  this->Resize(OldCnt + Cnt);
+  if(Data)memcpy(&this->c_data()[OldCnt], Data, sizeof(T)*Cnt);
+    else memset(&this->c_data()[OldCnt], 0, sizeof(T)*Cnt);
+  return &this->c_data()[OldCnt];
  }
  T&         operator [] (int index){return this->Data[index];}
 //-------------
@@ -1060,6 +1188,65 @@ public:
   }
 //-------------
 };
+//---------------------------------------------------------------------------
+template<typename T, int PreallocCnt=64> class CObjStack
+{
+ CRITICAL_SECTION csec;
+ T* Buffer;
+ UINT Count;
+ UINT Total;
+public:
+//-------------------------------
+CObjStack(void)
+{
+ InitializeCriticalSection(&this->csec);
+ this->Count  = 0;
+ this->Total  = PreallocCnt;
+ this->Buffer = (T*)HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,this->Total*sizeof(T)); 
+}
+//-------------------------------
+~CObjStack()
+{
+ EnterCriticalSection(&this->csec);
+ if(this->Buffer)HeapFree(GetProcessHeap(),0,this->Buffer); 
+ this->Buffer = nullptr;
+ LeaveCriticalSection(&this->csec);
+
+ DeleteCriticalSection(&this->csec);
+}
+//-------------------------------
+bool PopObject(T* Obj)
+{
+ bool res = false;
+ EnterCriticalSection(&this->csec);
+ if(this->Count)
+  {
+   res = true;
+   this->Count--;
+   memcpy(Obj, &this->Buffer[this->Count], sizeof(T));   
+  }
+ LeaveCriticalSection(&this->csec);
+ return res;
+}
+//-------------------------------
+bool PushObject(T* Obj)
+{
+ bool res = false;
+ EnterCriticalSection(&this->csec);
+ if(this->Count < this->Total)
+  {
+   memcpy(&this->Buffer[this->Count], Obj, sizeof(T));
+   this->Count++;
+   memset(Obj,0,sizeof(T));   // Prevent any destructors
+  }
+ LeaveCriticalSection(&this->csec);
+ return res;
+}
+//-------------------------------
+
+}; 
+//------------------------------------------------------------------------------------------------------------
+
 //---------------------------------------------------------------------------
 /*using namespace std;
 

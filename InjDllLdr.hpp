@@ -1,7 +1,7 @@
 
 #pragma once
 /*
-  Copyright (c) 2018 Victor Sheinmann, Vicshann@gmail.com
+  Copyright (c) 2019 Victor Sheinmann, Vicshann@gmail.com
 
   Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), 
   to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, 
@@ -15,7 +15,16 @@
 */
 
 struct InjLdr
-{                                
+{  
+static const SIZE_T RemThModMarker = 0x0F;
+#ifndef LOGMSG
+#define LOGMSG(msg,...)
+#endif
+
+#ifndef DBGMSG
+#define DBGMSG(msg,...)
+#endif
+                              
 enum EMapFlf {mfNone, mfInjVAl=0x00100000,mfInjMap=0x00200000,mfInjAtom=0x00400000,mfInjWnd=0x00800000,  mfRunUAPC=0x01000000,mfRunRMTH=0x02000000,mfRunThHij=0x04000000,  mfRawMod=0x10000000,mfX64Mod=0x20000000};  // These must not conflict with PE::EFixMod
 //------------------------------------------------------------------------------------
 static HANDLE OpenRemoteProcess(DWORD ProcessID, UINT Flags)
@@ -40,13 +49,13 @@ static int InjModuleIntoProcessAndExec(HANDLE hProcess, PVOID ModuleData, UINT M
 {
  if(!ModuleData || !IsValidPEHeader(ModuleData)){LOGMSG("Bad PE image: ModuleData=%p", ModuleData); return -1;}
  SIZE_T MapModSize = GetImageSize(ModuleData);
- SIZE_T ModSize = (MapModSize > ModuleSize)?(MapModSize):(ModuleSize);   
- UINT  EPOffset = GetModuleEntryOffset((PBYTE)ModuleData, Flags & mfRawMod);
- PVOID RemoteAddr = Addr;
+ SIZE_T ModSize    = (MapModSize > ModuleSize)?(MapModSize):(ModuleSize);   
+ UINT   EPOffset   = GetModuleEntryOffset((PBYTE)ModuleData, Flags & mfRawMod);
+ PVOID  RemoteAddr = Addr;
  PBYTE  Buf = (PBYTE)VirtualAlloc(NULL,ModSize,MEM_COMMIT,PAGE_EXECUTE_READWRITE);
  memcpy(Buf,ModuleData,ModuleSize);       // Copy before encryption
  ModuleData = Buf;
- CryptModule(ModuleData, Flags);       // It need to save Flags at least
+ EncryptModuleParts(ModuleData, GetModuleHandleA("ntdll.dll"), Flags);       // It need to save Flags at least
  if(Flags & mfInjVAl)
   {
    RemoteAddr = (PBYTE)VirtualAllocEx(hProcess,NULL,ModSize,MEM_COMMIT,PAGE_EXECUTE_READWRITE);
@@ -86,7 +95,7 @@ static int InjModuleIntoProcessAndExec(HANDLE hProcess, PVOID ModuleData, UINT M
     }   
    else if(Flags & mfRunRMTH)
     {
-     PVOID FlagArg = PVOID((SIZE_T)RemoteAddr | 0xFF);     // Mark base address
+     PVOID FlagArg = PVOID((SIZE_T)RemoteAddr | RemThModMarker);     // Mark base address
      HANDLE hTh = CreateRemoteThread(hProcess,NULL,0,(LPTHREAD_START_ROUTINE)RemEntry,FlagArg,0,NULL);        // Firefox Quantum: It gets into LdrInitializeThunk but not into specified ThreadProc!!!!
      if(!hTh){LOGMSG("Failed to create a remote thread (%u): RemEntry=%p, FlagArg=%p", GetLastError(), RemEntry, FlagArg); return -5;}
      WaitForSingleObject(hTh, INFINITE);
@@ -107,31 +116,76 @@ static void UnmapAndTerminateSelf(PVOID BaseAddr)
  FreeLibraryAndExitThread(HMODULE((SIZE_T)BaseAddr | 3),0);  // Can unmap any DLL(Not removing it from list) or view of section
 }
 //------------------------------------------------------------------------------------
-static BYTE CryptModule(PVOID BaseAddr, UINT Flags)
+static BYTE EncryptModuleParts(PVOID BaseAddr, PVOID NtDllBase, UINT Flags)
 {
  BYTE EncKey = GetTickCount() >> 4;
  Flags |= EncKey;
- if(IsValidModuleX64(BaseAddr)){Flags |= mfX64Mod; TCryptSensitiveParts<PETYPE64>((PBYTE)BaseAddr, Flags|fmEncMode, Flags & mfRawMod);}
-  else TCryptSensitiveParts<PETYPE32>((PBYTE)BaseAddr, Flags|fmEncMode|EncKey, Flags & mfRawMod);   
+ UINT VirSize = 0;
+ UINT RawSize = 0;
+ GetModuleSizes((PBYTE)BaseAddr, &RawSize, &VirSize);
+ if(IsValidModuleX64(BaseAddr)){Flags |= mfX64Mod; TCryptSensitiveParts<PETYPE64>((PBYTE)BaseAddr, Flags|fmEncMode, Flags & mfRawMod);}   
+  else TCryptSensitiveParts<PETYPE32>((PBYTE)BaseAddr, Flags|fmEncMode, Flags & mfRawMod);   
+
  DOS_HEADER* DosHdr = (DOS_HEADER*)BaseAddr;
  DosHdr->Reserved1 = Flags;
- *(PVOID*)&DosHdr->Reserved2 = GetModuleHandleA("ntdll.dll");
+ *(UINT64*)&DosHdr->Reserved2 = (UINT64)NtDllBase;
+ *(UINT*)&DosHdr->Reserved2[10] = VirSize;
+ *(UINT*)&DosHdr->Reserved2[14] = RawSize;
  *(PBYTE)BaseAddr = 0;     // Marker, First thead that enters will revert this to 'M'  // Helps to avoid mult-entering when using APC injection
  return EncKey;
 }
 //------------------------------------------------------------------------------------
-__declspec(noinline) static HMODULE ModFixInplaceSelf(PVOID BaseAddr, UINT ExcludeFlg=(fmCryImp|fmCryExp|fmCryRes), bool RecryptHdr=true)
+__declspec(noinline) static PVOID PEImageInitialize(PVOID BaseAddr, PVOID NtDllBase=NULL, UINT* OffsToVA=NULL, bool RecryptHdr=true, UINT ExcludeFlg=(fmCryImp|fmCryExp|fmCryRes))
 {
- PBYTE ModuleBase = PBYTE((SIZE_T)BaseAddr & ~0xFFF);
+ PBYTE ModuleBase = PBYTE((SIZE_T)BaseAddr & ~RemThModMarker);
  DOS_HEADER* DosHdr = (DOS_HEADER*)ModuleBase;
- UINT Flags   = (DosHdr->Reserved1 & ~ExcludeFlg)|fmFixSec|fmFixImp|fmFixRel|fmSelfMov;
- UINT RetFix  = 0;
- PVOID pNtDll = *(PVOID*)&DosHdr->Reserved2;
- if(Flags & mfX64Mod)TFixUpModuleInplace<PETYPE64>(ModuleBase,pNtDll,Flags,&RetFix);
-  else TFixUpModuleInplace<PETYPE32>(ModuleBase,pNtDll,Flags,&RetFix);
+ UINT  Flags  = (DosHdr->Reserved1 & ~(ExcludeFlg|fmSelfMov))|fmFixSec|fmFixImp|fmFixRel;
+ UINT  RetFix = 0;
+ int    mres  = 0;
+ if(!NtDllBase)NtDllBase = (PVOID)*(UINT64*)&DosHdr->Reserved2;
+ if(Flags & mfX64Mod)mres = TFixUpModuleInplace<PETYPE64>(ModuleBase,NtDllBase,Flags,&RetFix);    
+  else mres = TFixUpModuleInplace<PETYPE32>(ModuleBase,NtDllBase,Flags,&RetFix); 
+ if(mres < 0)return NULL;
+ if(OffsToVA)*OffsToVA = FileOffsetToRvaConvert(ModuleBase, *OffsToVA);           
  if(RecryptHdr)CryptSensitiveParts(ModuleBase, fmCryHdr|fmEncMode|(Flags & fmEncKeyMsk), false); 
- if(RetFix)*((PBYTE*)_AddressOfReturnAddress()) += RetFix;   // After SelfMove need to fix every return address in this module
- return (HMODULE)ModuleBase;
+ if(Flags & fmSelfMov)
+  {
+   PBYTE* RetPtr = (PBYTE*)_AddressOfReturnAddress();
+   if(RetFix)*RetPtr += RetFix;   // After SelfMove need to fix every return address in this module
+  }
+ return ModuleBase;
+}
+//------------------------------------------------------------------------------------
+_declspec(noinline) static PVOID ReflectiveRelocateSelf(PVOID BaseAddr, PVOID NtDllBase=NULL)    // Should not be called from deeper than DLLMain!
+{
+ PBYTE ModuleBase = PBYTE((SIZE_T)BaseAddr & ~RemThModMarker);
+ DOS_HEADER* DosHdr = (DOS_HEADER*)ModuleBase;
+ NTSTATUS (NTAPI* pNtAllocateVirtualMemory)(HANDLE ProcessHandle,PVOID* BaseAddress,ULONG_PTR ZeroBits,PSIZE_T RegionSize,ULONG AllocationType,ULONG Protect) = NULL;
+
+ DWORD NNtAllocateVirtualMemory[] = {0x93BE8BB1,0x9E9C9093,0x96A99A8B,0x9E8A8B8D,0x929AB293,0xFF868D90};  // NtAllocateVirtualMemory     
+ NNtAllocateVirtualMemory[0] = ~NNtAllocateVirtualMemory[0];
+ NNtAllocateVirtualMemory[1] = ~NNtAllocateVirtualMemory[1];
+ NNtAllocateVirtualMemory[2] = ~NNtAllocateVirtualMemory[2];
+ NNtAllocateVirtualMemory[3] = ~NNtAllocateVirtualMemory[3];
+ NNtAllocateVirtualMemory[4] = ~NNtAllocateVirtualMemory[4];
+ NNtAllocateVirtualMemory[5] = ~NNtAllocateVirtualMemory[5];
+ if(!NtDllBase)NtDllBase = (PVOID)*(UINT64*)&DosHdr->Reserved2;
+ *(PVOID*)&pNtAllocateVirtualMemory = TGetProcedureAddress<PECURRENT>((PBYTE)NtDllBase, (LPSTR)&NNtAllocateVirtualMemory);
+ if(!pNtAllocateVirtualMemory)return NULL;
+ UINT VirSize = *(UINT*)&DosHdr->Reserved2[10];
+ UINT RawSize = *(UINT*)&DosHdr->Reserved2[14];
+
+ PVOID  BaseAddress = NULL;
+ SIZE_T RegionSize  = VirSize;    
+ NTSTATUS stat = pNtAllocateVirtualMemory((HANDLE)-1, &BaseAddress, 0, &RegionSize, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+ if(stat)return NULL;
+ PBYTE* RetPtr = (PBYTE*)_AddressOfReturnAddress();
+ UINT   RetRVA = *RetPtr - ModuleBase;   // File Offset of return address    
+ memcpy(BaseAddress, ModuleBase, RawSize);
+ BaseAddr = InjLdr::PEImageInitialize(BaseAddress, (PVOID)NtDllBase, &RetRVA);   // After this we can access static variables
+ if(!BaseAddr)return NULL;
+ *RetPtr  = (PBYTE)BaseAddr + RetRVA;    // Return to the relocated copy
+ return BaseAddr;
 }
 //------------------------------------------------------------------------------------
 __declspec(noinline) static void RedirRet(PBYTE OldBase, PBYTE NewBase)  

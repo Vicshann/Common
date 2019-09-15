@@ -270,6 +270,18 @@ typedef struct _SYSTEM_THREAD_INFORMATION
     KWAIT_REASON WaitReason;
 } SYSTEM_THREAD_INFORMATION, *PSYSTEM_THREAD_INFORMATION;
 
+typedef struct _SYSTEM_EXTENDED_THREAD_INFORMATION
+{
+    SYSTEM_THREAD_INFORMATION ThreadInfo;
+    PVOID StackBase;
+    PVOID StackLimit;
+    PVOID Win32StartAddress;
+    PVOID TebBase; // Since Vista      // PTEB
+    ULONG_PTR Reserved2;
+    ULONG_PTR Reserved3;
+    ULONG_PTR Reserved4;
+} SYSTEM_EXTENDED_THREAD_INFORMATION, *PSYSTEM_EXTENDED_THREAD_INFORMATION;
+
 typedef struct _SYSTEM_PROCESS_INFORMATION
 {
     ULONG NextEntryOffset;
@@ -306,7 +318,7 @@ typedef struct _SYSTEM_PROCESS_INFORMATION
     LARGE_INTEGER ReadTransferCount;
     LARGE_INTEGER WriteTransferCount;
     LARGE_INTEGER OtherTransferCount;
-    SYSTEM_THREAD_INFORMATION Threads[1];
+    BYTE  Threads[1];      // SYSTEM_THREAD_INFORMATION or SYSTEM_EXTENDED_THREAD_INFORMATION
 } SYSTEM_PROCESS_INFORMATION, *PSYSTEM_PROCESS_INFORMATION;
 
 typedef struct _PROCESS_SESSION_INFORMATION
@@ -3360,18 +3372,6 @@ typedef struct _PROCESS_EXTENDED_BASIC_INFORMATION
     } u;
 } PROCESS_EXTENDED_BASIC_INFORMATION, *PPROCESS_EXTENDED_BASIC_INFORMATION;
 
-typedef struct _SYSTEM_EXTENDED_THREAD_INFORMATION
-{
-    SYSTEM_THREAD_INFORMATION ThreadInfo;
-    PVOID StackBase;
-    PVOID StackLimit;
-    PVOID Win32StartAddress;
-    PTEB TebBase; // Since Vista
-    ULONG_PTR Reserved2;
-    ULONG_PTR Reserved3;
-    ULONG_PTR Reserved4;
-} SYSTEM_EXTENDED_THREAD_INFORMATION, *PSYSTEM_EXTENDED_THREAD_INFORMATION;
-
 #ifndef FIELD_OFFSET
 #if !defined(__clang__)
 #define FIELD_OFFSET(type, field)   ((LONG)(LONG_PTR)&(((type *)0)->field))
@@ -4861,7 +4861,7 @@ NTSTATUS
 NTAPI
 NtContinue(
     _In_ PCONTEXT ContextRecord,
-    _In_ BOOLEAN TestAlert
+    _In_ BOOLEAN RaiseAlert
 );
 
 NTSYSCALLAPI
@@ -9631,5 +9631,13 @@ TpAlpcUnregisterCompletionList(
 #ifdef __cplusplus
 };
 #endif
+
+//------------------ ntifs.h ------------------------------------------------
+typedef struct _FILE_NAMES_INFORMATION {
+  ULONG NextEntryOffset;
+  ULONG FileIndex;
+  ULONG FileNameLength;
+  WCHAR FileName[1];
+} FILE_NAMES_INFORMATION, *PFILE_NAMES_INFORMATION;
 
 #endif // _NTDLL_H

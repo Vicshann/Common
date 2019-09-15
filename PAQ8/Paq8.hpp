@@ -79,23 +79,28 @@ static inline int strm_compress(STRM& SrcStrm, Encoder* en, unsigned long DataSi
  return 0;
 }
 //----------------------------------------------------------------------------------
-// Decompress a file
-static inline int strm_decompress(STRM& DstStrm, Encoder* en, unsigned long DataSize=0) 
+// Decompress a file  (DataSize is side of COMPRESSED data)
+static inline int strm_decompress(STRM& DstStrm, Encoder* en, unsigned long DataSize=0)    // DataSize is known size of a single file. If 0 then assume that all blocks belong to a single file
 {
  if(en->getMode() != DECOMPRESS)return -1;
  //     PRINTF("Extracting %s %ld -> ", filename, filesize);
  en->ResetDecoderCtx();
- DstStrm.putc(decode(*en));
- if(!DataSize)DataSize = en->GetCurrDecBlkLen();  // Current block only  
- for (unsigned long i=1; i < DataSize; ++i) 
+ unsigned long ArchSize = en->ArchSize();
+ unsigned long DataEnd = 0;
+ if(DataSize)
   {
-//        printStatus(i);
-        DstStrm.putc(decode(*en));
+   DataEnd = en->ArchPos() + DataSize;
+   if(DataEnd > ArchSize)DataEnd = ArchSize; 
   }
-//      PRINTF("done        \n");
+   else DataEnd = ArchSize;
+ while((en->ArchPos() < DataEnd) || en->BlkLeft())  // May be more than one block   
+  {
+   DstStrm.putc(decode(*en));    // 'decode' can`t detect end of stream // Why headers read by the same function as a compressed data?
+  }
  return 0; 
 }
 //----------------------------------------------------------------------------------
+// No reason to compress SrcStrm by a separate blocks here?
 static inline int strm_compress(int Lvl, STRM& SrcStrm, STRM& DstStrm)     // Single file
 {
  if(Lvl < 0 || Lvl > 9)return -1;
@@ -105,10 +110,13 @@ static inline int strm_compress(int Lvl, STRM& SrcStrm, STRM& DstStrm)     // Si
  return res;
 }
 //----------------------------------------------------------------------------------
-static inline int strm_decompress(int Lvl, unsigned long DataSize, STRM& SrcStrm, STRM& DstStrm)           // Single file
+// SrcStrm may be an archive with a separate files
+// DataSize is size of COMPRESSED data (Includes all file blocks)
+static inline int strm_decompress(int Lvl, unsigned long DataSize, STRM& SrcStrm, STRM& DstStrm)     // DataSize is known size of a single(all of its blocks) file in SrcStrm
 {
  if(Lvl < 0 || Lvl > 9)return -1;
- Encoder* en = new Encoder(Lvl, DECOMPRESS, &SrcStrm);   
+ Encoder* en = new Encoder(Lvl, DECOMPRESS, &SrcStrm); 
+// if(!DataSize)DataSize = SrcStrm.fsize() - SrcStrm.ftell();   // Assume that all block until end of src stream belong to a same file
  int res = strm_decompress(DstStrm, en, DataSize);
  delete(en);
  return res;

@@ -1,9 +1,7 @@
-#pragma once
 
-#ifndef DriverControlH
-#define DriverControlH
+#pragma once
 /*
-  Copyright (c) 2018 Victor Sheinmann, Vicshann@gmail.com
+  Copyright (c) 2019 Victor Sheinmann, Vicshann@gmail.com
 
   Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), 
   to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, 
@@ -47,26 +45,23 @@ union IoCtrlCode
   }
 };
 //---------------------------------------------------------------------------
-class CDriverLdr
+class CSrvControl
 {
  bool      Autodel;
  HANDLE    hDriver;
  SC_HANDLE hSCManager;
  SC_HANDLE hSCService;
- BYTE      DriverPath[MAX_PATH];
 
 public:
-CDriverLdr(bool RemoveOnDel=false, LPSTR DrvPath=NULL, LPSTR DrvName=NULL)
+CSrvControl(bool RemoveOnDel=false, PWSTR SrvPath=NULL, PWSTR SrvName=NULL)
 {
- //memset(this,0,sizeof(CDriverLdr));
  this->hDriver = INVALID_HANDLE_VALUE;
  this->Autodel = RemoveOnDel;
  this->hSCManager = this->hSCService = NULL;
- this->DriverPath[0] = 0;
- if(DrvPath)this->CreateSrv(DrvPath, DrvName); // Only as 'Demand Start' driver
+ if(SrvPath)this->CreateSrv(SrvPath, SrvName); // Only as 'Demand Start' service
 }
 //---------------------------------------------------------------------------
-~CDriverLdr()
+~CSrvControl()
 {
  this->CloseDriver();
  if(Autodel)
@@ -78,7 +73,7 @@ CDriverLdr(bool RemoveOnDel=false, LPSTR DrvPath=NULL, LPSTR DrvName=NULL)
 //---------------------------------------------------------------------------
 int StartSrv(void)
 {
- if(::StartService(this->hSCService, 0, NULL)||(GetLastError()==ERROR_SERVICE_ALREADY_RUNNING))return ERROR_SUCCESS;
+ if(::StartServiceW(this->hSCService, 0, NULL)||(GetLastError()==ERROR_SERVICE_ALREADY_RUNNING))return ERROR_SUCCESS;
  return GetLastError();
 }
 //---------------------------------------------------------------------------
@@ -93,8 +88,8 @@ int RemoveService(void)
 {
  if(!this->hSCService || !this->hSCManager)return ERROR_INVALID_HANDLE;
  DWORD ErrCode = ERROR_SUCCESS;
- this->CloseDriver();     // Close driver if opened
- this->StopSrv();     // Stop Service if running
+ this->CloseDriver();     // Close a driver if opened
+ this->StopSrv();         // Stop the Service if running
  if(!DeleteService(this->hSCService))ErrCode = GetLastError();
  CloseServiceHandle(this->hSCService);
  CloseServiceHandle(this->hSCManager);
@@ -103,69 +98,31 @@ int RemoveService(void)
  return ERROR_SUCCESS;
 }
 //---------------------------------------------------------------------------
-int CreateSrv(LPSTR DriverPath, LPSTR DriverName=NULL, DWORD StartType=SERVICE_DEMAND_START) // SERVICE_BOOT_START is only for SERVICE_FILE_SYSTEM_DRIVER ?
+int CreateSrv(PWSTR SrvModPath, PWSTR ServiceName=NULL, PWSTR ServiceDesc=NULL, DWORD SrvType=SERVICE_WIN32_OWN_PROCESS, DWORD StartType=SERVICE_DEMAND_START, bool OpenOnly=false) // SERVICE_BOOT_START is only for SERVICE_FILE_SYSTEM_DRIVER ?
 {
- BYTE NameBuf[MAX_PATH];
+ wchar_t NameBuf[MAX_PATH];
 
-// if(!DriverPath)return ERROR_INVALID_NAME;
- if(DriverPath && !DriverName)
+// if(!SrvModPath)return ERROR_INVALID_NAME;
+ if(SrvModPath && !ServiceName)
   {  // Make a driver name from a file name
    NameBuf[0] = 0;
-   for(int ctr=(lstrlen(DriverPath)-1);ctr > 0;ctr--){if((DriverPath[ctr] == 0x5C)||(DriverPath[ctr] == 0x2F)){lstrcpy((LPSTR)&NameBuf, &DriverPath[ctr+1]);break;}} // Remove path
-   for(int ctr=(lstrlen((LPSTR)&NameBuf)-1);ctr > 0;ctr--){if(NameBuf[ctr] == 0x2E){NameBuf[ctr]=0;break;}}  // Remove extension
-   DriverName = (LPSTR)&NameBuf;
+   for(int ctr=(lstrlenW(SrvModPath)-1);ctr > 0;ctr--){if((SrvModPath[ctr] == 0x5C)||(SrvModPath[ctr] == 0x2F)){lstrcpyW(NameBuf, &SrvModPath[ctr+1]);break;}} // Remove path
+   for(int ctr=(lstrlenW(NameBuf)-1);ctr > 0;ctr--){if(NameBuf[ctr] == 0x2E){NameBuf[ctr]=0;break;}}  // Remove extension
+   ServiceName = NameBuf;
   }
- if(!(this->hSCManager = OpenSCManager(NULL,NULL,SC_MANAGER_ALL_ACCESS)))return GetLastError();
- if(!(this->hSCService = OpenService(this->hSCManager, DriverName, SERVICE_ALL_ACCESS)))   // Try to create service if it is failed to open
+ if(!(this->hSCManager = OpenSCManagerW(NULL,NULL,SC_MANAGER_ALL_ACCESS)))return GetLastError();
+ if(!(this->hSCService = OpenServiceW(this->hSCManager, ServiceName, SERVICE_ALL_ACCESS)))   // Try to create service if it is failed to open
   {
    DWORD ErrCode = GetLastError();
-   if(ErrCode != ERROR_SERVICE_DOES_NOT_EXIST)return ErrCode;
-   if(!DriverPath)return -1;     // INVALID_PATH
-   if(!(this->hSCService = CreateServiceA(this->hSCManager,DriverName,DriverName,SERVICE_ALL_ACCESS,SERVICE_KERNEL_DRIVER,(StartType==SERVICE_BOOT_START)?(SERVICE_DEMAND_START):(StartType),SERVICE_ERROR_NORMAL,DriverPath,NULL, NULL, NULL, NULL, NULL)))return GetLastError();
+   if((ErrCode != ERROR_SERVICE_DOES_NOT_EXIST) || OpenOnly)return ErrCode;
+   if(!SrvModPath)return -1;     // INVALID_PATH
+   if(!(this->hSCService = CreateServiceW(this->hSCManager,ServiceName,ServiceName,SERVICE_ALL_ACCESS,SrvType,(StartType==SERVICE_BOOT_START)?(SERVICE_DEMAND_START):(StartType),SERVICE_ERROR_NORMAL,SrvModPath,NULL, NULL, NULL, NULL, NULL)))return GetLastError();
    //if(StartType != SERVICE_BOOT_START)return ERROR_SUCCESS;
+   if(ServiceDesc && *ServiceDesc)ChangeServiceConfig2W(this->hSCService,SERVICE_CONFIG_DESCRIPTION,&ServiceDesc);
   }
- if(DriverPath && ChangeServiceConfig(this->hSCService,SERVICE_NO_CHANGE,StartType,SERVICE_NO_CHANGE,DriverPath,NULL,NULL,NULL,NULL,NULL,DriverName))return ERROR_SUCCESS;
+ if(SrvModPath && ChangeServiceConfigW(this->hSCService,SERVICE_NO_CHANGE,StartType,SERVICE_NO_CHANGE,SrvModPath,NULL,NULL,NULL,NULL,NULL,ServiceName))return ERROR_SUCCESS;   // Update module path 
  this->AdjustAccessRights();  // For what this is needed?
  return GetLastError();
-}
-//---------------------------------------------------------------------------
-int OpenDriver(void)
-{
- BYTE  SymLink[MAX_PATH];
- BYTE  SCfgBuf[1024];     // Must be enough for all our drivers
- DWORD BufLen;
- QUERY_SERVICE_CONFIG *SrvConfig = (QUERY_SERVICE_CONFIG*)&SCfgBuf;
-
- if(!QueryServiceConfig(this->hSCService,SrvConfig,sizeof(SCfgBuf),&BufLen))return GetLastError();
- lstrcpy((LPSTR)&SymLink,"\\\\.\\");
- lstrcat((LPSTR)&SymLink,SrvConfig->lpDisplayName);
- if((this->hDriver = CreateFile((LPSTR)&SymLink,GENERIC_READ|GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,OPEN_EXISTING,NULL,NULL))==INVALID_HANDLE_VALUE)return ERROR_INVALID_HANDLE;
- return ERROR_SUCCESS;
-}
-//---------------------------------------------------------------------------
-int CloseDriver(void)
-{
- if(this->hDriver == INVALID_HANDLE_VALUE)return ERROR_INVALID_HANDLE;
- CloseHandle(this->hDriver);
- this->hDriver = INVALID_HANDLE_VALUE;
- return ERROR_SUCCESS;
-}
-//---------------------------------------------------------------------------
-int ControlDriver(DWORD Code, PVOID SndBuffer=NULL, UINT SndBufSize=0, PVOID ResBuffer=NULL, UINT ResBufSize=0)
-{
- DWORD BytesReturned;
- IoCtrlCode Control;
-
- if(Code < 0x00010000)
-  { // Given only Function Code
-   Control.DeviceType     = FILE_DEVICE_CUSTOM;
-   Control.FunctionCode   = Code;
-   Control.TransferType   = METHOD_NEITHER;   // Most fastest; Must be enough for simple drivers
-   Control.RequiredAccess = FILE_ANY_ACCESS;  // Do not require any specific access rights
-  }
-   else Control.dwControlCode = Code;  // Given normal control code
- if(DeviceIoControl(this->hDriver,Control.dwControlCode,SndBuffer,SndBufSize,ResBuffer,ResBufSize,&BytesReturned,NULL))return BytesReturned;
- return -1;  // 'GetLastError' can be called after
 }
 //---------------------------------------------------------------------------
 int AdjustAccessRights(void)
@@ -224,6 +181,49 @@ int AdjustAccessRights(void)
  HeapFree(GetProcessHeap(), 0, (LPVOID)psd);
  return !bError;
 }
+//---------------------------------------------------------------------------
+//                          DRIVER SPECIFIC
+//---------------------------------------------------------------------------
+int OpenDriver(void)
+{
+ wchar_t  SymLink[MAX_PATH];
+ BYTE  SCfgBuf[1024];     // Must be enough for all our drivers
+ DWORD BufLen;
+ QUERY_SERVICE_CONFIGW *SrvConfig = (QUERY_SERVICE_CONFIGW*)&SCfgBuf;
+
+ if(!QueryServiceConfigW(this->hSCService,SrvConfig,sizeof(SCfgBuf),&BufLen))return GetLastError();
+ lstrcpyW(SymLink, L"\\\\.\\");
+ lstrcatW(SymLink, SrvConfig->lpDisplayName);
+ if((this->hDriver = CreateFileW(SymLink,GENERIC_READ|GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,OPEN_EXISTING,NULL,NULL))==INVALID_HANDLE_VALUE)return ERROR_INVALID_HANDLE;
+ return ERROR_SUCCESS;
+}
+//---------------------------------------------------------------------------
+int CloseDriver(void)
+{
+ if(this->hDriver == INVALID_HANDLE_VALUE)return ERROR_INVALID_HANDLE;
+ CloseHandle(this->hDriver);
+ this->hDriver = INVALID_HANDLE_VALUE;
+ return ERROR_SUCCESS;
+}
+//---------------------------------------------------------------------------
+int ControlDriver(DWORD Code, PVOID SndBuffer=NULL, UINT SndBufSize=0, PVOID ResBuffer=NULL, UINT ResBufSize=0)
+{
+ DWORD BytesReturned;
+ IoCtrlCode Control;
+
+ if(Code < 0x00010000)
+  { // Given only Function Code
+   Control.DeviceType     = FILE_DEVICE_CUSTOM;
+   Control.FunctionCode   = Code;
+   Control.TransferType   = METHOD_NEITHER;   // Most fastest; Must be enough for simple drivers
+   Control.RequiredAccess = FILE_ANY_ACCESS;  // Do not require any specific access rights
+  }
+   else Control.dwControlCode = Code;  // Given normal control code
+ if(DeviceIoControl(this->hDriver,Control.dwControlCode,SndBuffer,SndBufSize,ResBuffer,ResBufSize,&BytesReturned,NULL))return BytesReturned;
+ return -1;  // 'GetLastError' can be called after
+}
+//---------------------------------------------------------------------------
+
 };
 //---------------------------------------------------------------------------
-#endif
+
