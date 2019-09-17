@@ -252,7 +252,7 @@ bool SetHookIntr(PBYTE ProcAddr=NULL, UINT Flags=EHookFlg::hfFillNop|EHookFlg::h
   {								
    PVOID Addr = RelAddrToAddr(DisAddr,dhde.len,dhde.imm.imm32);  
    this->StolenCode[CodeLen] = 0xE8;
-   *(PDWORD)&this->StolenCode[CodeLen+1] = AddrToRelAddr(&this->StolenCode[CodeLen],5,Addr);
+   *(PDWORD)&this->StolenCode[CodeLen+1] = AddrToRelAddr(&this->StolenCode[CodeLen],5,(PBYTE)Addr);
    CodeLen += 5;
    continue;
   }
@@ -289,7 +289,7 @@ bool SetHookIntr(PBYTE ProcAddr=NULL, UINT Flags=EHookFlg::hfFillNop|EHookFlg::h
  Patch[5] = 0xC3;      // ret
 #else
  Patch[0]  = 0xE9;
- *((PDWORD)&Patch[1]) = AddrToRelAddr(ProcAddr,TrLen,*(PVOID*)&HookProc);
+ *((PDWORD)&Patch[1]) = AddrToRelAddr(ProcAddr,TrLen,*(PBYTE*)&HookProc);
 #endif
 #endif
  _mm_storeu_si128((__m128i*)ProcAddr, *(__m128i*)&Patch);  // SSE2, single operation, should be safe       // TODO: memcpy with aligned SSE2 16 byte copy

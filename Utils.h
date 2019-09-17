@@ -498,18 +498,18 @@ template<typename T> UINT TrimFilePath(T Path)
  return SLast;
 }
 //---------------------------------------------------------------------------
-template<typename T> T GetFileName(T FullPath)    // TODO: Just scan forward, no StrLen and backward scan  // Set constexpr 'IF' in case a T is a str obj an its size is known?
+template<typename T> T GetFileName(T FullPath, UINT Length=-1)    // TODO: Just scan forward, no StrLen and backward scan  // Set constexpr 'IF' in case a T is a str obj an its size is known?
 {
  int LastDel = -1; 
- for(int ctr=0;BYTE val=FullPath[ctr];ctr++){if(IsFilePathDelim(val))LastDel=ctr;}
+ for(int ctr=0,val=FullPath[ctr];val && Length;ctr++,Length--,val=FullPath[ctr]){if(IsFilePathDelim(val))LastDel=ctr;}
  return &FullPath[LastDel+1];
 }
 //---------------------------------------------------------------------------
-template<typename T> T GetFileExt(T FullPath) 
+template<typename T> T GetFileExt(T FullPath, UINT Length=-1) 
 {
  int LastDel = -1;
  int ctr = 0;
- for(;BYTE val=FullPath[ctr];ctr++){if(val=='.')LastDel=ctr;}
+ for(BYTE val=FullPath[ctr];val && Length;ctr++,Length--,val=FullPath[ctr]){if(val=='.')LastDel=ctr;}
  if(LastDel < 0)LastDel = ctr-1;
  return &FullPath[LastDel+1];
 }
