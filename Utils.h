@@ -992,6 +992,7 @@ public:
  ~CHndl(){this->Close();}
  void Close(void){if(this->IsValid()){CloseHandle(this->hHand); this->hHand = INVALID_HANDLE_VALUE;}}
  bool IsValid(void){return (((ULONG_PTR)this->hHand + 1) > 1);}  // Not 0 or -1(INVALID_HANDLE_VALUE)
+ void Set(HANDLE Hnd){this->hHand = Hnd;}
  HANDLE Get(void){return this->hHand;}
  HANDLE Invalidate(void){HANDLE val = this->hHand; this->hHand = INVALID_HANDLE_VALUE; return val;}
  operator   const HANDLE() {return this->hHand;}
