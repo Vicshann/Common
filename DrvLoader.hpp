@@ -29,6 +29,7 @@ int CreateSrvRecord(bool RefreshIfExist=true)
 {
  HKEY  hKey;
  DWORD dwDisposition;
+ DBGMSG("Executable path: %ls", &this->DriverPath); 
  if(RegCreateKeyExW(HKEY_LOCAL_MACHINE, this->DrvSrvPath, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &hKey, &dwDisposition) != ERROR_SUCCESS){DBGMSG("Failed to create the service record: %ls", &this->DrvSrvPath); return -3;}
  if(dwDisposition != REG_CREATED_NEW_KEY)       // Already there!
   {
@@ -38,18 +39,20 @@ int CreateSrvRecord(bool RefreshIfExist=true)
 
  int Res = 0;
  DWORD dwPathSize = (lstrlenW(this->DriverPath) + 1) * sizeof(WCHAR);
- if(RegSetValueExW(hKey, L"ImagePath", 0, REG_EXPAND_SZ, (PBYTE)&this->DriverPath, dwPathSize))Res--;
+ if(RegSetValueExW(hKey, L"ImagePath", 0, REG_BINARY, (PBYTE)&this->DriverPath, dwPathSize)){Res--; DBGMSG("Failed to set: ImagePath");}  // The Kernel doesn`t care and some antiviruses(WR-SA) allow      // Was REG_EXPAND_SZ
+// if(RegQueryValueExW(hKey,L"ImagePath",NULL,NULL,NULL,NULL)){Res--; DBGMSG("ImagePath has disappeared!");}              // ERROR_ACCESS_DENIED -> RegCreateKeyExW:KEY_WRITE
 
  DWORD dwServiceType = 1;
- if(RegSetValueExW(hKey, L"Type", 0, REG_DWORD, (PBYTE)&dwServiceType, sizeof(DWORD)))Res--;
+ if(RegSetValueExW(hKey, L"Type", 0, REG_DWORD, (PBYTE)&dwServiceType, sizeof(DWORD))){Res--; DBGMSG("Failed to set: Type");}
 
 // DWORD dwSrvErrCtrl = 1;
 // DWORD dwServiceStart = 3;
 // RegSetValueExW(hKey, L"ErrorControl", 0, REG_DWORD, (const BYTE *)&dwSrvErrCtrl, sizeof(DWORD));
 // RegSetValueExW(hKey, L"Start", 0, REG_DWORD, (const BYTE *)&dwServiceStart, sizeof(DWORD));
 
+ RegCloseKey(hKey);
  DBGMSG("%s",(Res < 0)?"Failed":"Done");
- return 0;
+ return Res;
 }
 //--------------------------------------
 int RemoveSrvRecord(void)

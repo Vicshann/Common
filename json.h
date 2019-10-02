@@ -707,7 +707,7 @@ bool Truncate(UINT NewCnt)
    return 0;
   }
 //--------------
- int ToFile(LPSTR FileName, UINT Flags=coNone, BYTE BinEncKey=0)  // Saving to CMiniStr vaw veeeery slooooow
+ int ToFile(PVOID FileName, UINT Flags=coNone, BYTE BinEncKey=0)  // Saving to CMiniStr vaw veeeery slooooow
   {  
    if(BinEncKey)
     {

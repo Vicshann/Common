@@ -130,9 +130,11 @@ const CFileStr& AddChars(char val, int Count=1)     // return CONST?
  return *this;
 }
 //----------------------
- bool SetFile(LPSTR File)
+ bool SetFile(PVOID FileName)
   {
-   this->hFile = CreateFile(File,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
+   HANDLE hFile;
+   if(!((PBYTE)FileName)[1])this->hFile = CreateFileW((PWSTR)FileName,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
+     else this->hFile = CreateFileA((LPSTR)FileName,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
    if(this->hFile == INVALID_HANDLE_VALUE)return false;
    return true;
   }

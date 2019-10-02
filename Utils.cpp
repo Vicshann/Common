@@ -1548,11 +1548,11 @@ int _stdcall RedirectExports(HMODULE ModFrom, HMODULE ModTo)
  return TRedirectExportsIntrn<PETYPE32>(ModFrom, ModTo); 
 }*/
 //---------------------------------------------------------------------------
-void _stdcall DumpHexData(PBYTE Data, UINT Size, UINT RowLen)      // Max row len is 256 bytes
+void _stdcall DumpHexData(PVOID Data, UINT Size, UINT RowLen)      // Max row len is 256 bytes
 {
  BYTE Buffer[512+4];
  if(RowLen > 256)RowLen = 256;
- PBYTE XData = Data;
+ PBYTE XData = (PBYTE)Data;
  UINT  XSize = Size;
  for(UINT RSize=0;XSize;XData+=RSize,XSize-=RSize)   // First dump HEX
   {
@@ -1568,7 +1568,7 @@ void _stdcall DumpHexData(PBYTE Data, UINT Size, UINT RowLen)      // Max row le
    *(DPtr++) = '\n';
    LOGTXT((LPSTR)&Buffer,(DPtr - (PBYTE)&Buffer));
   }
- XData = Data;
+ XData = (PBYTE)Data;
  XSize = Size;
  for(UINT RSize=0;XSize;XData+=RSize,XSize-=RSize)   // Second dump TEXT
   {
@@ -1586,17 +1586,18 @@ void _stdcall DumpHexData(PBYTE Data, UINT Size, UINT RowLen)      // Max row le
   }
 }
 //---------------------------------------------------------------------------
-void _stdcall DumpHexDataFmt(PBYTE Data, UINT Size, UINT RowLen)  // Max row len is 128 bytes
+void _stdcall DumpHexDataFmt(PVOID Data, UINT Size, UINT RowLen)  // Max row len is 128 bytes
 {
+ PBYTE XData = (PBYTE)Data;
  BYTE Buffer[256+128+4];
  if(RowLen > 128)RowLen = 128;
- for(UINT RSize=0;Size;Data+=RSize,Size-=RSize)
+ for(UINT RSize=0;Size;XData+=RSize,Size-=RSize)
   {
    RSize = (RowLen > Size)?(Size):(RowLen);
    PBYTE DPtr  = (PBYTE)&Buffer;
    for(UINT ctr=0;ctr < RSize;ctr++)    // Create HEX string
     {
-     WORD Val  = HexToChar(Data[ctr]);
+     WORD Val  = HexToChar(XData[ctr]);
      *(DPtr++) = Val;
      *(DPtr++) = Val >> 8;
     }
@@ -1605,7 +1606,7 @@ void _stdcall DumpHexDataFmt(PBYTE Data, UINT Size, UINT RowLen)  // Max row len
    *(DPtr++) = 0x20;
    for(UINT ctr=0;ctr < RSize;ctr++)   // Create Text string
     {
-     BYTE Val  = Data[ctr];
+     BYTE Val  = XData[ctr];
      if(Val < 0x20)Val = '.';
      *(DPtr++) = Val;
     }

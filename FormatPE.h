@@ -790,7 +790,7 @@ template<typename T> static PVOID _stdcall TResolveImportRecord(PVOID ModuleBase
  bool ByOrd = ((T)IRec->ProcName <= 0xFFFF);
  if(!TFindImportRecord<T>((PBYTE)ModuleBase, IRec->LibName, IRec->ProcName, &LookUpRec, &AddrRec, false))return NULL;
  PVOID   Old = (PVOID)AddrRec->Value;    // What about x64 ???????????????????????????
- AddrRec->Value = (T)IRec->Pointer;	// NOTE Offset of address not always have same index as SImportThunk entry!
+ AddrRec->Value = (T)IRec->Pointer;	// NOTE: Offset of address not always have same index as SImportThunk entry!
  return Old;
 }
 //---------------------------------------------------------------------------
@@ -824,22 +824,43 @@ template<typename T, bool Raw=false> _declspec(noinline) static PVOID _stdcall T
        DWORD nrva  = NamePointers[ctr];   
        if(!nrva || !IsNamesEqual((LPSTR)&ModuleBase[(Raw)?(TRvaToFileOffset<T>(ModuleBase,nrva)):(nrva)],ProcName))continue;    
        Ordinal = OrdinalTable[ctr];      // Name Ordinal 
+       break;
       }
      if(Ordinal > 0xFFFF)return NULL;
     }
 
  PBYTE Addr = &ModuleBase[(Raw)?(TRvaToFileOffset<T>(ModuleBase,AddressTable[Ordinal])):(AddressTable[Ordinal])];  
  if(ProcEntry)*ProcEntry = &AddressTable[Ordinal];
- if((Addr >= (PBYTE)Export)&&(Addr < ((PBYTE)Export+ExportDir->DirectorySize))&&Forwarder)*Forwarder = (LPSTR)Addr;
+ if(Forwarder && (Addr >= (PBYTE)Export) && (Addr < ((PBYTE)Export+ExportDir->DirectorySize)))*Forwarder = (LPSTR)Addr;
  return Addr;     
 }
 //---------------------------------------------------------------------------
 static PVOID _stdcall GetProcedureAddress(PVOID ModuleBase, LPSTR ApiName, LPSTR* Forwarder=NULL, PVOID* ProcEntry=NULL) 
 {
 // DBGMSG("ApiName: %s",ApiName);
+ if(!ModuleBase)return NULL;
  if(!IsValidPEHeader(ModuleBase))return NULL;
  if(IsValidModuleX64(ModuleBase))return TGetProcedureAddress<PETYPE64>((PBYTE)ModuleBase,ApiName,Forwarder,ProcEntry); 
  return TGetProcedureAddress<PETYPE32>((PBYTE)ModuleBase,ApiName,Forwarder,ProcEntry); 
+}
+//---------------------------------------------------------------------------
+static PVOID _stdcall GetProcAddr(PVOID ModuleBase, LPSTR ApiName)
+{
+ LPSTR Forwarder = NULL;
+ PVOID Addr = GetProcedureAddress(ModuleBase, ApiName, &Forwarder);
+ if(Addr && Forwarder)
+  {
+   int DotPos = 0;
+   char StrBuf[256];
+   for(int ctr=0;Forwarder[ctr];ctr++)
+     if(Forwarder[ctr]=='.')DotPos = ctr;  
+   memcpy(&StrBuf,Forwarder,DotPos);
+   StrBuf[DotPos] = 0;
+   ModuleBase = GetModuleHandleA(StrBuf);          // TODO: Use PEB  // How to decode 'api-ms-win-core-com-l1-1-0.dll' ?
+   if(!ModuleBase)return NULL;
+   return GetProcAddr(ModuleBase, &Forwarder[DotPos+1]);
+  }
+ return Addr;
 }
 //---------------------------------------------------------------------------
 static int _stdcall ParseForwarderStr(LPSTR InStr, LPSTR OutDllName, LPSTR OutProcName)    //  “NTDLL.RtlDeleteCriticalSection”,  “NTDLL.#491”

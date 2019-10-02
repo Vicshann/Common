@@ -308,8 +308,9 @@ bool SetHook(LPSTR ProcName, LPSTR LibName, UINT Flags=EHookFlg::hfFillNop|EHook
  if(this->IsActive() && !(Flags & EHookFlg::hfForceHook))return false;       // Already set
  HMODULE  hLib  = GetModuleHandleA(LibName);
  if(!hLib)hLib  = LoadLibraryA(LibName);             // Only with a ForceLoad flag?
- PBYTE ProcAddr = (PBYTE)GetProcAddress(hLib,ProcName);
- if(!ProcAddr){DBGMSG("Failed: %s:%s",LibName,ProcName);return false;}
+ PBYTE ProcAddr = (PBYTE)GetProcAddr(hLib, ProcName);    // 'C:\Windows\AppPatch\AcLayers.dll' sometimes intercept GetProcAddress and substitutes its result
+ if(!ProcAddr){DBGMSG("Failed: %s:%s",LibName,ProcName); return false;}
+// DBGMSG("Module=%p, Proc=%p",hLib,ProcAddr);
  return this->SetHook(ProcAddr,Flags,HookFunc);  
 }  
 //------------------------------------------------------------------------------------
