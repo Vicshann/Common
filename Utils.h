@@ -226,6 +226,7 @@ UINT _stdcall NextItemASN1(PBYTE DataPtr, PBYTE* Body, PBYTE Type, UINT* Size);
 int _stdcall FormatDateForHttp(SYSTEMTIME* st, LPSTR DateStr);
 bool _stdcall IsWow64(void);
 int __stdcall SetProcessPrivilegeState(bool bEnable, LPSTR PrName, HANDLE hProcess=GetCurrentProcess());
+DWORD _fastcall GetRealVersionInfo(PDWORD dwMajor=NULL, PDWORD dwMinor=NULL, PDWORD dwBuild=NULL, PDWORD dwPlatf=NULL);
 //---------------------------------------------------------------------------
 
 

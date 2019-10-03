@@ -84,7 +84,7 @@ int DriverOperate(bool Load, bool AllowRefresh=true, bool KeepSrvRec=false)
  if(!KeepSrvRec)this->RemoveSrvRecord();                    
  if(Load && (STATUS_IMAGE_ALREADY_LOADED == res)){DBGMSG("Already loaded: %ls",&this->DriverPath); return 0;}
  if(!Load && (STATUS_OBJECT_NAME_NOT_FOUND == res)){DBGMSG("Not loaded: %ls",&this->DriverPath); return 0;}
- if(res != STATUS_SUCCESS){DBGMSG("Failed(%u): %08X",(int)Load,res); return -2;}
+ if(res != STATUS_SUCCESS){DBGMSG("Failed(%u): %08X",(int)Load,res); return (int)res;}
  DBGMSG("Done(%u)",(int)Load);
  return 0;
 }
@@ -102,10 +102,10 @@ CDrvLoader(void)
 int Initialize(PWSTR SrvName, PWSTR DrvPath, PVOID pLoadDriver=NULL, PVOID pUnloadDriver=NULL)
 {
  if(SetProcessPrivilegeState(true, SE_LOAD_DRIVER_NAME, GetCurrentProcess()) < 0){DBGMSG("Failed to enable SeLoadDriverPrivilege!"); return -1;}
- lstrcatW(this->DrvSrvPath, L"System\\CurrentControlSet\\Services\\");
+ lstrcpyW(this->DrvSrvPath, L"System\\CurrentControlSet\\Services\\");
  lstrcatW(this->DrvSrvPath, SrvName);
- if(DrvPath[1] == ':')lstrcatW(DriverPath, L"\\??\\");
- lstrcatW(DriverPath, DrvPath);
+ if(DrvPath[1] == ':')lstrcatW(this->DriverPath, L"\\??\\");
+ lstrcpyW(this->DriverPath, DrvPath);
  DBGMSG("Done");
  return 0;
 }

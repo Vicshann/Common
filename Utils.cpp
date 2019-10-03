@@ -2216,6 +2216,23 @@ int __stdcall SetProcessPrivilegeState(bool bEnable, LPSTR PrName, HANDLE hProce
  return 0;
 }
 //------------------------------------------------------------------------------------------------------------
+// Starting in Windows 8.1, GetVersion() and GetVersionEx() are subject to application manifestation
+// See https://stackoverflow.com/questions/32115255/c-how-to-detect-windows-10
+//
+extern "C" { NTSTATUS NTAPI RtlGetVersion(PRTL_OSVERSIONINFOW lpVersionInformation); }
+DWORD _fastcall GetRealVersionInfo(PDWORD dwMajor, PDWORD dwMinor, PDWORD dwBuild, PDWORD dwPlatf)
+{
+ RTL_OSVERSIONINFOW osInfo;
+ osInfo.dwOSVersionInfoSize = sizeof(osInfo);
+ RtlGetVersion(&osInfo);
+ if(dwMajor)*dwMajor = osInfo.dwMajorVersion;
+ if(dwMinor)*dwMinor = osInfo.dwMinorVersion;
+ if(dwBuild)*dwBuild = osInfo.dwBuildNumber;
+ if(dwPlatf)*dwPlatf = osInfo.dwPlatformId;
+ DWORD Composed = (osInfo.dwPlatformId << 16)|(osInfo.dwMinorVersion << 8)|osInfo.dwMajorVersion;
+ return Composed;
+}
+//---------------------------------------------------------------------------
 
 //------------------------------------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------------------------
