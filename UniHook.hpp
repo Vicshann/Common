@@ -18,6 +18,7 @@
 */
 
 #include <emmintrin.h>   // NOTE: All '#include' must be commented out and used only as a hint to compose BaseHdr.h individually for each project
+#include "FormatPE.h"
 #include "HDE.h"
 
 // TODO: If hooking a function that is imported by this module, update ImportRecord to point to OrigProc

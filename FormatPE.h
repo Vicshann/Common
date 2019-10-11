@@ -801,6 +801,32 @@ static PVOID _stdcall ResolveImportRecord(PVOID ModuleBase, SImportRec* IRec)
  return TResolveImportRecord<PETYPE32>(ModuleBase,IRec);
 }
 //---------------------------------------------------------------------------
+template<typename T> _declspec(noinline) static LPSTR _stdcall TGetProcedureInfoByAddr(PBYTE ModuleBase, PVOID ProcAddr, PDWORD OrdinalOut=NULL)  
+{
+ DOS_HEADER* DosHdr        = (DOS_HEADER*)ModuleBase;
+ WIN_HEADER<T>* WinHdr     = (WIN_HEADER<T>*)&ModuleBase[DosHdr->OffsetHeaderPE];
+ DATA_DIRECTORY* ExportDir = &WinHdr->OptionalHeader.DataDirectories.ExportTable;
+ EXPORT_DIR* Export        = (EXPORT_DIR*)&ModuleBase[ExportDir->DirectoryRVA];
+                   
+ PDWORD NamePointers = (PDWORD)&ModuleBase[Export->NamePointersRVA];
+ PDWORD AddressTable = (PDWORD)&ModuleBase[Export->AddressTableRVA];
+ PWORD  OrdinalTable = (PWORD )&ModuleBase[Export->OrdinalTableRVA];
+ for(UINT Ordinal=0; Ordinal <= 0xFFFF;Ordinal++)
+  {
+   PBYTE Addr = &ModuleBase[AddressTable[Ordinal]];  
+   if(Addr != ProcAddr)continue;
+   for(DWORD ctr=0;ctr < Export->NamePointersNumber;ctr++)  // By name
+    {      
+     if(Ordinal != OrdinalTable[ctr])continue;
+     DWORD nrva  = NamePointers[ctr];   
+     if(OrdinalOut)*OrdinalOut = Ordinal;
+     return (LPSTR)&ModuleBase[nrva];
+    }
+   break;
+  }
+ return NULL;
+}
+//---------------------------------------------------------------------------      
 template<typename T, bool Raw=false> _declspec(noinline) static PVOID _stdcall TGetProcedureAddress(PBYTE ModuleBase, LPSTR ProcName, LPSTR* Forwarder=NULL, PVOID* ProcEntry=NULL)  // No forwarding support, no ordinals
 {
  DOS_HEADER* DosHdr        = (DOS_HEADER*)ModuleBase;

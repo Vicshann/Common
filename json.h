@@ -1218,10 +1218,26 @@ static int FindXmlObjNameEnd(CMiniStr& str, int Pos)
  return (Str[Pos])?(Pos):(-1);
 }
 //------------------------------------------------------------------------------------
-int LoadXmlOjectsToJsn(CMiniStr& XmlStr, int From=0)  // Attributes and body
+int LoadXmlOjectsToJsn(CMiniStr& XmlStr, int From=0, bool SkipComments=false)  // Attributes and body     // TODO: Support of comments in attributes
 {
  int npbeg = XmlStr.Pos('<',CMiniStr::ComparatorE,From);
  if(npbeg < 0)return -1;
+ if((XmlStr.c_str()[npbeg+1] == '!')&&(XmlStr.c_str()[npbeg+2] == '-')&&(XmlStr.c_str()[npbeg+3] == '-'))   // Comment block
+  {
+   npbeg += 4;
+   int cend = XmlStr.Pos("-->",npbeg);
+   if(cend < 0)return -2;             // No comment block termination!
+   if(!SkipComments)
+    {
+     this->SetName("#"); 
+     this->SetValStr(&XmlStr.c_str()[npbeg], cend-npbeg);
+     this->SetType(jstString);
+     return cend+3;
+    } 
+   From  = cend+3;
+   npbeg = XmlStr.Pos('<',CMiniStr::ComparatorE,From);
+   if(npbeg < 0)return -1;
+  }
  npbeg = SkipSpaces(XmlStr, ++npbeg);
  if(npbeg < 0)return -1;
  int npend = FindXmlObjNameEnd(XmlStr, npbeg);   // XmlStr.Pos('<',CMiniStr::ComparatorE,From);
@@ -1231,7 +1247,7 @@ int LoadXmlOjectsToJsn(CMiniStr& XmlStr, int From=0)  // Attributes and body
  npend = SkipSpaces(XmlStr,npend);
  if(npend < 0)return -1;
  CJSonItem* Arr = this->Add(CJSonItem(jsArray,"$"));   // Attrs  // First child entry is always reserved for it so content is always starts from 1
- while(XmlStr.c_str()[npend] != '>')
+ while(XmlStr.c_str()[npend] != '>')      // Load attributes
   {
    if(XmlStr.c_str()[npend] == '/')return XmlStr.Pos('>',CMiniStr::ComparatorE,npend)+1;     // End of object, no body
    int epos = XmlStr.Pos('=',CMiniStr::ComparatorE,npend);
@@ -1250,11 +1266,11 @@ int LoadXmlOjectsToJsn(CMiniStr& XmlStr, int From=0)  // Attributes and body
  npend = SkipSpaces(XmlStr, npend+1);  // After this npend points to ObjBody or Child objects
  if(npend < 0)return -1;
 
- if(XmlStr.c_str()[npend] != '<')   // Load DataBody
+ if(XmlStr.c_str()[npend] != '<')   // Load DataBody  // Should not start with '<'
   {
    int dend = XmlStr.Pos('<',CMiniStr::ComparatorE,npend);    // I.E.: <MyObjName>0AD1F9C900336BA32156C4DFE8BFC010C28CAB30</MyObjName>
    if(npend < 0)return -5;
-   CJSonItem* Itm = this->Add(CJSonItem(""));
+   CJSonItem* Itm = this->Add(CJSonItem(""));         // Add a body as unnamed string
    int slen = SkipSpaces(XmlStr, dend, true) - npend;
    if(slen > 0)Itm->SetValStr(&XmlStr.c_str()[npend], slen);
    npend = dend;    // Now npend should point to Closing (</MyObjName>)
@@ -1264,7 +1280,7 @@ int LoadXmlOjectsToJsn(CMiniStr& XmlStr, int From=0)  // Attributes and body
      for(;;)
       {
        CJSonItem* Itm = this->Add(CJSonItem(jsObject));
-       npend = Itm->LoadXmlOjectsToJsn(XmlStr, npend);
+       npend = Itm->LoadXmlOjectsToJsn(XmlStr, npend, SkipComments);
        npend = XmlStr.Pos('<',CMiniStr::ComparatorE,npend); 
        if(npend < 0)return -6;
        if(XmlStr.c_str()[npend+1] == '/')
@@ -1285,25 +1301,35 @@ int SaveJsnOjectsToXml(CMiniStr& XmlStr, int Depth=0, int Ind=2)
  XmlStr += "<";
  XmlStr += this->GetName();
  CJSonItem* Arr = this->Get((UINT)0);
- for(CJSonItem* Itm=Arr->First();Itm;Itm=Arr->Next(Itm))
+ for(CJSonItem* Itm=Arr->First();Itm;Itm=Arr->Next(Itm))   // Attributes
   {
    XmlStr += " ";
    XmlStr += Itm->GetName();
    XmlStr += "=\"";
    XmlStr += Itm->GetValStr();
    XmlStr += "\"";
-  }
- CJSonItem* Content = this->Get((UINT)1);
- if(Content)
+  }     
+ if(CJSonItem* Content = this->Get((UINT)1))    // Child objects start from 1 (After attributes)
   {
-   XmlStr += ">";
-   if(Content->GetNameLen())  // Child Objects
+   XmlStr += ">";           // Close the name
+   if(UINT NLen = Content->GetNameLen())  // Child Objects or a comment
     {
-     XmlStr += "\r\n";
-     for(CJSonItem* Itm=Content;Itm;Itm=this->Next(Itm))Itm->SaveJsnOjectsToXml(XmlStr, Depth+1);
-     XmlStr.AddChars(0x20,Depth*Ind);  // Close on a new line
+     XmlStr += "\r\n";  // From a new line
+     if(Content->IsValStr())      // Comment block        //  ((NLen == 1) && Content->IsValStr() && *Content->GetName() == '#')
+      {
+       XmlStr.AddChars(0x20,(Depth+1)*Ind); 
+       XmlStr += "<!--";
+       XmlStr.cAppend(Content->GetValStr(), Content->GetValStrLen());
+       XmlStr += "-->\r\n";
+       Content = this->Next(Content);
+      }
+     if(Content)  
+      {
+       for(CJSonItem* Itm=Content;Itm;Itm=this->Next(Itm))Itm->SaveJsnOjectsToXml(XmlStr, Depth+1);
+       XmlStr.AddChars(0x20,Depth*Ind);  // Close on a new line  
+      }
     }
-     else XmlStr.cAppend(Content->GetValStr(), Content->GetValStrLen());   // Will be closed on same line
+     else XmlStr.cAppend(Content->GetValStr(), Content->GetValStrLen());   // Data body  // Will be closed on same line
    XmlStr += "</";
    XmlStr += this->GetName();
    XmlStr += ">\r\n";  

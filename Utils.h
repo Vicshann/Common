@@ -541,9 +541,9 @@ template<typename T> void _fastcall ReverseElements(T* Array, UINT Count)
   }
 }
 //---------------------------------------------------------------------------
-template<typename T> int _stdcall GetSubStrOffs(T* Str, T* SubStr, int Length=0, bool CaseSens=false)   // if constexpr (...)   // Zero-Terminated strings only! - Fix this
+template<typename T> int _stdcall GetSubStrOffs(T* Str, T* SubStr, int LenSubStr=0, bool CaseSens=false)   // if constexpr (...)   // Zero-Terminated strings only! - Fix this
 {
- Length = lstrlen(SubStr);
+ if(!LenSubStr)LenSubStr = lstrlen(SubStr);
  DWORD Flags = (!CaseSens)?(NORM_IGNORECASE):(0);
  for(int Offs=0;*Str;Offs++,Str++)
   {
