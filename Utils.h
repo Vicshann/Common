@@ -227,8 +227,45 @@ int _stdcall FormatDateForHttp(SYSTEMTIME* st, LPSTR DateStr);
 bool _stdcall IsWow64(void);
 int __stdcall SetProcessPrivilegeState(bool bEnable, LPSTR PrName, HANDLE hProcess=GetCurrentProcess());
 DWORD _fastcall GetRealVersionInfo(PDWORD dwMajor=NULL, PDWORD dwMinor=NULL, PDWORD dwBuild=NULL, PDWORD dwPlatf=NULL);
+int _stdcall GetMappedFilePath(PVOID DllBase, PWSTR PathBuf, UINT BufChrLen);
+//---------------------------------------------------------------------------
+struct SAppFile
+{
+static void FreeAppMem(PBYTE Addon)
+{
+ HeapFree(GetProcessHeap(),0,Addon); 
+}
+//---------------------------------------------------------------------------
+static long LoadAppFile(PVOID FileName, PBYTE* AppMem, ULONG* AppLen)
+{
+ DWORD Result = 0;
+ HANDLE hFile;
+ if(!((PBYTE)FileName)[1])hFile = CreateFileW((PWSTR)FileName,GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
+   else hFile = CreateFileA((LPSTR)FileName,GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
+ if(hFile == INVALID_HANDLE_VALUE){LOGMSG("Failed to open: %s", FileName);return -1;}
+ *AppLen = GetFileSize(hFile,NULL);
+ *AppMem = (PBYTE)HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,(*AppLen+128)); 
+ if(*AppLen)ReadFile(hFile,*AppMem,*AppLen,&Result,NULL);
+ if(Result != *AppLen){LOGMSG("Failed to read: %s", FileName); FreeAppMem(*AppMem);return -2;}
+ CloseHandle(hFile);
+ return 0;
+}
+//---------------------------------------------------------------------------
+static long SaveAppFile(PVOID FileName, PBYTE AppMem, ULONG AppLen)
+{
+ DWORD  Result;
+ HANDLE hFile;
+ if(!((PBYTE)FileName)[1])hFile = CreateFileW((PWSTR)FileName,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
+   else hFile = CreateFileA((LPSTR)FileName,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
+ if(hFile == INVALID_HANDLE_VALUE){LOGMSG("Failed to save file: %s", FileName);return -1;}
+ WriteFile(hFile,AppMem,AppLen,&Result,NULL);
+ CloseHandle(hFile);
+ if(AppLen != Result)return -2;
+ return 0;
+}
 //---------------------------------------------------------------------------
 
+};
 
 // Thread Environment Block (TEB)
 /*#if defined(_M_X64) // x64
@@ -1085,6 +1122,13 @@ public:
    return this->Append(Elems, Cnt * sizeof(T));
   }
 //----------------------------------------------------------
+ bool Assign(void* Bytes, UINT Len)     // In Bytes
+  {
+   if(!this->Resize(Len))return false;
+   if(Bytes)memcpy(this->AData, Bytes, Len);
+   return true;
+  }
+//----------------------------------------------------------
  bool Append(void* Bytes, UINT Len)     // In Bytes
   {
    UINT OldSize = this->Size();
@@ -1105,9 +1149,10 @@ public:
   {
   HANDLE hHeap = GetProcessHeap();
   size_t* Ptr = (size_t*)this->AData;
-  if(Len && this->AData)Ptr = (size_t*)HeapReAlloc(hHeap,HEAP_ZERO_MEMORY,&Ptr[-1],Len+sizeof(size_t));
-	else if(!this->AData)Ptr = (size_t*)HeapAlloc(hHeap,HEAP_ZERO_MEMORY,Len+sizeof(size_t));
-	  else if(!Len && this->AData){HeapFree(hHeap,0,&Ptr[-1]); this->AData=NULL; return false;}
+  if(Len && Ptr)Ptr = (size_t*)HeapReAlloc(hHeap,HEAP_ZERO_MEMORY,&Ptr[-1],Len+sizeof(size_t));
+	else if(!Ptr)Ptr = (size_t*)HeapAlloc(hHeap,HEAP_ZERO_MEMORY,Len+sizeof(size_t));
+	  else if(!Len && Ptr){HeapFree(hHeap,0,&Ptr[-1]); this->AData=NULL; return false;}
+  if(!Ptr)return false;
   *Ptr = Len;
   this->AData = (T*)(++Ptr);
   return true;
@@ -1123,8 +1168,7 @@ public:
    DWORD Result   = 0;
    DWORD FileSize = GetFileSize(hFile,NULL);
    UINT  LdCnt    = (FileSize / sizeof(T));
-   this->Resize(LdCnt);
-   if(FileSize)ReadFile(hFile,this->AData,(LdCnt*sizeof(T)),&Result,NULL);
+   if(FileSize && this->Resize(LdCnt))ReadFile(hFile,this->AData,(LdCnt*sizeof(T)),&Result,NULL);
    CloseHandle(hFile);
    return (Result / sizeof(T));
   }

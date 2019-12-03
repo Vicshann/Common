@@ -31,7 +31,7 @@
 // C++11 things are used. Microsoft specific things are avoided?
 // NOTE: 'unsigned int' is assumed to be 32 bit
 // NOTE: Only works as expected with O2(Maximize Speed) optimization! (Os and Ot have no effect)
-// NOTE: This is also embedds a string into a code and makes it relocable
+// NOTE: This is also embeds a string into a code and makes it relocable
 // NOTE: Without '__forceinline' the MSVC compiler likes to ignore inlining and compile-time encryption
 // TODO: Add another encryption class that supports an encrypted string tables
 //------------------------------------------------------------------------------

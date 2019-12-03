@@ -117,14 +117,16 @@ static int Decode(CMiniStr &str)
  CBase64::Initialize();
  int pos  = 0;
  int Padd = 0;
- int Size = str.Length();  
+ int Size = str.Length() & ~3; 
+ if(!Size)return -1;
+ while((Size > 0) && (str.c_data()[Size-4] == PaddChar))Size -= 4;   // Remove some excess padding (Prevents converting them into zeroes)
+ if(Size < 4)return -2; // Too small for a Base64 message!  // TODO: Allow incomplete and unpadded segments
  int PExt = (Size % 4);
  if(PExt)
   {
    str.SetLength(Size + (4-PExt));
    PExt = (PExt-1)-3;     // 1,2,3 -> -3,-2,-1
   }
- if(Size < 4)return -1; // Too small for a Base64 message!  // TODO: Allow incomplete and unpadded segments
  for(int ctr = 0;ctr < Size;ctr+=4,pos+=3)
   {
    Padd = 0;

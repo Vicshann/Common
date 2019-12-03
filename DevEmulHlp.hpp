@@ -27,6 +27,7 @@ struct CDevEmulHlp
 {
  HDEVINFO hCurDevInf;  
  PVOID LstFakeIntfDataPtr;        // PSP_DEVICE_INTERFACE_DATA
+ DWORD FakeInterfIdx;     // For After_ProcSetupDiEnumDeviceInterfaces to terminate properly on second ERROR_NO_MORE_ITEMS (First will return a fake interface entry)
 // int  UsbDevInfoIdx;    // Useless? // Just use a first fail if 'MemberIndex'
  BYTE DevPathStr[99];       
  BYTE ClassGuidA[16];     // Device setup class GUID (For SetupDiGetClassDevs)         
@@ -42,6 +43,7 @@ void Initialize(LPSTR DevPath, PBYTE GClassA, PBYTE GClassB, PBYTE GFake)
  memcpy(&this->FakeGuid,GFake,16);
  lstrcpyn((LPSTR)&this->DevPathStr,DevPath,90);
 // this->UsbDevInfoIdx = -1;
+ this->FakeInterfIdx = -1;
 }
 //---------------------------------------------------
 int After_SetupDiGetClassDevs(GUID *ClassGuid, HDEVINFO DInf)
@@ -77,13 +79,18 @@ int After_SetupDiEnumDeviceInfo(HDEVINFO DeviceInfoSet, DWORD MemberIndex, PSP_D
  return false;
 }
 //---------------------------------------------------
+// Adds a fake interface entry at the end of list
+//
 int After_ProcSetupDiEnumDeviceInterfaces(HDEVINFO DeviceInfoSet, DWORD MemberIndex, PSP_DEVICE_INTERFACE_DATA DeviceInterfaceData, int* Res)  // Fake device at first failed MemberIndex
 {
  int LastErr = GetLastError();
  LOGMSG("Result=%u, DeviceInfoSet=%p, hCurDevInf=%p, LastErr=%u",*Res,DeviceInfoSet,this->hCurDevInf,LastErr);
- if(*Res || /*(MemberIndex != this->UsbDevInfoIdx) ||*/ (DeviceInfoSet != this->hCurDevInf) || (GetLastError()!=ERROR_NO_MORE_ITEMS))return 0;   // this->UsbDevInfoIdx must be for a fake entry
+ if(*Res)this->FakeInterfIdx = -1;     // Valid Entry - Reset  // NOTE: No parralel work with different HDEVINFO here
+ if(*Res || (MemberIndex > this->FakeInterfIdx) || /*(MemberIndex != this->UsbDevInfoIdx) ||*/ (DeviceInfoSet != this->hCurDevInf) || (LastErr!=ERROR_NO_MORE_ITEMS))return 0;   // this->UsbDevInfoIdx must be for a fake entry
+ if(MemberIndex > this->FakeInterfIdx)return 0;    // This is second ERROR_NO_MORE_ITEMS
  SetLastError(0);      
  *Res = 1;  
+ this->FakeInterfIdx           = MemberIndex;
  this->LstFakeIntfDataPtr      = DeviceInterfaceData;
  DeviceInterfaceData->cbSize   = sizeof(SP_DEVICE_INTERFACE_DATA);
  DeviceInterfaceData->Reserved = 0;
@@ -99,7 +106,8 @@ template<typename T> int Before_SetupDiGetDeviceInterfaceDetail(HDEVINFO DeviceI
  SetLastError(0);
  if(!DeviceInterfaceDetailData && !DeviceInterfaceDetailDataSize)
   {
-   if(RequiredSize)*RequiredSize = 512;
+   if(RequiredSize)*RequiredSize = 512;   // ???
+   SetLastError(ERROR_INSUFFICIENT_BUFFER);  // 122
    return 0;
   }  
  LOGMSG("Resetting hCurDevInf: %p",this->hCurDevInf); 

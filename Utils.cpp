@@ -1702,34 +1702,6 @@ int _stdcall CopyFileByMask(LPSTR DstDir, LPSTR FileMask, bool Overwr)
  return FNum;
 }
 //---------------------------------------------------------------------------
-void _stdcall FreeAppMem(PBYTE Addon)
-{
- HeapFree(GetProcessHeap(),0,Addon); 
-}
-//---------------------------------------------------------------------------
-long _stdcall LoadAppFile(LPSTR FileName, PBYTE* AppMem, ULONG* AppLen)
-{
- DWORD Result = 0;
- HANDLE hFile = CreateFile(FileName,GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
- if(hFile == INVALID_HANDLE_VALUE){LOGMSG("Failed to open: %s", FileName);return -1;}
- *AppLen = GetFileSize(hFile,NULL);
- *AppMem = (PBYTE)HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,(*AppLen+128)); 
- if(*AppLen)ReadFile(hFile,*AppMem,*AppLen,&Result,NULL);
- if(Result != *AppLen){LOGMSG("Failed to read: %s", FileName); FreeAppMem(*AppMem);return -2;}
- CloseHandle(hFile);
- return *AppLen;
-}
-//---------------------------------------------------------------------------
-long _stdcall SaveAppFile(LPSTR FileName, PBYTE AppMem, ULONG AppLen)
-{
- DWORD  Result;
- HANDLE hFile = CreateFile(FileName,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
- if(hFile == INVALID_HANDLE_VALUE){LOGMSG("Failed to save file: %s", FileName);return -1;}
- WriteFile(hFile,AppMem,AppLen,&Result,NULL);
- CloseHandle(hFile);
- return Result;
-}
-//---------------------------------------------------------------------------
 // Suspicious... Taked from 'WinApiOverride32' source
 WORD _stdcall CalcSimpleCRC16(PVOID Buffer, DWORD BufferSize)
 {
@@ -2233,6 +2205,23 @@ DWORD _fastcall GetRealVersionInfo(PDWORD dwMajor, PDWORD dwMinor, PDWORD dwBuil
  return Composed;
 }
 //---------------------------------------------------------------------------
+int _stdcall GetMappedFilePath(PVOID DllBase, PWSTR PathBuf, UINT BufChrLen)   // Returns as '\Device\HarddiskVolume'
+{
+ SIZE_T RetLen;
+ BYTE Buffer[1028];            
+ if(!NtQueryVirtualMemory(NtCurrentProcess,DllBase,MemoryMappedFilenameInformation,&Buffer,sizeof(Buffer),&RetLen) && RetLen)
+  {
+   PWSTR DllPath = ((UNICODE_STRING*)&Buffer)->Buffer;
+   UINT  PathLen = ((UNICODE_STRING*)&Buffer)->Length;
+   RetLen = (BufChrLen-1) * sizeof(WCHAR);
+   if(PathLen > RetLen)PathLen = RetLen;
+   memcpy(PathBuf, DllPath, PathLen);
+   *((WCHAR*)&((PBYTE)PathBuf)[PathLen]) = 0;
+   return PathLen / sizeof(WORD);
+  }
+ return 0;
+};
+//------------------------------------------------------------------------------------
 
 //------------------------------------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------------------------

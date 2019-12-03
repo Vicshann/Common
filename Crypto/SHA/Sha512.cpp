@@ -127,8 +127,7 @@ void SHA512::final(unsigned char *digest)
     unsigned int pm_len;
     unsigned int len_b;
     int i;
-    block_nb = 1 + ((SHA384_512_BLOCK_SIZE - 17)
-                     < (m_len % SHA384_512_BLOCK_SIZE));
+    block_nb = 1 + ((SHA384_512_BLOCK_SIZE - 17) < (m_len % SHA384_512_BLOCK_SIZE));
     len_b = (m_tot_len + m_len) << 3;
     pm_len = block_nb << 7;
     memset(m_block + m_len, 0, pm_len - m_len);

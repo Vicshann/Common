@@ -801,7 +801,10 @@ static PVOID _stdcall ResolveImportRecord(PVOID ModuleBase, SImportRec* IRec)
  return TResolveImportRecord<PETYPE32>(ModuleBase,IRec);
 }
 //---------------------------------------------------------------------------
-template<typename T> _declspec(noinline) static LPSTR _stdcall TGetProcedureInfoByAddr(PBYTE ModuleBase, PVOID ProcAddr, PDWORD OrdinalOut=NULL)  
+// NOTE: Kernel32.dll exports some functions with a different names(i.e. lstrlen and lstrlenA)
+// Will not find a forwarded address
+//
+template<typename T> _declspec(noinline) static LPSTR _stdcall TGetProcedureInfoByAddr(PBYTE ModuleBase, PVOID ProcAddr, PDWORD OrdinalOut=NULL, int MatchIdx=0)  
 {
  DOS_HEADER* DosHdr        = (DOS_HEADER*)ModuleBase;
  WIN_HEADER<T>* WinHdr     = (WIN_HEADER<T>*)&ModuleBase[DosHdr->OffsetHeaderPE];
@@ -811,10 +814,12 @@ template<typename T> _declspec(noinline) static LPSTR _stdcall TGetProcedureInfo
  PDWORD NamePointers = (PDWORD)&ModuleBase[Export->NamePointersRVA];
  PDWORD AddressTable = (PDWORD)&ModuleBase[Export->AddressTableRVA];
  PWORD  OrdinalTable = (PWORD )&ModuleBase[Export->OrdinalTableRVA];
- for(UINT Ordinal=0; Ordinal <= 0xFFFF;Ordinal++)
+ for(UINT Ordinal=0; (Ordinal < Export->FunctionsNumber) && (Ordinal <= 0xFFFF);Ordinal++)
   {
    PBYTE Addr = &ModuleBase[AddressTable[Ordinal]];  
    if(Addr != ProcAddr)continue;
+   MatchIdx--;
+   if(MatchIdx > 0)continue;
    for(DWORD ctr=0;ctr < Export->NamePointersNumber;ctr++)  // By name
     {      
      if(Ordinal != OrdinalTable[ctr])continue;
@@ -832,6 +837,7 @@ template<typename T, bool Raw=false> _declspec(noinline) static PVOID _stdcall T
  DOS_HEADER* DosHdr        = (DOS_HEADER*)ModuleBase;
  WIN_HEADER<T>* WinHdr     = (WIN_HEADER<T>*)&ModuleBase[DosHdr->OffsetHeaderPE];
  DATA_DIRECTORY* ExportDir = &WinHdr->OptionalHeader.DataDirectories.ExportTable;
+ if(!ExportDir->DirectoryRVA || !ExportDir->DirectorySize)return NULL;		 // No export directory!
  EXPORT_DIR* Export        = (EXPORT_DIR*)&ModuleBase[(Raw)?(TRvaToFileOffset<T>(ModuleBase,ExportDir->DirectoryRVA)):(ExportDir->DirectoryRVA)];
                    
  PDWORD NamePointers = (PDWORD)&ModuleBase[(Raw)?(TRvaToFileOffset<T>(ModuleBase,Export->NamePointersRVA)):(Export->NamePointersRVA)];

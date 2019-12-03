@@ -136,14 +136,14 @@ static bool IsAddrHooked(PVOID PAddr, PVOID Hook)       // Already hooked by thi
  if(Hook && (*(PVOID*)&Addr[2] != Hook))return false;
 #else
  if(Addr[0] != 0xE9)return true;   // Not reliable, it may be an original code
- if(Hook && (RelAddrToAddr(Addr,5,*(PDWORD)&Addr[1]) != Hook))return false;
+ if(Hook && (RelAddrToAddr(Addr,5,*(PDWORD)&Addr[1]) != Hook))return false;     // PDWORD?
 #endif
  return true;
 }
 //------------------------------------------------------------------------------------
 bool SetHookIntr(PBYTE ProcAddr=NULL, UINT Flags=EHookFlg::hfFillNop|EHookFlg::hfFollowJmp, void* HookFunc=NULL)   // Can be reused with same ProcAddr after 'Remove'  // Do not refer to 'T' from here or this function may be duplicated
 {
- if(!ProcAddr || (this->IsActive() && !(Flags & EHookFlg::hfForceHook))){/*DBGMSG("Failed: %p",ProcAddr);*/ return false;}       // Logging here will mage the message duplicated by templating and size will bloat!
+ if(!ProcAddr || (this->IsActive() && !(Flags & EHookFlg::hfForceHook))){/*DBGMSG("Failed: %p",ProcAddr);*/ return false;}       // Logging here will make the message duplicated by templating and size will bloat!
 // DBGMSG("Hooking: %p",ProcAddr);
 #ifdef _AMD64_
  HDE64 dhde;
@@ -308,9 +308,9 @@ bool SetHook(LPSTR ProcName, LPSTR LibName, UINT Flags=EHookFlg::hfFillNop|EHook
 {
  if(this->IsActive() && !(Flags & EHookFlg::hfForceHook))return false;       // Already set
  HMODULE  hLib  = GetModuleHandleA(LibName);
- if(!hLib)hLib  = LoadLibraryA(LibName);             // Only with a ForceLoad flag?
+ if(!hLib && LibName)hLib  = LoadLibraryA(LibName);             // Only with a ForceLoad flag?
  PBYTE ProcAddr = (PBYTE)GetProcAddr(hLib, ProcName);    // 'C:\Windows\AppPatch\AcLayers.dll' sometimes intercept GetProcAddress and substitutes its result
- if(!ProcAddr){DBGMSG("Failed: %s:%s",LibName,ProcName); return false;}
+ if(!ProcAddr){DBGMSG("Failed: %s:%s",LibName?LibName:"",ProcName); return false;}
 // DBGMSG("Module=%p, Proc=%p",hLib,ProcAddr);
  return this->SetHook(ProcAddr,Flags,HookFunc);  
 }  

@@ -467,7 +467,7 @@ int Count(BYTE chr, int from=0)
    return true;
   }
 //----------------------
- bool FromFile(PVOID FileName)
+ bool FromFile(PVOID FileName)     // Corrpts CMiniStr when trying to load a 140mb file!
   {
    HANDLE hFile;
    if(!((PBYTE)FileName)[1])hFile = CreateFileW((PWSTR)FileName,GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
@@ -486,7 +486,6 @@ int Count(BYTE chr, int from=0)
    HANDLE hFile;
    if(!((PBYTE)FileName)[1])hFile = CreateFileW((PWSTR)FileName,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
      else hFile = CreateFileA((LPSTR)FileName,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
-     int err = GetLastError();
    if(hFile == INVALID_HANDLE_VALUE)return false;
    DWORD Result   = 0;
    WriteFile(hFile,this->Data,this->SLength,&Result,NULL);
