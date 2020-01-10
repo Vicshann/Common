@@ -39,7 +39,7 @@
 //---------------------------------------------------------------------------
 namespace BDS
 {
-template <typename R, typename... Types> constexpr int GetArgCount( R(*f)(Types ...) ){ return sizeof...(Types); }   // GetArgCount( R(*f)(Types ...) )
+template <typename R, typename... Types> constexpr int GetArgCount( R(_stdcall *f)(Types ...) ){ return sizeof...(Types); }   // GetArgCount( R(*f)(Types ...) )
 
 
 template <typename Signature> struct CountArgs;

@@ -36,10 +36,10 @@
 
 #else
 
+/* DBGMSG("Name: %s",#NameAPI);   */
 #define APIWRAPPER(LibPathName,NameAPI) extern "C" _declspec(dllexport) _declspec(naked) void __cdecl NameAPI(void) \
 { \
  static void* Address; \
- DBGMSG("Name: %s",#NameAPI); \
  if(!Address)Address = GetProcAddress((sizeof(*LibPathName)==2)?(LoadLibraryW((PWSTR)LibPathName)):(LoadLibraryA((LPSTR)LibPathName)),#NameAPI); \
  __asm mov EAX, [Address] \
  __asm jmp EAX \
