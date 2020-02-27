@@ -18,7 +18,7 @@
 struct ShMem      
 {
 //===========================================================================
-template<typename Usr=long> class CSharedMem     // TODO: Kernel support (Use same NTAPI?)
+template<typename Usr=long> class CSharedMem     // TODO: Kernel support (Use same NTAPI?)   // TODO: Time of message locking to unlock by timeout even if an owner process is crashed
 {
 static const int MaxNameSize = 64;
 
@@ -127,7 +127,8 @@ ConvertStringSecurityDescriptorToSecurityDescriptor(
  if(!this->MemDesc){DBGMSG("Failed to map memory: %u", GetLastError()); CloseHandle(this->hMapFile); this->hMapFile = NULL; return -3;}
  if(CreatedNew)
   {
-   memset(this->MemDesc,0,sizeof(SMemDescr)+sizeof(PVOID));
+   DBGMSG("Created: Initializing the header");
+//   memset(this->MemDesc,0,sizeof(SMemDescr)+sizeof(PVOID));
    this->MemDesc->MemSize = SizeOfNew;
    MakeObjName((ULONG_PTR)this->hMapFile, "S", (LPSTR)&this->MemDesc->SynMName);    // Create a Mutex name
    MakeObjName((ULONG_PTR)this->hMapFile, "N", (LPSTR)&this->MemDesc->NtfEName);  
@@ -162,7 +163,7 @@ int Disconnect(void)
 bool LockBuffer(UINT WaitDelay=5000)
 {
 // DBGMSG("<<<<<<<<<<<<<<<<: %u",WaitDelay);
-// DWORD val = GetTickCount();
+ DWORD val = GetTickCount();
  bool  res = (WaitForSingleObject(this->hSyncMutex,WaitDelay) != WAIT_TIMEOUT);
 // DBGMSG("<<<<<<<<<<<<<<<<: %u = %u",res,GetTickCount()-val);
  if(res && !this->IsConnected()){this->UnlockBuffer(); return false;}
@@ -171,8 +172,9 @@ bool LockBuffer(UINT WaitDelay=5000)
 //---------------------------------------------------------
 bool UnlockBuffer(void)
 {
-// DBGMSG(">>>>>>>>>>>>>>>>");
- return ReleaseMutex(this->hSyncMutex);
+ UINT res = ReleaseMutex(this->hSyncMutex);
+// DBGMSG(">>>>>>>>>>>>>>>>: %u",res);
+ return res;
 }
 //---------------------------------------------------------
 PBYTE BufferPtr(void)
@@ -227,13 +229,13 @@ public:
 struct SMsgBlk    // Always aligned to 64 bit
 {
  volatile ULONG DataSize;    
- volatile ULONG ViewCntr;   // Useful for debugging
+ volatile ULONG ViewCntr;   // Useful for debugging, nothing more
  volatile ULONG PrevOffs; 
  volatile ULONG NextOffs;   // From beginning of buffer  // There may be gaps between messages after a wrap overwrites some of them
  volatile ULONG TargetID;
  volatile ULONG SenderID;
  volatile ULONG MsgSeqID;   // Incremented for each message
- volatile ULONG ValidMrk;   // Opening marker. Closing marker is after data  
+ volatile ULONG ValidMrk;   // A Opening marker. An Closing marker is after the data  
  volatile BYTE  Data[0];    // Better to be aligned to 8 bytes
 
  static ULONG FullSize(ULONG DSize){return AlignFrwd(DSize + sizeof(SMsgBlk) + 8,8);}
@@ -244,8 +246,9 @@ struct SMsgBlk    // Always aligned to 64 bit
 private:
 struct SDescr   // No message wrapping is supported(), if it is not fits then RD and WR pointers are get updated to beginning of the buffer
 {
+ enum EFlags {flEmpty,flUsed=1};
  volatile ULONG Flags;      // 0 if buffer is empty    // MessageCtr is useless and too costly to maintain
- volatile ULONG NxtMsgID;   // Next MessageID to be used (Used by each instance to exclude a viewed messages from enumeration)
+ volatile ULONG NxtMsgID;   // Next MessageID to be used (Used by each instance to exclude a viewed messages from enumeration)  // What will happen after overflow?
  volatile ULONG FirstBlk;   // Points to oldest available message
  volatile ULONG LastBlk;    // Points last added message  
 };
@@ -277,23 +280,34 @@ void SetValidHdr(SMsgBlk* Blk)
  PBYTE Msg = (PBYTE)Blk;
  ULONG Len = Blk->FullSize();
  Blk->ValidMrk = (Blk->DataSize ^ Blk->TargetID ^ Blk->MsgSeqID);       // Checksum of a fields that will stay unmodified
- *(ULONG*)&Msg[Len-(sizeof(ULONG)*2)] = 0;
+ *(ULONG*)&Msg[Len-(sizeof(ULONG)*2)] = 0;              // ???
  *(ULONG*)&Msg[Len-sizeof(ULONG)] = ~Blk->ValidMrk;
+}
+//---------------------------------------------------------------------------
+void InvalidateHdr(SMsgBlk* Blk)
+{
+ PBYTE Msg = (PBYTE)Blk;
+ ULONG Len = Blk->FullSize();
+ Blk->ValidMrk = 0;     
+ *(ULONG*)&Msg[Len-sizeof(ULONG)] = 0;
 }
 //---------------------------------------------------------------------------
 
 public:
 static const int MSG_BROADCAST = 0;                                 
-enum MEFlags {mfNone,mfAnyTgt=0x04,mfOwnMsg=0x08,mfNoLock=0x10,mfEnumActive=0x80}; 
+enum MEFlags {mfNone,mfLocked=0x02,mfAnyTgt=0x04,mfOwnMsg=0x08,mfNoLock=0x10,mfHaveNxtMsg=0x20,mfHaveLstMsg=0x40,mfEnumActive=0x80}; 
 //---------------------------------------------------------------------------
 struct SEnumCtx
 {
  ULONG Flags;
  ULONG TgtID;
  ULONG SndID;
- ULONG MQHash;
  ULONG NxtOffs;
+ ULONG LstOffs;
  ULONG NxtMsgID;
+ ULONG LstMsgID;    // Last Found message ID
+ ULONG FirstMsgID;  // For buffer overflow detection
+ SEnumCtx(void){TgtID=SndID=NxtMsgID=LstMsgID=Flags=0; NxtOffs=LstOffs=-1;}
 };
 //---------------------------------------------------------------------------
 CSharedIPC(ULONG SDel=5000)
@@ -311,8 +325,31 @@ HANDLE GetMapHandle(void){return this->MBuf.GetMapHandle();}
 bool IsEmpty(void)
 {
  if(!this->IsConnected())return true;
- SDescr* Desc = this->MBuf.UserData();
- return !Desc->Flags;
+ return !(this->MBuf.UserData()->Flags & SDescr::flUsed);
+}
+//---------------------------------------------------------------------------
+SMsgBlk* GetFirstBlk(void)     // Oldest
+{
+ if(this->IsEmpty())return NULL;
+ return (SMsgBlk*)&this->MBuf.BufferPtr()[this->MBuf.UserData()->FirstBlk];   // if(!this->IsValidHdr(CurMsg))return NULL;    ????????????
+}
+//---------------------------------------------------------------------------
+SMsgBlk* GetLastBlk(void)      // Most recent (Backward enumeration) 
+{
+ if(this->IsEmpty())return NULL;
+ return (SMsgBlk*)&this->MBuf.BufferPtr()[this->MBuf.UserData()->LastBlk];
+}
+//---------------------------------------------------------------------------
+SMsgBlk* GetPrevBlk(SMsgBlk* Blk)     // In memory order                
+{
+ if(this->IsEmpty() || (Blk->PrevOffs == (ULONG)-1))return NULL;
+ return (SMsgBlk*)&this->MBuf.BufferPtr()[Blk->PrevOffs];
+}
+//---------------------------------------------------------------------------
+SMsgBlk* GetNextBlk(SMsgBlk* Blk)     // In memory order        
+{
+ if(this->IsEmpty() || (Blk->NextOffs == (ULONG)-1))return NULL;
+ return (SMsgBlk*)&this->MBuf.BufferPtr()[Blk->NextOffs];
 }
 //---------------------------------------------------------------------------
 int Connect(LPSTR QueueName, UINT QueueSize)
@@ -328,11 +365,16 @@ int Disconnect(void)
  return this->MBuf.Disconnect();
 }
 //---------------------------------------------------------------------------
-bool Clear(void)
+bool Clear(void)         // Don`t forget to keep NxtMsgID !
 {
  if(!this->IsConnected() || !this->MBuf.LockBuffer(this->SyncDelay))return false;
  SDescr* Desc = this->MBuf.UserData();
- if(Desc)memset(Desc,0,sizeof(SDescr));
+ if(Desc)
+  {
+   Desc->Flags = SDescr::flEmpty;
+   Desc->FirstBlk = Desc->LastBlk = 0;  
+   DBGMSG("Done");
+  }
  this->MBuf.UnlockBuffer();
  return true;
 }
@@ -340,33 +382,104 @@ bool Clear(void)
 static SMsgBlk* DataPtrToMsgHdr(PBYTE Data){return (SMsgBlk*)&Data[-sizeof(SMsgBlk)];}
 ULONG GetNexMsgSeqNum(void){return (this->IsConnected())?(this->MBuf.UserData()->NxtMsgID):(-1);}
 //---------------------------------------------------------------------------
+// TODO: Enumeration in different processes should not block each other? (But enumeration definently should block any manipulation)
+// TODO: Receive only with ViewCtr <= than specified
 PBYTE EnumFirst(SEnumCtx* Ctx, PUINT Size)    // For This InstanceID or broadcast  // Peek - do not remove messages; Any - Get messages for any InstanceID
 {
 // DBGMSG("InstanceID=%08X, Flags=%08X",this->InstanceID,Ctx->Flags);
  if(this->IsEmpty() || (Ctx->Flags & mfEnumActive))return NULL;   // No messages yet   // Checks connection first
- SDescr* Desc = this->MBuf.UserData();
- ULONG CurrHash = Desc->NxtMsgID;    // Test only one field
- if(!Ctx->MQHash)Ctx->MQHash = CurrHash;  // Make a new hash
-   else if(Ctx->MQHash == CurrHash)return NULL;       // Check previous hash and exit if no changes
-          else Ctx->MQHash = CurrHash;
- if(!(Ctx->Flags & mfNoLock) && !this->MBuf.LockBuffer(this->SyncDelay))return NULL;
- if(!Ctx->TgtID && !(Ctx->Flags & mfAnyTgt))Ctx->TgtID = this->InstanceID;     // Target this instance by default
- Ctx->NxtOffs = -1;  
- CurrHash = Desc->NxtMsgID;
- ULONG MsgLeft = CurrHash - Ctx->NxtMsgID;                     
- for(ULONG Offs = Desc->LastBlk;(Offs != (ULONG)-1) && MsgLeft;MsgLeft--)           // Start from an last unseen message to skip an already viewed
+ SDescr* Desc = this->MBuf.UserData();     
+ if(!(Ctx->Flags & mfNoLock))
   {
-   SMsgBlk* CurMsg = (SMsgBlk*)&this->MBuf.BufferPtr()[Offs];
-   if(!this->IsValidHdr(CurMsg))break;    
-   Ctx->NxtOffs = Offs;
-   Offs = CurMsg->PrevOffs;
+   if(!this->MBuf.LockBuffer(this->SyncDelay)){DBGMSG("Failed to lock!"); return NULL;}
+     else Ctx->Flags |= mfLocked;
   }
- if(Ctx->NxtOffs != (ULONG)-1)
+ if(!Ctx->TgtID && !(Ctx->Flags & mfAnyTgt))Ctx->TgtID = this->InstanceID;     // Target this instance by default    // TODO: Flag to receive only targeted and broadcast messages 
+// DBGMSG("Flags=%08X, NxtOffs=%08X, NxtMsgID=%u, LstOffs=%08X, LstMsgID=%u",Ctx->Flags,Ctx->NxtOffs,Ctx->NxtMsgID,Ctx->LstOffs,Ctx->LstMsgID);
+ if(Ctx->Flags & mfHaveLstMsg)  // Higher priority // LstMsgID and LstOffs must be valid   // A message with LstMsgID may be a response and may be removed by a receiver
+  {
+//   DBGMSG("Beg mfHaveLstMsg: NxtOffs=%08X, LstOffs=%08X, LstMsgID=%u",Ctx->NxtOffs,Ctx->LstOffs,Ctx->LstMsgID);
+   Ctx->NxtOffs = Desc->FirstBlk;        // Start from beginning of the buffer (Default)
+   if(Ctx->LstOffs != (ULONG)-1)     // Offset is already specified
+    {
+     SMsgBlk* CurMsg = (SMsgBlk*)&this->MBuf.BufferPtr()[Ctx->LstOffs];
+     if(!this->IsValidHdr(CurMsg) || (Ctx->LstMsgID != CurMsg->MsgSeqID))Ctx->LstOffs = -1;  // An invalid offset or a different massage at it
+    }
+   if(Ctx->LstOffs == (ULONG)-1)  // Try to continue with ID after LstMsgID
+    {
+     ULONG LstID = Ctx->NxtMsgID;
+     if(Ctx->LstMsgID > (LstID-1))  // MsgID has been overflowed  // TODO: TEST IT !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+      {
+       bool OPoint = false;
+       SMsgBlk* CurMsg = NULL;
+       ULONG Offs  = Desc->LastBlk;                       
+       while(Offs != (ULONG)-1)  // Find an overflow point [56789-OP-01234 <<]  // 9 is OP here    
+        {
+         CurMsg = (SMsgBlk*)&this->MBuf.BufferPtr()[Offs];
+         if(!this->IsValidHdr(CurMsg)){DBGMSG("Corrupted: Removing mfHaveLstMsg"); Ctx->Flags &= ~mfHaveLstMsg; return NULL;}    // Corrupted buffer! 
+         if(LstID <= CurMsg->MsgSeqID){OPoint = true; break;}  // Overflow point  
+         Offs  = CurMsg->PrevOffs;      // Enumerating backwards
+         LstID = CurMsg->MsgSeqID;
+        }
+       if(OPoint && CurMsg)   // If false then starting from beginning(Entire buffer has changed)
+        {
+         for(;;) 
+          {
+           if(Ctx->LstMsgID >= CurMsg->MsgSeqID){Ctx->NxtOffs = CurMsg->NextOffs; break;} // Found with a lesser or equal ID (Continue from a next message)  
+           Offs = CurMsg->PrevOffs;      // Enumerating backwards
+           if(Offs == (ULONG)-1)break;   // No more messages - enumerate from beginning
+           CurMsg = (SMsgBlk*)&this->MBuf.BufferPtr()[Offs];
+           if(!this->IsValidHdr(CurMsg)){DBGMSG("Corrupted: Removing mfHaveLstMsg"); Ctx->Flags &= ~mfHaveLstMsg; return NULL;}    // Corrupted buffer!                         
+          }
+        }
+      }
+       else   // Not overflowed or overflowed too far with Message IDs
+        {
+         for(ULONG Offs = Desc->LastBlk;Offs != (ULONG)-1;)     // Find a message offset by ID     
+          {
+           SMsgBlk* CurMsg = (SMsgBlk*)&this->MBuf.BufferPtr()[Offs];
+           if(!this->IsValidHdr(CurMsg)){DBGMSG("Corrupted: Removing mfHaveLstMsg"); Ctx->Flags &= ~mfHaveLstMsg; return NULL;}    // Corrupted buffer!  
+           if(Ctx->LstMsgID >= CurMsg->MsgSeqID){Ctx->NxtOffs = CurMsg->NextOffs; break;} // Found with a lesser or equal ID (Continue from a next message)  
+           Offs = CurMsg->PrevOffs;      // Enumerating backwards
+          }
+        }
+    }
+     else
+      {
+       SMsgBlk* CurMsg = (SMsgBlk*)&this->MBuf.BufferPtr()[Ctx->LstOffs]; // LstOffs is already checked
+       Ctx->NxtOffs = CurMsg->NextOffs;
+      }
+//   DBGMSG("End mfHaveLstMsg: NxtOffs=%08X, LstOffs=%08X, LstMsgID=%u",Ctx->NxtOffs,Ctx->LstOffs,Ctx->LstMsgID);
+  }
+ else if(Ctx->Flags & mfHaveNxtMsg)   // Search for exact match (Fail enumeration if not found)
+  {
+   if(Ctx->NxtOffs != (ULONG)-1)     // Offset is already specified
+    {
+     SMsgBlk* CurMsg = (SMsgBlk*)&this->MBuf.BufferPtr()[Ctx->NxtOffs];
+     if(!this->IsValidHdr(CurMsg) || (Ctx->NxtMsgID != CurMsg->MsgSeqID))Ctx->NxtOffs = -1;  // An invalid offset or a different massage at it
+    }
+   if(Ctx->NxtOffs == (ULONG)-1) 
+    {
+     for(ULONG Offs = Desc->LastBlk;Offs != (ULONG)-1;)     // Find a message offset by ID     
+      {
+       SMsgBlk* CurMsg = (SMsgBlk*)&this->MBuf.BufferPtr()[Offs];
+       if(!this->IsValidHdr(CurMsg)){DBGMSG("Corrupted: Removing mfHaveNxtMsg"); Ctx->Flags &= ~mfHaveNxtMsg; return NULL;}    // Corrupted buffer!  
+       if(Ctx->NxtMsgID == CurMsg->MsgSeqID){Ctx->NxtOffs = Offs; break;}  // Found exact match! 
+       Offs = CurMsg->PrevOffs;      // Enumerating backwards
+      }
+    }
+  }
+   else Ctx->NxtOffs = Desc->FirstBlk;        // Start from beginning of the buffer (Default)
+
+ if(Ctx->NxtOffs != (ULONG)-1)    // NxtOffs is for a first message
   { 
-   Ctx->Flags  |= mfEnumActive;
-   if(PBYTE Blk = this->EnumNext(Ctx, Size))return Blk;
+   Ctx->Flags   |= mfEnumActive;
+   Ctx->NxtMsgID = ((SMsgBlk*)&this->MBuf.BufferPtr()[Ctx->NxtOffs])->MsgSeqID;
+//   DBGMSG("From: Ctx=%p, NxtOffs=%08X, NxtMsgID=%u, LstMsgID=%u",Ctx,Ctx->NxtOffs,Ctx->NxtMsgID,Ctx->LstMsgID);
+   if(PBYTE Blk  = this->EnumNext(Ctx, Size))return Blk;
   }
- if(!(Ctx->Flags & mfNoLock))this->MBuf.UnlockBuffer();
+// DBGMSG("Exiting!"); 
+ if(!(Ctx->Flags & mfNoLock))this->MBuf.UnlockBuffer(); 
  return NULL;
 }
 //---------------------------------------------------------------------------
@@ -379,27 +492,51 @@ PBYTE EnumNext(SEnumCtx* Ctx, PUINT Size)
  while(Ctx->NxtOffs != (ULONG)-1)   // NOTE: The buffer will always end up being full of a viwed messages 
   {
    SMsgBlk* CurMsg = (SMsgBlk*)&this->MBuf.BufferPtr()[Ctx->NxtOffs];      // Without Lock this may become invalid because of some AddBlock
-   if(!this->IsValidHdr(CurMsg))break;   
-   Ctx->NxtOffs = CurMsg->NextOffs;      // Save the offset thaat we can continue later     
+   if(!this->IsValidHdr(CurMsg) || (Ctx->NxtMsgID != CurMsg->MsgSeqID)){Ctx->NxtOffs = (ULONG)-1; break;}  // Check NxtMsgID in the loop in case that the buffer is not locked  // NxtOffs and NxtMsgID used to validate that NextMessage is same as was found previously 
+   ULONG CurrOffs = Ctx->NxtOffs;
+   Ctx->NxtOffs   = CurMsg->NextOffs;    // Enumerate forward in the linked list of messages  // Save the offset that we can continue later     
+   if(Ctx->NxtOffs != (ULONG)-1)
+    {
+     Ctx->NxtMsgID = ((SMsgBlk*)&this->MBuf.BufferPtr()[Ctx->NxtOffs])->MsgSeqID;
+     Ctx->Flags   |= mfHaveNxtMsg;
+    }
+     else 
+      {
+       Ctx->NxtMsgID = -1;
+       Ctx->Flags   &= ~mfHaveNxtMsg;
+      }
+//   DBGMSG("Next: Ctx=%p, NxtOffs=%08X, NxtMsgID=%u, LstMsgID=%u",Ctx,Ctx->NxtOffs,Ctx->NxtMsgID,Ctx->LstMsgID);
 //   DBGMSG("Msg at %08X: Size=%08X, ViewCntr=%u, SenderID=%08X, TargetID=%08X, MsgSeqID=%08X",((PBYTE)CurMsg - this->MBuf.BufferPtr()),CurMsg->DataSize,CurMsg->ViewCntr,CurMsg->SenderID,CurMsg->TargetID,CurMsg->MsgSeqID);                                                               
    if((!Ctx->TgtID || CurMsg->IsBroadcast() || (CurMsg->TargetID == Ctx->TgtID)) && ((!Ctx->SndID || (CurMsg->SenderID == Ctx->SndID)) && ((Ctx->Flags & mfOwnMsg) || (CurMsg->SenderID != this->InstanceID))))  // NOTE: Headers are followed by a data and this approach is very cache unfriendly. But this way a maximum number of messages that the buffer can hold is not predefined and depends only on size of messages
     {
      if(Size)*Size = CurMsg->DataSize;
-     Ctx->NxtMsgID = CurMsg->MsgSeqID+1;    
+     Ctx->LstMsgID = CurMsg->MsgSeqID;
+     Ctx->LstOffs  = CurrOffs;
+     Ctx->Flags   |= mfHaveLstMsg;     // Do not read an already viwed messages when repeating enumeration with same context   // Allow this Flag to be forced here?
+#ifdef _DEBUG     
      if(CurMsg->ViewCntr != (ULONG)-1)CurMsg->ViewCntr++;  // Do not overflow!
-//     DBGMSG("Found at %08X: Size=%08X, ViewCntr=%u, SenderID=%08X, TargetID=%08X",((PBYTE)CurMsg - this->MBuf.BufferPtr()),CurMsg->DataSize,CurMsg->ViewCntr,CurMsg->SenderID,CurMsg->TargetID);   
+#endif
+     DBGMSG("Found at %08X: Size=%08X, ViewCntr=%u, SenderID=%08X, TargetID=%08X, MsgSeqID=%u",((PBYTE)CurMsg - this->MBuf.BufferPtr()),CurMsg->DataSize,CurMsg->ViewCntr,CurMsg->SenderID,CurMsg->TargetID,CurMsg->MsgSeqID);   
      return (PBYTE)&CurMsg->Data;
     }      
   }
+// DBGMSG("No more messages!");
  return NULL;      // No more messages    // If you try again to call NextBlock it will start from beginning
 }
 //---------------------------------------------------------------------------
 bool EnumClose(SEnumCtx* Ctx)
-{
-// DBGMSG("Flags: %08X, Conn=%u",Ctx->Flags,this->IsConnected());
- if(!(Ctx->Flags & mfEnumActive) || !this->IsConnected())return false;
- Ctx->Flags &= ~mfEnumActive;    
- return ((Ctx->Flags & mfNoLock)?(true):(this->MBuf.UnlockBuffer()));
+{                    
+// DBGMSG("Ctx=%p, Flags=%08X, Conn=%u, NxtOffs=%08X, NxtMsgID=%u, LstMsgID=%u",Ctx,Ctx->Flags,this->IsConnected(),Ctx->NxtOffs,Ctx->NxtMsgID,Ctx->LstMsgID);
+ bool res = true;
+ if(Ctx->Flags & mfLocked)
+  {
+   res = this->MBuf.UnlockBuffer();
+   Ctx->Flags &= ~mfLocked;
+  }
+ if(Ctx->Flags & mfEnumActive)Ctx->Flags &= ~mfEnumActive;  
+ if(!this->IsConnected()){DBGMSG("Not Active!"); return false;}
+ // DBGMSG("Done!");   // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+ return res;
 }
 //---------------------------------------------------------------------------
 // Beware of oveflowing the buffer with this while in a middle of message enumeration(Without Locking)
@@ -447,12 +584,14 @@ int AddBlock(UINT TgtID, PVOID* Data, UINT Size)          // TgtID = 0 - Broadca
      else   // Someone corrupted one of msg headers?
       {
        DBGMSG("Corrupted: FMsg=%08X, LMsg=%08X",FMsg, LMsg); 
-       Desc->Flags = FMsg = LMsg = 0;     // Make it empty
+       Desc->Flags = SDescr::flEmpty;
+       FMsg = LMsg = 0;     // Make it empty
        LstMsg = NULL;
       }
    ((SMsgBlk*)&this->MBuf.BufferPtr()[FMsg])->PrevOffs = -1;   // Update NoPrev for a first message  
    if(FMsg == LMsg)LstMsg = NULL;      // Only one message will be
   }
+ DBGMSG("NewMsg: Offset=%08X, FullLen=%08X, MsgSeqID=%u",LMsg, FullLen, Desc->NxtMsgID); 
  this->NewMsg = (SMsgBlk*)&this->MBuf.BufferPtr()[LMsg];   // LastBlk must point to a last added message
  this->NewMsg->MsgSeqID = Desc->NxtMsgID;       
  this->NewMsg->DataSize = Size;  // Viewed = 0 (High 4 bits)
@@ -476,13 +615,42 @@ bool CloseBlock(PULONG MsgSeqNum)     // Call after AddBlock or Enumeration
 // DBGMSG("InstanceID=%08X",this->InstanceID);
  if(!this->NewMsg || !this->IsConnected())return false;
  SDescr* Desc   = this->MBuf.UserData(); 
- if(MsgSeqNum)*MsgSeqNum = Desc->NxtMsgID;
+ if(MsgSeqNum)*MsgSeqNum = Desc->NxtMsgID;   // This message`s ID
  this->NewMsg->SenderID = this->InstanceID;  // Now it can be enumerated
  this->NewMsg   = NULL;
- Desc->Flags   |= 1;       // Simple 1?
- Desc->NxtMsgID++;         // Must be modified last - this will trigger any waiting on HashChange
+ Desc->Flags   |= SDescr::flUsed;      
+ Desc->NxtMsgID++;   //_InterlockedIncrement(&Desc->NxtMsgID);        // Must be modified last - this will trigger any waiting on HashChange
  this->MBuf.NotifyChange();
  return this->MBuf.UnlockBuffer();
+}
+//---------------------------------------------------------------------------
+// Should be called only for a locked buffer
+ULONG RemoveLastBlocks(ULONG BlkCnt, bool KeepBroadcast=false)   // TODO: Never remove a BROADCAST messages(Optional?)!
+{
+ if(this->IsEmpty())return 0;
+ ULONG RemTotal = 0; 
+ SDescr* Desc = this->MBuf.UserData();
+ ULONG Offs = Desc->LastBlk;
+ while(RemTotal < BlkCnt)        
+  {
+   SMsgBlk* CurMsg = (SMsgBlk*)&this->MBuf.BufferPtr()[Offs];
+   if(!this->IsValidHdr(CurMsg))break;   // For 'Desc->LastBlk' 0 is valid 
+   DBGMSG("Removing Msg at %08X, NextOffs=%08X, Size=%08X, MsgID=%u",Offs,CurMsg->NextOffs,CurMsg->FullSize(), CurMsg->MsgSeqID); 
+   Offs = CurMsg->PrevOffs;      // Enumerating backwards
+   RemTotal++;
+   this->InvalidateHdr(CurMsg);
+   if(Offs == (ULONG)-1)  // No more messages in the buffer
+    {
+     Desc->Flags    = SDescr::flEmpty;    // No messages left
+     Desc->FirstBlk = Desc->LastBlk = 0;
+     DBGMSG("Emptied!"); 
+     return RemTotal;
+    }
+  }
+ if(!RemTotal)return 0;
+ Desc->LastBlk = Offs;   // A Last messages removed 
+ ((SMsgBlk*)&this->MBuf.BufferPtr()[Offs])->NextOffs = -1;  // No Next message
+ return RemTotal;
 }
 //---------------------------------------------------------------------------
 static DWORD TicksDelta(DWORD Initial)
@@ -497,11 +665,12 @@ bool IsChanged(ULONG* LstChngHash)
  SDescr* Desc  = this->MBuf.UserData();       // Shared access is not important here
  ULONG NewHash = Desc->NxtMsgID;              // Test only one field
  bool res = (NewHash != *LstChngHash); 
+//   if(res){ DBGMSG("NewHash=%u, LstChngHash=%u",NewHash,*LstChngHash); }   // <<<<<<<<<<<<<<<<<<<<<<<<<<<<
  *LstChngHash = NewHash;
  return res;
 }
 //---------------------------------------------------------------------------
-bool WaitForChange(ULONG* LstChngHash=NULL, UINT WaitDelay=5000)    // After this you can start enumerating for messages
+bool WaitForChange(ULONG* LstChngHash=NULL, UINT WaitDelay=5000)    // After this you can start enumerating for messages     //  WaitOnAddress ????????????
 {
  if(!this->IsConnected())return false; 
  for(DWORD InitTick = GetTickCount();TicksDelta(InitTick) <= WaitDelay;)
@@ -697,6 +866,8 @@ struct SMsgHdr
  UINT32 Sequence;   // A Seq number to detect a message loss
  UINT32 DataSize;   // 0 for mtEndStrm
  BYTE   Data[0];
+
+ CSharedIPC::SMsgBlk* GetBlk(void){return (CSharedIPC::SMsgBlk*)&((PBYTE)this)[-sizeof(CSharedIPC::SMsgBlk)];}  // SMsgHdr is DATA of SMsgBlk
 }; 
 
 struct SMsgCtx
@@ -706,7 +877,7 @@ struct SMsgCtx
  SMsgHdr* Last;
  CSharedIPC::SEnumCtx BEnum;
 
- SMsgCtx(UINT Flags=0){memset(this,0,sizeof(SMsgCtx)); this->BEnum.Flags = Flags;}
+ SMsgCtx(UINT Flags=0){EnumMsg=false; Change=0; Last=NULL; BEnum.Flags=Flags;}
 } MCtx;    // For global use
 //------------------------------------------------------------------------------------
 
@@ -752,7 +923,7 @@ int Connect(UINT InstanceID, UINT Size=0, bool DoClr=false)    // IPCSIZE
  this->InstID = InstanceID; 
  wsprintfA((LPSTR)&NameBuf,"I%08XS%u",InstanceID,sizeof(PVOID));   // System type must match 
  int res = this->ipc.Connect((LPSTR)&NameBuf, Size); 
- if(DoClr)this->Clear();
+ if(DoClr)this->Clear();  // !!! Resets NxtMsgID !!!
 // if(res >= 0){this->PutMsg(mtInfo, miHello, 0, NULL, 0); this->InstID = InstanceID;}   // Notify clients 
  return res;
 }                                                               
@@ -766,17 +937,39 @@ int Disconnect(void)
  return this->ipc.Disconnect();
 } 
 //------------------------------------------------------------------------------------
-void     EndMsg(void){this->EndMsg(&this->MCtx);}
+void     EndMsg(bool TryRemoveLast=false){this->EndMsg(&this->MCtx,TryRemoveLast);}
 SMsgHdr* GetMsg(void){return this->GetMsg(&this->MCtx);}
 //------------------------------------------------------------------------------------
-void EndMsg(SMsgCtx* Ctx)    // Close message enumeration 
+bool EndMsg(SMsgCtx* Ctx, bool TryDelLastReqRsp=false)    // Close message enumeration and unlocks the buffer  // NOTE: A targeted messages allowed to be removed
 {
- if(!Ctx->EnumMsg)return;
- Ctx->EnumMsg = false;
+ if(!Ctx->EnumMsg)return false;
+                           //   TryDelLastReqRsp = false;   // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+ if(TryDelLastReqRsp && Ctx->Last)  // Try to remove a last Request/Response pair to save the buffer space
+  {
+   if(CSharedIPC::SMsgBlk* LastBlk = this->ipc.GetLastBlk())     // Response
+    {
+     if(CSharedIPC::SMsgBlk*PrevBlk = this->ipc.GetPrevBlk(LastBlk))   // Request
+      {
+       SMsgHdr* LastMsg = (SMsgHdr*)&LastBlk->Data;
+       SMsgHdr* PrevMsg = (SMsgHdr*)&PrevBlk->Data;
+       if((LastMsg == Ctx->Last) && (LastBlk->MsgSeqID == Ctx->Last->GetBlk()->MsgSeqID))   // Last found for Response must be Last message in the buffer    // Address may be same but a message is different                                 
+        {
+//         DBGMSG("LastMsg(Rsp):(Size=%08X, MsgType=%u, MsgID=%u, DataID=%u, Sequence=%u), PrevMsg(Req):(Size=%08X, MsgType=%u, MsgID=%u, DataID=%u, Sequence=%u)",LastMsg->DataSize,LastMsg->MsgType,LastMsg->MsgID,LastMsg->DataID,LastMsg->Sequence,  PrevMsg->DataSize,PrevMsg->MsgType,PrevMsg->MsgID,PrevMsg->DataID,PrevMsg->Sequence); 
+         if((LastMsg->DataID == PrevMsg->Sequence)&&(LastMsg->MsgType == (PrevMsg->MsgType << 1))&&(LastMsg->MsgID == PrevMsg->MsgID))  // Delete both Request and Response messages
+          {
+           this->ipc.RemoveLastBlocks(2);
+          }
+           else this->ipc.RemoveLastBlocks(1);    // Delete only Last(Response) message because some other massages between Request and Response
+        }
+      }
+    }
+  }
+ Ctx->EnumMsg = false;      // Finish enumeration
  Ctx->Last=NULL; 
- this->ipc.EnumClose(&Ctx->BEnum); 
+ bool res = this->ipc.EnumClose(&Ctx->BEnum); 
  LeaveCriticalSection(&this->csec); 
 // DBGMSG("LeaveCriticalSection");
+ return res;
 }
 //------------------------------------------------------------------------------------
 SMsgHdr* GetMsg(SMsgCtx* Ctx)    // Will unlock the queue when there is no more messages   // Try to name it 'GetMessage' and you will get 'GetMessageA' thanks to macro definition 
@@ -784,16 +977,20 @@ SMsgHdr* GetMsg(SMsgCtx* Ctx)    // Will unlock the queue when there is no more 
  if(!this->IsConnected())return NULL; 
  if(!Ctx->EnumMsg)
   {
-   if(!this->ipc.WaitForChange(&Ctx->Change, this->WaitDelay))return NULL;  // Timeout and no messages
+//   DBGMSG("TEST: WaitForChange %u",this->WaitDelay);
+   if(!this->ipc.WaitForChange(&Ctx->Change, this->WaitDelay)){/*DBGMSG("TEST: Timeout: Ctx=%p",Ctx);*/ return NULL;}  // Timeout and no messages
+//   DBGMSG("TEST: Change Detected");
 //   DBGMSG("Before EnterCriticalSection");
    EnterCriticalSection(&this->csec);
 //   DBGMSG("After EnterCriticalSection");
+//   DBGMSG("TEST: CtxTgtID=%08X, CtxSndID=%08X",Ctx->BEnum.TgtID,Ctx->BEnum.SndID);
    Ctx->Last    = (SMsgHdr*)this->ipc.EnumFirst(&Ctx->BEnum,NULL);
-   Ctx->EnumMsg = true;
+   Ctx->EnumMsg = true;    // Enumeration started
+//   DBGMSG("TEST: FirstMsg=%p",Ctx->Last);
    this->ipc.ResetChange();
   }
    else Ctx->Last = (SMsgHdr*)this->ipc.EnumNext(&Ctx->BEnum,NULL);    // Continuing
-// DBGMSG("Msg=%p, EnumMsg=%u",Ctx->Last,Ctx->EnumMsg);
+// DBGMSG("Msg=%p, EnumMsg=%u, ENxtOffs=%08X, ENxtMsgID=%u, ELstMsgID=%u, EFlags=%08X",Ctx->Last,Ctx->EnumMsg,Ctx->BEnum.NxtOffs,Ctx->BEnum.NxtMsgID,Ctx->BEnum.LstMsgID,Ctx->BEnum.Flags);
  if(!Ctx->Last)this->EndMsg(Ctx);       // No more commands
  return Ctx->Last;
 }
@@ -832,28 +1029,30 @@ int PutMsg(UINT16 MsgType, UINT16 MsgID, UINT32 DataID, PVOID MsgData, UINT Data
 // Returns size of response
 // While inside this function, a message enumeration in other threads must be stopped(This function doesn`t change last message index(mfPeek) but still uses it)
 //
-int ExchangeMsg(UINT16 MsgID, UINT16 MsgType, CArgBuf* Req, CArgBuf* Rsp, UINT TgtID=CSharedIPC::MSG_BROADCAST)
+int ExchangeMsg(UINT16 MsgID, UINT16 MsgType, CArgBuf* Req, CArgBuf* Rsp, UINT TgtID=CSharedIPC::MSG_BROADCAST)    // TODO: Lock buffer and rmove Req/Rsp if no new messages added
 {
 // DBGMSG("Request: MsgID=%u, MsgType=%u, ReqSize=%08X",MsgID,MsgType,Req->GetLen());   // TODO: For Full debug log level
  if(!this->IsConnected()){DBGMSG("Not connected!"); return -1;}
  if(!this->IsOtherConnections()){DBGMSG("No other connections!"); this->Disconnect(); return -2;}
  EnterCriticalSection(&this->csec);
 // DBGMSG("Entered!");
- SMsgCtx MCtx;    
- MCtx.BEnum.NxtMsgID = this->ipc.GetNexMsgSeqNum() + 1;    // Limit enumeration to messages added after our request
- int res = this->PutMsg(MsgType, MsgID, 0, Req->GetPtr(), Req->GetLen(), &MCtx.BEnum.NxtMsgID, TgtID);
+ SMsgCtx LMCtx;    
+ LMCtx.BEnum.LstMsgID = this->ipc.GetNexMsgSeqNum() + 1;    // Limit enumeration to messages added after our request
+ int res = this->PutMsg(MsgType, MsgID, 0, Req->GetPtr(), Req->GetLen(), &LMCtx.BEnum.LstMsgID, TgtID);   // NxtMsgID assigned ID of the Request message
  if(res < 0){DBGMSG("Failed: %i",res); LeaveCriticalSection(&this->csec); return res;}
  if(!Rsp){DBGMSG("Done, no response expected."); LeaveCriticalSection(&this->csec); return 0;}   // No response needed
  UINT16 ExpectMT = MsgType << 1;  // Special value! Should it be this way?
- DWORD  StTicks  = GetTickCount();               
- for(SMsgHdr* Cmd = this->GetMsg(&MCtx);Cmd || (CSharedIPC::TicksDelta(StTicks) < this->WaitDelay);Cmd = this->GetMsg(&MCtx))   // DO NOT BREAK THIS LOOP by other means than 'meDone'!    // NOTE: Tick counter may overflow!!!
+ DWORD  StTicks  = GetTickCount(); 
+ LMCtx.BEnum.Flags |= CSharedIPC::mfHaveLstMsg;  // Enumerate only messages AFTER LstMsgID
+// DBGMSG("EnumMsg=%u, ENxtMsgID=%u, ENxtOffs=%08X",LMCtx.EnumMsg,LMCtx.BEnum.NxtMsgID,LMCtx.BEnum.NxtOffs);
+ for(SMsgHdr* Cmd = this->GetMsg(&LMCtx);Cmd || (CSharedIPC::TicksDelta(StTicks) < this->WaitDelay);Cmd = this->GetMsg(&LMCtx))   // DO NOT BREAK THIS LOOP by other means than 'meDone'!    // NOTE: Tick counter may overflow!!!
   {
    if(!Cmd)continue;
 //   DBGMSG("MsgType=%04X, MsgID=%04X, DataID=%08X, Sequence=%08X, DataSize=%08X",Cmd->MsgType,Cmd->MsgID,Cmd->DataID,Cmd->Sequence,Cmd->DataSize);
    if((Cmd->MsgType != ExpectMT)||(Cmd->MsgID != MsgID)||(Cmd->DataID != (this->DSeqNum-1)))continue;
    Rsp->Assign(&Cmd->Data,Cmd->DataSize, true);
 //   DBGMSG("Response: MsgID=%u, MsgType=%u, RspSize=%08X, RspWaitMs=%u",MsgID,MsgType,Rsp->GetLen(),GetTickCount()-StTicks);     // TODO: For Full debug log level
-   this->EndMsg(&MCtx);      // Unlock buffer
+   this->EndMsg(&LMCtx, true);      // Unlock buffer
    LeaveCriticalSection(&this->csec);
    return Rsp->GetLen();
   }

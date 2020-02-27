@@ -1201,12 +1201,12 @@ template<typename T> static int _stdcall TCryptSensitiveParts(PBYTE ModuleBase, 
 //---------------------------------------------------------------------------
 __declspec(noinline) static PBYTE RetAddrProc(void) {return (PBYTE)_ReturnAddress();}   // Helps to avoid problems with inlining of functions, called from a thread`s EP (Or we may get address in ntdll.dll instead of our module)
 
-template<typename T> __declspec(noinline) static int _stdcall TFixUpModuleInplace(PBYTE ModuleBase, PVOID pNtDll, UINT& Flags, UINT* pRetFix=NULL)   // Buffer at ModuleBase must be large enough to contain all sections
+template<typename T> __declspec(noinline) static int _stdcall TFixUpModuleInplace(PBYTE& ModuleBase, PVOID pNtDll, UINT& Flags, UINT* pRetFix=NULL)   // Buffer at ModuleBase must be large enough to contain all sections
 {
  if(!ModuleBase)    // Will move Self if Base is not specified
   {
    SIZE_T ThisModBase = (SIZE_T)RetAddrProc();  
-   if(Flags & fmCryHdr)   // Search for encrpted PE header
+   if(Flags & fmCryHdr)   // Search for encrypted PE header
     {
      for(ThisModBase &= PLATMEMALIGNMSK;;ThisModBase -= PLATMEMALIGN)   // May crash if header is incorrect
       {
@@ -1287,7 +1287,7 @@ template<typename T> __declspec(noinline) static int _stdcall TFixUpModuleInplac
  return 0;    //((WinHdr->OptionalHeader.EntryPointRVA)?(&ModuleBase[WinHdr->OptionalHeader.EntryPointRVA]):(NULL));
 }
 //---------------------------------------------------------------------------
-static int _stdcall FixUpModuleInplace(PBYTE ModuleBase, PVOID pNtDll, UINT Flags=0, UINT* pRetFix=NULL)
+static int _stdcall FixUpModuleInplace(PBYTE& ModuleBase, PVOID pNtDll, UINT Flags=0, UINT* pRetFix=NULL)
 {
  if(IsValidModuleX64(ModuleBase))return TFixUpModuleInplace<PETYPE64>(ModuleBase, pNtDll, Flags, pRetFix);
  return TFixUpModuleInplace<PETYPE32>(ModuleBase, pNtDll, Flags, pRetFix);

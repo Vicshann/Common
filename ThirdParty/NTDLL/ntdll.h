@@ -3539,8 +3539,8 @@ typedef struct _PROCESS_EXTENDED_BASIC_INFORMATION
 #define NtCurrentProcess        ((HANDLE)(LONG_PTR)-1)
 #define NtCurrentThread         ((HANDLE)(LONG_PTR)-2)
 #define NtCurrentPeb()          (NtCurrentTeb()->ProcessEnvironmentBlock)
-#define NtCurrentProcessId()    (NtCurrentTeb()->ClientId.UniqueProcess)
-#define NtCurrentThreadId()     (NtCurrentTeb()->ClientId.UniqueThread)
+#define NtCurrentProcessId()    (ULONG(NtCurrentTeb()->ClientId.UniqueProcess))
+#define NtCurrentThreadId()     (ULONG(NtCurrentTeb()->ClientId.UniqueThread))
 #define RtlProcessHeap()        (NtCurrentPeb()->ProcessHeap)
 
 typedef struct _RTL_HEAP_ENTRY

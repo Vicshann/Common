@@ -571,7 +571,7 @@ SIZE_T _stdcall GetRealModuleSize(PVOID ModuleBase)
  SIZE_T ModuleSize = 0;
  PBYTE  ModuleAddr = (PBYTE)ModuleBase;
  memset(&meminfo, 0, sizeof(MEMORY_BASIC_INFO));
- while(VirtualQuery((LPCVOID)ModuleAddr, (MEMORY_BASIC_INFORMATION*)&meminfo, sizeof(MEMORY_BASIC_INFO)))
+ while(VirtualQuery((LPCVOID)ModuleAddr, (MEMORY_BASIC_INFORMATION*)&meminfo, sizeof(MEMORY_BASIC_INFO)))   // Use MEMORY_IMAGE_INFORMATION instead?
   {
    ModuleAddr += meminfo.RegionSize;
    if(meminfo.AllocationBase == (ULONG_PTR)ModuleBase)ModuleSize += meminfo.RegionSize;

@@ -93,11 +93,12 @@ static int InjModuleIntoProcessAndExec(HANDLE hProcess, PVOID ModuleData, UINT M
     {
 
     }   
-   else if(Flags & mfRunRMTH)
+   else if(Flags & mfRunRMTH)   // Calls DLLMain as ThreadProc(hModule)
     {
      PVOID FlagArg = PVOID((SIZE_T)RemoteAddr | RemThModMarker);     // Mark base address
      HANDLE hTh = CreateRemoteThread(hProcess,NULL,0,(LPTHREAD_START_ROUTINE)RemEntry,FlagArg,0,NULL);        // Firefox Quantum: It gets into LdrInitializeThunk but not into specified ThreadProc!!!!
      if(!hTh){LOGMSG("Failed to create a remote thread (%u): RemEntry=%p, FlagArg=%p", GetLastError(), RemEntry, FlagArg); return -5;}
+     LOGMSG("RemEntry=%p, FlagArg=%p", RemEntry, FlagArg);
      WaitForSingleObject(hTh, INFINITE);
     }
    else if(Flags & mfRunThHij)
@@ -118,7 +119,9 @@ static void UnmapAndTerminateSelf(PVOID BaseAddr)
 //------------------------------------------------------------------------------------
 static BYTE EncryptModuleParts(PVOID BaseAddr, PVOID NtDllBase, UINT Flags)
 {
- BYTE EncKey = GetTickCount() >> 4;
+ DWORD Ticks  = GetTickCount();
+ BYTE EncKey  = 0;
+ for(int idx=4;!EncKey && (idx < 28);idx++)EncKey = Ticks >> idx;
  Flags |= EncKey;
  UINT VirSize = 0;
  UINT RawSize = 0;
@@ -126,12 +129,12 @@ static BYTE EncryptModuleParts(PVOID BaseAddr, PVOID NtDllBase, UINT Flags)
  if(IsValidModuleX64(BaseAddr)){Flags |= mfX64Mod; TCryptSensitiveParts<PETYPE64>((PBYTE)BaseAddr, Flags|fmEncMode, Flags & mfRawMod);}   
   else TCryptSensitiveParts<PETYPE32>((PBYTE)BaseAddr, Flags|fmEncMode, Flags & mfRawMod);   
 
- DOS_HEADER* DosHdr = (DOS_HEADER*)BaseAddr;
+ DOS_HEADER* DosHdr = (DOS_HEADER*)BaseAddr;     // This header may be encrypted
  DosHdr->Reserved1 = Flags;
  *(UINT64*)&DosHdr->Reserved2 = (UINT64)NtDllBase;
  *(UINT*)&DosHdr->Reserved2[10] = VirSize;
  *(UINT*)&DosHdr->Reserved2[14] = RawSize;
- *(PBYTE)BaseAddr = 0;     // Marker, First thead that enters will revert this to 'M'  // Helps to avoid mult-entering when using APC injection
+ *(PBYTE)BaseAddr = 0;     // Marker, First thead that enters will revert this to 'M'  // Helps to avoid multi-entering when using APC injection
  return EncKey;
 }
 //------------------------------------------------------------------------------------

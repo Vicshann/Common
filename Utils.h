@@ -736,6 +736,23 @@ template<typename S> int IsFileExist(S Path)
  return 1;
 }
 //---------------------------------------------------------------------------
+template<typename S> bool INISetValueInt(S SectionName, S ValueName, int Value, S FileName)
+{
+ if(!ValueName)return false;   // WritePrivateProfileString will remove section if ValueName is NULL
+ if constexpr (sizeof(FileName[0]) > 1)
+  {
+   wchar_t Buffer[128];
+   wsprintfW(Buffer,L"%i",Value);
+   return WritePrivateProfileStringW(SectionName,ValueName,Buffer,FileName);
+  }
+   else
+    {
+     char Buffer[128];
+     wsprintfA(Buffer,"%i",Value);
+     return WritePrivateProfileStringA(SectionName,ValueName,Buffer,FileName);
+    }
+}
+//---------------------------------------------------------------------------
 template<typename S> int INIRefreshValueInt(S SectionName, S ValueName, int Default, S FileName)
 {
  int Result = 0;
@@ -1357,6 +1374,40 @@ bool PushObject(T* Obj)
 
 }; 
 //------------------------------------------------------------------------------------------------------------
+class CPerfProbe
+{
+ ULARGE_INTEGER CntBefore; 
+ ULARGE_INTEGER DeltaMin; 
+ ULARGE_INTEGER DeltaMax; 
+
+public:
+void Begin(void)
+{
+ this->CntBefore.QuadPart = GetTickCount64(); //__rdtsc();
+ this->DeltaMin.QuadPart = -1;
+ this->DeltaMax.QuadPart = 0;
+}
+void Update(void)
+{
+ ULARGE_INTEGER Delta; 
+ ULARGE_INTEGER CntCurr;
+
+ CntCurr.QuadPart = GetTickCount64(); //__rdtsc();
+ Delta.QuadPart = CntCurr.QuadPart - this->CntBefore.QuadPart; 
+ if(Delta.QuadPart > this->DeltaMax.QuadPart)this->DeltaMax.QuadPart = Delta.QuadPart;
+ if(Delta.QuadPart < this->DeltaMin.QuadPart)this->DeltaMin.QuadPart = Delta.QuadPart;
+ this->CntBefore.QuadPart = CntCurr.QuadPart;
+// LOGMSG("Delta: %u", (UINT)Delta.QuadPart); 
+}
+
+void End(char* Name)
+{
+ this->Update();
+ LOGMSG("'%s': DeltaMin(%u), DeltaMax(%u)", Name?Name:"", (UINT)this->DeltaMin.QuadPart, (UINT)this->DeltaMax.QuadPart);	
+}
+
+};
+
 
 //---------------------------------------------------------------------------
 /*using namespace std;
