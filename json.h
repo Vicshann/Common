@@ -650,7 +650,7 @@ bool Truncate(UINT NewCnt)
 		}
 	   for(char val = str[tknpos];val;val = str[++tknpos])if(val == '>'){tknpos++;break;}
 	   Number[nctr] = 0;
-	   this->Data = (PVOID)HexStrToDW((LPSTR)&Number,8);	  // User Data	// NOTE: Now used PVOID an trimmed to DWORD on x32
+	   this->Data = (PVOID)SIZE_T(HexStrToDW((LPSTR)&Number,8));	  // User Data	// NOTE: Now used PVOID an trimmed to DWORD on x32
 	  }
 
 	 nctr = 0;

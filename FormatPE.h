@@ -19,7 +19,7 @@
 //#define FormatPEH
 
 #include <intrin.h>
-#include "ntdll.h"
+#include "NtDllEx.hpp"
 
 
 #pragma warning(push)
@@ -390,10 +390,29 @@ static UINT _stdcall GetImageSize(PVOID Header)
  return WinHdr->OptionalHeader.SizeOfImage;
 }
 //---------------------------------------------------------------------------
-template<typename T> static UINT _stdcall TRvaToFileOffset(PBYTE ModuleBase, UINT Rva)
+// NOTE: Assumed that section offsets is sequential!
+static UINT _stdcall SizeOfSections(PVOID ModuleBase, UINT MaxSecs=-1, bool IncludeHdr=true, bool RawSizes=false)
 {
  DOS_HEADER     *DosHdr = (DOS_HEADER*)ModuleBase;
- WIN_HEADER<T>  *WinHdr = (WIN_HEADER<T>*)&ModuleBase[DosHdr->OffsetHeaderPE];
+ WIN_HEADER<PECURRENT>  *WinHdr = (WIN_HEADER<PECURRENT>*)&((PBYTE)ModuleBase)[DosHdr->OffsetHeaderPE];
+ UINT            HdrLen = DosHdr->OffsetHeaderPE+WinHdr->FileHeader.HeaderSizeNT+sizeof(FILE_HEADER)+sizeof(DWORD);
+ SECTION_HEADER *CurSec = (SECTION_HEADER*)&((PBYTE)ModuleBase)[HdrLen];
+ UINT Base = 0;
+ UINT Size = 0;
+ UINT SMax = (MaxSecs > WinHdr->FileHeader.SectionsNumber)?WinHdr->FileHeader.SectionsNumber:MaxSecs;
+ for(UINT ctr=0;ctr < SMax;ctr++)
+  {
+   if(!Base)Base = RawSizes?(CurSec[ctr].PhysicalOffset):(CurSec[ctr].SectionRva);
+   Size += RawSizes?(ALIGN_FORWARD(CurSec[ctr].PhysicalSize, WinHdr->OptionalHeader.FileAlign)):(ALIGN_FORWARD(CurSec[ctr].VirtualSize, WinHdr->OptionalHeader.SectionAlign));
+  }                
+ if(!Base)Base = RawSizes?WinHdr->OptionalHeader.SizeOfHeaders:(ALIGN_FORWARD(WinHdr->OptionalHeader.SizeOfHeaders, WinHdr->OptionalHeader.SectionAlign));    
+ return Base + Size;
+}
+//---------------------------------------------------------------------------
+static UINT _stdcall RvaToFileOffset(PBYTE ModuleBase, UINT Rva)
+{
+ DOS_HEADER     *DosHdr = (DOS_HEADER*)ModuleBase;
+ WIN_HEADER<PECURRENT>  *WinHdr = (WIN_HEADER<PECURRENT>*)&ModuleBase[DosHdr->OffsetHeaderPE];
  UINT            HdrLen = DosHdr->OffsetHeaderPE+WinHdr->FileHeader.HeaderSizeNT+sizeof(FILE_HEADER)+sizeof(DWORD);
  SECTION_HEADER *CurSec = (SECTION_HEADER*)&ModuleBase[HdrLen];
  for(int ctr = 0;ctr < WinHdr->FileHeader.SectionsNumber;ctr++,CurSec++)
@@ -404,14 +423,6 @@ template<typename T> static UINT _stdcall TRvaToFileOffset(PBYTE ModuleBase, UIN
    return (CurSec->PhysicalOffset + Rva);
   }
  return 0;
-}
-//---------------------------------------------------------------------------
-// Works with a Mapped in memory or a Raw file
-static UINT _stdcall RvaToFileOffsConvert(PVOID ModuleBase, UINT Rva)
-{           
- if(!IsValidPEHeader(ModuleBase))return 0;
- if(IsValidModuleX64(ModuleBase))return TRvaToFileOffset<PETYPE64>((PBYTE)ModuleBase, Rva);
- return TRvaToFileOffset<PETYPE32>((PBYTE)ModuleBase, Rva);
 }
 //---------------------------------------------------------------------------
 template<typename T> static UINT _stdcall TFileOffsetToRva(PBYTE ModuleBase, UINT Offset)
@@ -437,8 +448,6 @@ static UINT _stdcall FileOffsetToRvaConvert(PVOID ModuleBase, UINT Offset)
  return TFileOffsetToRva<PETYPE32>((PBYTE)ModuleBase, Offset);
 }
 //---------------------------------------------------------------------------
-
-
 static PWSTR _stdcall FindVerValue(VERSION_INFO* RootBlk, PWSTR Name, UINT Type)
 {
  //if(RootBlk->ValueLength && ((Type == (UINT)-1)||(Type == RootBlk->Type)) && (lstrcmpW((PWSTR)&RootBlk->Key,Name)==0)return (PWSTR)&RootBlk->Key;
@@ -493,14 +502,14 @@ template<typename T> PVOID _stdcall TGetResBodyRaw(PBYTE ModuleBase, PBYTE ResBa
          else LNam = (LPSTR)entr->Name;   // Type      // x64 ????????????????????????????
        if(*Name)
         {
-         if(entr->Name & 0x80000000){if(lstrcmp(LNam,*Name) != 0)continue;}
+         if(entr->Name & 0x80000000){if(!IsNamesEqual(LNam,*Name))continue;}       // lstrcmp(LNam,*Name) != 0
            else if(LNam != *Name)continue;
         }
          else *Name = LNam;
        IMAGE_RESOURCE_DATA_ENTRY* Dentry = (IMAGE_RESOURCE_DATA_ENTRY*)&ResBase[entr->OffsetToData];
        *Size = Dentry->Size;
        if(DEntr)*DEntr = Dentry;
-       return &ModuleBase[TRvaToFileOffset<T>(ModuleBase,Dentry->OffsetToData)];
+       return &ModuleBase[RvaToFileOffset(ModuleBase,Dentry->OffsetToData)];
       }
   }
  return NULL; 
@@ -512,7 +521,7 @@ template<typename T> static PVOID _stdcall TGetResourceBodyRaw(PBYTE ModuleBase,
  WIN_HEADER<T>  *WinHdr = (WIN_HEADER<T>*)&((PBYTE)ModuleBase)[DosHdr->OffsetHeaderPE];
  UINT            HdrLen = DosHdr->OffsetHeaderPE+WinHdr->FileHeader.HeaderSizeNT+sizeof(FILE_HEADER)+sizeof(DWORD);
  DATA_DIRECTORY *ResDir = &WinHdr->OptionalHeader.DataDirectories.ResourceTable;
- RESOURCE_DIR   *Resour = (RESOURCE_DIR*)&ModuleBase[TRvaToFileOffset<T>(ModuleBase,ResDir->DirectoryRVA)];
+ RESOURCE_DIR   *Resour = (RESOURCE_DIR*)&ModuleBase[RvaToFileOffset(ModuleBase,ResDir->DirectoryRVA)];
  return TGetResBodyRaw<T>(ModuleBase, (PBYTE)Resour, Resour, RootID, &ResIdx, Size, Name, DEntr);
 }
 //---------------------------------------------------------------------------
@@ -572,7 +581,7 @@ template<typename T> static LPSTR _stdcall TGetExpModuleName(PBYTE ModuleBase, b
  DATA_DIRECTORY* ExportDir = &WinHdr->OptionalHeader.DataDirectories.ExportTable;
  if(!ExportDir->DirectoryRVA)return NULL;
  EXPORT_DIR* Export        = (EXPORT_DIR*)&((PBYTE)ModuleBase)[ExportDir->DirectoryRVA];
- return (LPSTR)&ModuleBase[(Raw)?(TRvaToFileOffset<T>(ModuleBase,Export->NameRVA)):(Export->NameRVA)];
+ return (LPSTR)&ModuleBase[(Raw)?(RvaToFileOffset(ModuleBase,Export->NameRVA)):(Export->NameRVA)];
 }
 //---------------------------------------------------------------------------
 static LPSTR _stdcall GetExpModuleName(PVOID ModuleBase, bool Raw)
@@ -585,7 +594,7 @@ static PVOID _stdcall ModuleAddressToBase(PVOID Address)  // Not all module sect
 {
  PBYTE Base = (PBYTE)(((ULONG_PTR)Address) & ~0xFFF);   
  while(IsBadReadPtr(Base,sizeof(DOS_HEADER)) || !IsValidPEHeader(Base))Base -= 0x1000;  // !MmIsAddressValid(Base) // Why not all pages of ntoskrnl.exe are available on x64?
- LOGMSG("Found module base: %p", Base);
+ DBGMSG("Found module base: %p", Base);
  return Base;
 }
 //---------------------------------------------------------------------------
@@ -711,13 +720,33 @@ template<typename T> static UINT _stdcall TGetModuleEntryOffset(PBYTE ModuleBase
  DOS_HEADER     *DosHdr    = (DOS_HEADER*)ModuleBase;
  WIN_HEADER<T>  *WinHdr    = (WIN_HEADER<T>*)&ModuleBase[DosHdr->OffsetHeaderPE];
  if(!WinHdr->OptionalHeader.EntryPointRVA)return 0;	 
- return (Raw)?(TRvaToFileOffset<T>(ModuleBase,WinHdr->OptionalHeader.EntryPointRVA)):(WinHdr->OptionalHeader.EntryPointRVA);
+ return (Raw)?(RvaToFileOffset(ModuleBase,WinHdr->OptionalHeader.EntryPointRVA)):(WinHdr->OptionalHeader.EntryPointRVA);
 }
 //---------------------------------------------------------------------------
 static UINT _stdcall GetModuleEntryOffset(PBYTE ModuleBase, bool Raw)
 {
  if(IsValidModuleX64(ModuleBase))return TGetModuleEntryOffset<PETYPE64>(ModuleBase, Raw);
  return TGetModuleEntryOffset<PETYPE32>(ModuleBase, Raw);
+}
+//---------------------------------------------------------------------------
+template<typename T> static LPSTR _stdcall TFindImportTable(PBYTE ModuleBase, LPSTR LibName, SImportThunk<T>** LookUpRec, SImportThunk<T>** AddrRec, bool Raw)
+{
+ DOS_HEADER     *DosHdr    = (DOS_HEADER*)ModuleBase;
+ WIN_HEADER<T>  *WinHdr    = (WIN_HEADER<T>*)&ModuleBase[DosHdr->OffsetHeaderPE];
+ DATA_DIRECTORY *ImportDir = &WinHdr->OptionalHeader.DataDirectories.ImportTable;
+ if(!ImportDir->DirectoryRVA)return NULL;
+ IMPORT_DESC    *Import    = (IMPORT_DESC*)&ModuleBase[(Raw)?(RvaToFileOffset(ModuleBase,ImportDir->DirectoryRVA)):(ImportDir->DirectoryRVA)];
+ for(DWORD tctr=0;Import[tctr].AddressTabRVA;tctr++)
+  {
+   LPSTR ModName = (LPSTR)&ModuleBase[(Raw)?(RvaToFileOffset(ModuleBase,Import[tctr].ModuleNameRVA)):(Import[tctr].ModuleNameRVA)];
+   if(LibName && !IsNamesEqualIC(ModName,LibName))continue;     // Can search for a proc of any module  
+   SImportThunk<T>* Table = (SImportThunk<T>*)&((BYTE*)ModuleBase)[(Raw)?(RvaToFileOffset(ModuleBase,Import[tctr].LookUpTabRVA)):(Import[tctr].LookUpTabRVA)];
+   SImportThunk<T>* LtRVA = (SImportThunk<T>*)&((BYTE*)ModuleBase)[(Raw)?(RvaToFileOffset(ModuleBase,Import[tctr].AddressTabRVA)):(Import[tctr].AddressTabRVA)];
+   if(AddrRec)*AddrRec = &LtRVA[tctr];
+   if(LookUpRec)*LookUpRec = &Table[tctr];
+   return ModName;
+  }
+ return NULL;
 }
 //---------------------------------------------------------------------------
 struct SImportRec
@@ -734,16 +763,16 @@ template<typename T> static bool _stdcall TFindImportRecord(PBYTE ModuleBase, LP
  WIN_HEADER<T>  *WinHdr    = (WIN_HEADER<T>*)&ModuleBase[DosHdr->OffsetHeaderPE];
  DATA_DIRECTORY *ImportDir = &WinHdr->OptionalHeader.DataDirectories.ImportTable;
  if(!ImportDir->DirectoryRVA)return NULL;
- IMPORT_DESC    *Import    = (IMPORT_DESC*)&ModuleBase[(Raw)?(TRvaToFileOffset<T>(ModuleBase,ImportDir->DirectoryRVA)):(ImportDir->DirectoryRVA)];
+ IMPORT_DESC    *Import    = (IMPORT_DESC*)&ModuleBase[(Raw)?(RvaToFileOffset(ModuleBase,ImportDir->DirectoryRVA)):(ImportDir->DirectoryRVA)];
 
  T    OMask = ((T)1 << ((sizeof(T)*8)-1));
  bool ByOrd = ((T)ProcName <= 0xFFFF);
  for(DWORD tctr=0;Import[tctr].AddressTabRVA;tctr++)
   {
-   LPSTR ModName = (LPSTR)&ModuleBase[(Raw)?(TRvaToFileOffset<T>(ModuleBase,Import[tctr].ModuleNameRVA)):(Import[tctr].ModuleNameRVA)];
+   LPSTR ModName = (LPSTR)&ModuleBase[(Raw)?(RvaToFileOffset(ModuleBase,Import[tctr].ModuleNameRVA)):(Import[tctr].ModuleNameRVA)];
    if(LibName && !IsNamesEqualIC(ModName,LibName))continue;     // Can search for a proc of any module  
-   SImportThunk<T>* Table = (SImportThunk<T>*)&((BYTE*)ModuleBase)[(Raw)?(TRvaToFileOffset<T>(ModuleBase,Import[tctr].LookUpTabRVA)):(Import[tctr].LookUpTabRVA)];
-   SImportThunk<T>* LtRVA = (SImportThunk<T>*)&((BYTE*)ModuleBase)[(Raw)?(TRvaToFileOffset<T>(ModuleBase,Import[tctr].AddressTabRVA)):(Import[tctr].AddressTabRVA)];
+   SImportThunk<T>* Table = (SImportThunk<T>*)&((BYTE*)ModuleBase)[(Raw)?(RvaToFileOffset(ModuleBase,Import[tctr].LookUpTabRVA)):(Import[tctr].LookUpTabRVA)];
+   SImportThunk<T>* LtRVA = (SImportThunk<T>*)&((BYTE*)ModuleBase)[(Raw)?(RvaToFileOffset(ModuleBase,Import[tctr].AddressTabRVA)):(Import[tctr].AddressTabRVA)];
    if(ProcName == LibName)    // Secret :)   // If we need just any address inside that module
     {
      for(;!(*Table).Value || !(*LtRVA).Value;Table++,LtRVA++);
@@ -838,11 +867,11 @@ template<typename T, bool Raw=false> _declspec(noinline) static PVOID _stdcall T
  WIN_HEADER<T>* WinHdr     = (WIN_HEADER<T>*)&ModuleBase[DosHdr->OffsetHeaderPE];
  DATA_DIRECTORY* ExportDir = &WinHdr->OptionalHeader.DataDirectories.ExportTable;
  if(!ExportDir->DirectoryRVA || !ExportDir->DirectorySize)return NULL;		 // No export directory!
- EXPORT_DIR* Export        = (EXPORT_DIR*)&ModuleBase[(Raw)?(TRvaToFileOffset<T>(ModuleBase,ExportDir->DirectoryRVA)):(ExportDir->DirectoryRVA)];
+ EXPORT_DIR* Export        = (EXPORT_DIR*)&ModuleBase[(Raw)?(RvaToFileOffset(ModuleBase,ExportDir->DirectoryRVA)):(ExportDir->DirectoryRVA)];
                    
- PDWORD NamePointers = (PDWORD)&ModuleBase[(Raw)?(TRvaToFileOffset<T>(ModuleBase,Export->NamePointersRVA)):(Export->NamePointersRVA)];
- PDWORD AddressTable = (PDWORD)&ModuleBase[(Raw)?(TRvaToFileOffset<T>(ModuleBase,Export->AddressTableRVA)):(Export->AddressTableRVA)];
- PWORD  OrdinalTable = (PWORD )&ModuleBase[(Raw)?(TRvaToFileOffset<T>(ModuleBase,Export->OrdinalTableRVA)):(Export->OrdinalTableRVA)];
+ PDWORD NamePointers = (PDWORD)&ModuleBase[(Raw)?(RvaToFileOffset(ModuleBase,Export->NamePointersRVA)):(Export->NamePointersRVA)];
+ PDWORD AddressTable = (PDWORD)&ModuleBase[(Raw)?(RvaToFileOffset(ModuleBase,Export->AddressTableRVA)):(Export->AddressTableRVA)];
+ PWORD  OrdinalTable = (PWORD )&ModuleBase[(Raw)?(RvaToFileOffset(ModuleBase,Export->OrdinalTableRVA)):(Export->OrdinalTableRVA)];
  SIZE_T Ordinal = (SIZE_T)ProcName;
  if(Ordinal <= 0xFFFF)  // By Ordnal
   {
@@ -854,14 +883,14 @@ template<typename T, bool Raw=false> _declspec(noinline) static PVOID _stdcall T
      for(DWORD ctr=0;ctr < Export->NamePointersNumber;ctr++)  // By name
       {      
        DWORD nrva  = NamePointers[ctr];   
-       if(!nrva || !IsNamesEqual((LPSTR)&ModuleBase[(Raw)?(TRvaToFileOffset<T>(ModuleBase,nrva)):(nrva)],ProcName))continue;    
+       if(!nrva || !IsNamesEqual((LPSTR)&ModuleBase[(Raw)?(RvaToFileOffset(ModuleBase,nrva)):(nrva)],ProcName))continue;    
        Ordinal = OrdinalTable[ctr];      // Name Ordinal 
        break;
       }
      if(Ordinal > 0xFFFF)return NULL;
     }
 
- PBYTE Addr = &ModuleBase[(Raw)?(TRvaToFileOffset<T>(ModuleBase,AddressTable[Ordinal])):(AddressTable[Ordinal])];  
+ PBYTE Addr = &ModuleBase[(Raw)?(RvaToFileOffset(ModuleBase,AddressTable[Ordinal])):(AddressTable[Ordinal])];  
  if(ProcEntry)*ProcEntry = &AddressTable[Ordinal];
  if(Forwarder && (Addr >= (PBYTE)Export) && (Addr < ((PBYTE)Export+ExportDir->DirectorySize)))*Forwarder = (LPSTR)Addr;
  return Addr;     
@@ -888,7 +917,7 @@ static PVOID _stdcall GetProcAddr(PVOID ModuleBase, LPSTR ApiName)
      if(Forwarder[ctr]=='.')DotPos = ctr;  
    memcpy(&StrBuf,Forwarder,DotPos);
    StrBuf[DotPos] = 0;
-   ModuleBase = GetModuleHandleA(StrBuf);          // TODO: Use PEB  // How to decode 'api-ms-win-core-com-l1-1-0.dll' ?
+   ModuleBase = NNTDLL::GetModuleBaseLdr(StrBuf);    // GetModuleHandleA(StrBuf);          // TODO: Use PEB  // How to decode 'api-ms-win-core-com-l1-1-0.dll' ?
    if(!ModuleBase)return NULL;
    return GetProcAddr(ModuleBase, &Forwarder[DotPos+1]);
   }
@@ -930,36 +959,35 @@ template<typename T> T* TBaseOfImagePtr(PBYTE ModuleBase)
  return (sizeof(PETYPE64)==sizeof(T))?((T*)&WinHdr->OptionalHeader.ImageBase64):((T*)&WinHdr->OptionalHeader.ImageBase);
 }       
 //---------------------------------------------------------------------------
-
-template<typename T> static bool _stdcall TFixRelocations(PBYTE ModuleBase, bool Raw)   // Possible not fully correct
+template<typename T, int Raw=0> static bool _stdcall TFixRelocations(PBYTE ModuleBase, PBYTE TargetBase)   // Possible not fully correct
 {
  DOS_HEADER     *DosHdr    = (DOS_HEADER*)ModuleBase;
  WIN_HEADER<T>  *WinHdr    = (WIN_HEADER<T>*)&ModuleBase[DosHdr->OffsetHeaderPE];
  DATA_DIRECTORY *ReloctDir = &WinHdr->OptionalHeader.DataDirectories.FixUpTable;
- if(!ReloctDir->DirectoryRVA)return false;
+ if(!ReloctDir->DirectoryRVA || !ReloctDir->DirectorySize)return false;
  SIZE_T ImageBase = TBaseOfImage<T>(ModuleBase);
- SIZE_T LoadDelta = (SIZE_T)ModuleBase - ImageBase;
- PBYTE  RelocPtr  = (PBYTE)&ModuleBase[(Raw)?(TRvaToFileOffset<T>(ModuleBase,ReloctDir->DirectoryRVA)):(ReloctDir->DirectoryRVA)];
+ SIZE_T LoadDelta = (SIZE_T)TargetBase - ImageBase;
+ PBYTE  RelocPtr  = (PBYTE)&ModuleBase[(Raw)?(RvaToFileOffset(ModuleBase,ReloctDir->DirectoryRVA)):(ReloctDir->DirectoryRVA)];
  for(UINT RelOffs=0;RelOffs < ReloctDir->DirectorySize;)
   {
    RELOCATION_DESC* CurRelBlk = (RELOCATION_DESC*)&RelocPtr[RelOffs];
-   PBYTE BasePtr = (PBYTE)&ModuleBase[(Raw)?(TRvaToFileOffset<T>(ModuleBase,CurRelBlk->BaseRVA)):(CurRelBlk->BaseRVA)];
+   PBYTE BasePtr = (PBYTE)&ModuleBase[(Raw)?(RvaToFileOffset(ModuleBase,CurRelBlk->BaseRVA)):(CurRelBlk->BaseRVA)];
    for(UINT RIdx=0,RTotal=CurRelBlk->Count();RIdx < RTotal;RIdx++)
     {   
      BYTE Type = CurRelBlk->Records[RIdx].Type;   // NOTE: 'switch()' makes the code Base dependant (Remember Reflective Injection)
      if(Type == IMAGE_REL_BASED_HIGHLOW)     // x32
       {
        PUINT32 Value = (PUINT32)&BasePtr[CurRelBlk->Records[RIdx].Offset];     
-       if(Raw)*Value = UINT32(ModuleBase + TRvaToFileOffset<T>(ModuleBase, (*Value - ImageBase)));    // Direct x32 address
+       if(Raw==1)*Value = UINT32(TargetBase + RvaToFileOffset(ModuleBase, (*Value - ImageBase)));    // Direct x32 address      // Resolve to a Raw address
          else *Value += LoadDelta;           
       }              
      else if(Type == IMAGE_REL_BASED_DIR64)  // x64
       {
        PUINT64 Value = (PUINT64)&BasePtr[CurRelBlk->Records[RIdx].Offset];     
-       if(Raw)*Value = UINT64(ModuleBase + TRvaToFileOffset<T>(ModuleBase, (*Value - ImageBase)));    // Direct x32 address
+       if(Raw==1)*Value = UINT64(TargetBase + RvaToFileOffset(ModuleBase, (*Value - ImageBase)));    // Direct x32 address      // Resolve to a Raw address
          else *Value += LoadDelta;           
       }
-//     else if(Type != IMAGE_REL_BASED_ABSOLUTE){LOGMSG("Unsupported reloc type: %u", Type);}    // 11:IMAGE_REL_BASED_HIGH3ADJ(3xWORD) and 4:IMAGE_REL_BASED_HIGHADJ(2xWORD)  // Can`t log if self relocating
+//     else if(Type != IMAGE_REL_BASED_ABSOLUTE){DBGMSG("Unsupported reloc type: %u", Type);}    // 11:IMAGE_REL_BASED_HIGH3ADJ(3xWORD) and 4:IMAGE_REL_BASED_HIGHADJ(2xWORD)  // Can`t log if self relocating
     }
    RelOffs += CurRelBlk->BlkSize;
   }
@@ -990,31 +1018,34 @@ template<typename T> static int _stdcall TResolveImportsForMod(LPSTR ImpModName,
  IMPORT_DESC    *Import    = (IMPORT_DESC*)&ModuleBase[ImportDir->DirectoryRVA];
 
  T OMask = ((T)1 << ((sizeof(T)*8)-1));
- for(DWORD tctr=0;Import[tctr].AddressTabRVA;tctr++)
+ PVOID  BaseAddress = NULL;
+ SIZE_T RegionSize  = 0;
+ ULONG  OldProtect  = 0;
+ for(DWORD tctr=0;Import[tctr].AddressTabRVA;tctr++)    
   {
-   DWORD OldProt = 0;
+
    LPSTR ModName = (LPSTR)&ModuleBase[Import[tctr].ModuleNameRVA];
    if(!IsNamesEqualIC(ModName,ImpModName))continue;     // May by more than one entry for a same module
-   LOGMSG("Updating import for '%s'",ImpModName);
+   DBGMSG("Updating import for '%s'",ImpModName);
    SImportThunk<T>* Table = (SImportThunk<T>*)&ModuleBase[Import[tctr].LookUpTabRVA];
    SImportThunk<T>* LtRVA = (SImportThunk<T>*)&ModuleBase[Import[tctr].AddressTabRVA];
    for(DWORD actr=0;Table[actr].Value;actr++)
     {
      bool OnlyOrd = (Table[actr].Value & OMask);
+     PVOID PAddr;
      if(OnlyOrd)   // Have only API ordinal
       {	                                                         
        T Ord = Table[actr].Value & ~OMask;
-       LOGMSG("Ordinal: %u",Ord);
-       if(!OldProt && !VirtualProtect(LtRVA,0x1000,PAGE_EXECUTE_READWRITE,&OldProt)){LOGMSG("VP failed: %u", GetLastError()); return -2;}  // TODO: IAT may span multiple pages
-       LtRVA[actr].Value = (SIZE_T)TGetProcedureAddress<T>(ExpModase, (LPSTR)Ord);
+       DBGMSG("Ordinal: %u",Ord);
+       PAddr = TGetProcedureAddress<T>(ExpModase, (LPSTR)Ord);
       }
        else    // Have an import API name
         {
          SImportByName* INam = (SImportByName*)&ModuleBase[Table[actr].Value]; 
-         LOGMSG("Name: %s",(LPSTR)&INam->Name);
+         DBGMSG("Name: %s",(LPSTR)&INam->Name);
          LPSTR Forwarder = NULL;
          PVOID PAddr = TGetProcedureAddress<T>(ExpModase, (LPSTR)&INam->Name, &Forwarder);   
-         LOGMSG("New Address: %p",PAddr);
+         DBGMSG("New Address: %p",PAddr);
          if(Forwarder)
           {
            BYTE OutDllName[MAX_PATH]; 
@@ -1023,18 +1054,32 @@ template<typename T> static int _stdcall TResolveImportsForMod(LPSTR ImpModName,
            UINT Ord = ParseForwarderStr(Forwarder, (LPSTR)&OutDllName, (LPSTR)&OutProcName);  
            if(!OutProcName[0])PNamePtr = (LPSTR)Ord;
             else PNamePtr = (LPSTR)&OutProcName;
-           PBYTE ImpModBaseF = (PBYTE)GetModuleHandleA((LPSTR)&OutDllName);         // <<<<<<<<<<<<<<<<<<<<<<<<<<
+           PBYTE ImpModBaseF = (PBYTE)NNTDLL::GetModuleBaseLdr((LPSTR)&OutDllName);          //   GetModuleHandleA((LPSTR)&OutDllName);         // <<<<<<<<<<<<<<<<<<<<<<<<<<
            if(!ImpModBaseF)return -1;
            PAddr = TGetProcedureAddress<T>(ImpModBaseF, PNamePtr, &Forwarder);    // No more forwarding?
           }
-//         if(IsBadWritePtr(&LtRVA[actr].Value,sizeof(PVOID))){LOGMSG("Import table is not writable at %p !",&LtRVA[actr].Value); return -2;}      // Make optional?   // Avoid  IsBadReadPtr?
-         if(!OldProt && !VirtualProtect(LtRVA,0x1000,PAGE_EXECUTE_READWRITE,&OldProt)){LOGMSG("VP failed: %u", GetLastError()); return -2;}   // TODO: IAT may span multiple pages
-         LtRVA[actr].Value = (SIZE_T)PAddr;  
+//         if(IsBadWritePtr(&LtRVA[actr].Value,sizeof(PVOID))){DBGMSG("Import table is not writable at %p !",&LtRVA[actr].Value); return -2;}      // Make optional?   // Avoid  IsBadReadPtr?
+        }    
+     if(OldProtect)   // if(!OldProt && !VirtualProtect(LtRVA,0x1000,PAGE_EXECUTE_READWRITE,&OldProtect)){DBGMSG("VP failed: %u", GetLastError()); return -2;}   // TODO: IAT may span multiple pages
+      {
+       PBYTE Addr = (PBYTE)&LtRVA[actr]; 
+       if((Addr < (PBYTE)BaseAddress) || (&Addr[sizeof(SImportThunk<T>)] >= ((PBYTE)BaseAddress+RegionSize)))  // Outside of unprotected block
+        {
+         NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, OldProtect, &OldProtect);  // Restore last page protection
+         OldProtect = 0;
         }
+      }
+     if(!OldProtect)   
+      {
+       BaseAddress = &LtRVA[actr];
+       RegionSize  = sizeof(SImportThunk<T>);  
+       if(NTSTATUS stat = NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, PAGE_EXECUTE_READWRITE, &OldProtect)){DBGMSG("VP failed: %08X", stat); return -2;}    
+      }
+     LtRVA[actr].Value = (SIZE_T)PAddr;  
      if(!LtRVA[actr].Value)return -3;  // Leaving OldProt unrestored is OK?
     }
-   if(OldProt)VirtualProtect(LtRVA,0x1000,OldProt,&OldProt);
   }
+ if(OldProtect)NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, OldProtect, &OldProtect);  //    VirtualProtect(LtRVA,0x1000,OldProt,&OldProt);
  return 0;
 }
 //--------------------------------------------------------------------------- 
@@ -1153,18 +1198,18 @@ template<typename T> static int _stdcall TCryptSensitiveParts(PBYTE ModuleBase, 
 
  if((Flags & fmCryImp) && ImportDir->DirectoryRVA)
   {
-   IMPORT_DESC *Import = (IMPORT_DESC*)&ModuleBase[(Raw)?(TRvaToFileOffset<T>(ModuleBase,ImportDir->DirectoryRVA)):(ImportDir->DirectoryRVA)];
+   IMPORT_DESC *Import = (IMPORT_DESC*)&ModuleBase[(Raw)?(RvaToFileOffset(ModuleBase,ImportDir->DirectoryRVA)):(ImportDir->DirectoryRVA)];
    T OMask = ((T)1 << ((sizeof(T)*8)-1));
    for(DWORD tctr=0;Import[tctr].AddressTabRVA;tctr++)
     {
-     LPSTR MNamePtr = (LPSTR)&ModuleBase[(Raw)?(TRvaToFileOffset<T>(ModuleBase,Import[tctr].ModuleNameRVA)):(Import[tctr].ModuleNameRVA)];        
+     LPSTR MNamePtr = (LPSTR)&ModuleBase[(Raw)?(RvaToFileOffset(ModuleBase,Import[tctr].ModuleNameRVA)):(Import[tctr].ModuleNameRVA)];        
      if(Flags & fmEncMode)EncryptStrSimple(MNamePtr, MNamePtr, EncKey);      
        else DecryptStrSimple(MNamePtr, MNamePtr, EncKey);   
-     SImportThunk<T>* Table = (SImportThunk<T>*)&((BYTE*)ModuleBase)[(Raw)?(TRvaToFileOffset<T>(ModuleBase,Import[tctr].LookUpTabRVA)):(Import[tctr].LookUpTabRVA)];
+     SImportThunk<T>* Table = (SImportThunk<T>*)&((BYTE*)ModuleBase)[(Raw)?(RvaToFileOffset(ModuleBase,Import[tctr].LookUpTabRVA)):(Import[tctr].LookUpTabRVA)];
      for(DWORD actr=0;Table[actr].Value;actr++)
       {
        if(Table[actr].Value & OMask)continue; // No name, only ordinal
-  	   SImportByName* INam = (SImportByName*)&ModuleBase[(Raw)?(TRvaToFileOffset<T>(ModuleBase,Table[actr].Value)):(Table[actr].Value)];        
+  	   SImportByName* INam = (SImportByName*)&ModuleBase[(Raw)?(RvaToFileOffset(ModuleBase,Table[actr].Value)):(Table[actr].Value)];        
        if(Flags & fmEncMode)EncryptStrSimple((LPSTR)&INam->Name, (LPSTR)&INam->Name, EncKey);          
         else DecryptStrSimple((LPSTR)&INam->Name, (LPSTR)&INam->Name, EncKey);  
       } 
@@ -1172,22 +1217,22 @@ template<typename T> static int _stdcall TCryptSensitiveParts(PBYTE ModuleBase, 
   }
  if((Flags & fmCryExp) && ExportDir->DirectoryRVA)
   {
-   EXPORT_DIR* Export = (EXPORT_DIR*)&ModuleBase[(Raw)?(TRvaToFileOffset<T>(ModuleBase,ExportDir->DirectoryRVA)):(ExportDir->DirectoryRVA)];
-   LPSTR ModName = (LPSTR)&ModuleBase[(Raw)?(TRvaToFileOffset<T>(ModuleBase,Export->NameRVA)):(Export->NameRVA)]; 
+   EXPORT_DIR* Export = (EXPORT_DIR*)&ModuleBase[(Raw)?(RvaToFileOffset(ModuleBase,ExportDir->DirectoryRVA)):(ExportDir->DirectoryRVA)];
+   LPSTR ModName = (LPSTR)&ModuleBase[(Raw)?(RvaToFileOffset(ModuleBase,Export->NameRVA)):(Export->NameRVA)]; 
    if(Flags & fmEncMode)EncryptStrSimple(ModName, ModName, EncKey);            
-     else  DecryptStrSimple(ModName, ModName, EncKey);            
+     else DecryptStrSimple(ModName, ModName, EncKey);            
    for(DWORD ctr=0;ctr < Export->NamePointersNumber;ctr++)
     {   
-     DWORD Offs = (Raw)?(TRvaToFileOffset<T>(ModuleBase,Export->NamePointersRVA)):(Export->NamePointersRVA);     
+     DWORD Offs = (Raw)?(RvaToFileOffset(ModuleBase,Export->NamePointersRVA)):(Export->NamePointersRVA);     
      DWORD rva  = (((PDWORD)&ModuleBase[Offs])[ctr]);                
-     LPSTR CurProcName = (LPSTR)&ModuleBase[(Raw)?(TRvaToFileOffset<T>(ModuleBase,rva)):(rva)];         
+     LPSTR CurProcName = (LPSTR)&ModuleBase[(Raw)?(RvaToFileOffset(ModuleBase,rva)):(rva)];         
      if(Flags & fmEncMode)EncryptStrSimple(CurProcName, CurProcName, EncKey);     
        else DecryptStrSimple(CurProcName, CurProcName, EncKey);     
     }
   }
  if((Flags & fmCryRes) && ResourDir->DirectoryRVA)
   {
-   PBYTE ResBase = &ModuleBase[(Raw)?(TRvaToFileOffset<T>(ModuleBase,ResourDir->DirectoryRVA)):(ResourDir->DirectoryRVA)];
+   PBYTE ResBase = &ModuleBase[(Raw)?(RvaToFileOffset(ModuleBase,ResourDir->DirectoryRVA)):(ResourDir->DirectoryRVA)];
    if(Flags & fmEncMode){for(UINT ctr=0;ctr < ResourDir->DirectorySize;ctr++)ResBase[ctr] = EncryptByteWithCtr(ResBase[ctr], EncKey, ctr);}
      else {for(UINT ctr=0;ctr < ResourDir->DirectorySize;ctr++)ResBase[ctr] = DecryptByteWithCtr(ResBase[ctr], EncKey, ctr);}      
   }
@@ -1262,7 +1307,8 @@ template<typename T> __declspec(noinline) static int _stdcall TFixUpModuleInplac
     {
      PBYTE MProcAddr = (PBYTE)&MoveSections;    // On x64 it will be a correct address of 'MoveSections' because of usage of LEA instruction for RIP addressing
 #ifndef _AMD64_ 
-     MProcAddr = &ModuleBase[TRvaToFileOffset<T>(ModuleBase,(MProcAddr - (PBYTE)TBaseOfImage<T>(ModuleBase)))];    // Fix section in a Raw module image    // Assume that &MoveSections originally will be as for default image base
+     if((Flags & fmFixRel) && WinHdr->OptionalHeader.DataDirectories.FixUpTable.DirectoryRVA)MProcAddr = &ModuleBase[RvaToFileOffset(ModuleBase,(MProcAddr - (PBYTE)TBaseOfImage<T>(ModuleBase)))];  // Fails if relocs already fixed  // Fix section in a Raw module image    // Assume that &MoveSections originally will be as for default image base
+      else MProcAddr = &ModuleBase[RvaToFileOffset(ModuleBase, (MProcAddr - (PBYTE)ModuleBase))];
 #endif  
      BYTE Header[0x400];  // Must be enough to save a full PE header 
      memcpy(&Header,ModuleBase,sizeof(Header));   // Save an original PE header
@@ -1274,10 +1320,10 @@ template<typename T> __declspec(noinline) static int _stdcall TFixUpModuleInplac
     }
      else MoveSections(SecArrOffs, SecsNum, ModuleBase);   // Not this module, just move its sections   
   }
- if(Flags & fmFixRel)TFixRelocations<T>(ModuleBase, false);
+ if((Flags & fmFixRel) && WinHdr->OptionalHeader.DataDirectories.FixUpTable.DirectoryRVA)TFixRelocations<T,false>(ModuleBase, ModuleBase);   // The module is not raw after MoveSections
  if((Flags & fmFixImp) && WinHdr->OptionalHeader.DataDirectories.ImportTable.DirectoryRVA)  
   {
-   DWORD NLdrLoadDll[] = {~0x4C72644C, ~0x4464616F, ~0x00006C6C};  // LdrLoadDll     
+   DWORD NLdrLoadDll[] = {~0x4C72644Cu, ~0x4464616Fu, ~0x00006C6Cu};  // LdrLoadDll     
    NLdrLoadDll[0] = ~NLdrLoadDll[0];
    NLdrLoadDll[1] = ~NLdrLoadDll[1];
    NLdrLoadDll[2] = ~NLdrLoadDll[2];
@@ -1392,7 +1438,7 @@ static int _stdcall LoadRichInfo(PBYTE ModuleBase, SRichRec* Recs, PUINT RecsNum
  RBeg += 4;
  PDWORD DstPtr = (PDWORD)Recs;
  UINT RichSize = ((((XorKey >> 5) % 3) + Counter) * 8) + 0x20;   // Counter not includes first 4 DWORDs
- for(UINT ctr=0;ctr < Counter;ctr++)
+ for(long ctr=0;ctr < Counter;ctr++)
  {
   *(DstPtr++) = *(RBeg++) ^ XorKey;
   *(DstPtr++) = *(RBeg++) ^ XorKey;
@@ -1401,7 +1447,7 @@ static int _stdcall LoadRichInfo(PBYTE ModuleBase, SRichRec* Recs, PUINT RecsNum
   {
    DWORD OrgXorKey = ROffs;
    for(UINT Idx=0;Idx < ROffs;Idx++)OrgXorKey += ((Idx < 0x3C)||(Idx > 0x3F))?(RotL((DWORD)ModuleBase[Idx], Idx)):(0);    // Skipping OffsetHeaderPE (Slower but without a buffer)
-   for(UINT Idx=0;Idx < Counter;Idx++)
+   for(long Idx=0;Idx < Counter;Idx++)
     {
      PDWORD Rec = (PDWORD)&Recs[Idx];
      OrgXorKey += RotL(Rec[0], (BYTE)Rec[1]);
@@ -1454,6 +1500,69 @@ static int _stdcall SaveRichInfo(PBYTE ModuleBase, SRichRec* Recs, UINT RecsNum,
  return RichSize;
 }
 //---------------------------------------------------------------------------
+static PVOID GetNtDllBaseFast(bool Cache=true)
+{
+ static PVOID BaseAddr = NULL;
+ if(Cache && BaseAddr)return BaseAddr;
+ SIZE_T Addr = (SIZE_T)NtCurrentTeb()->ProcessEnvironmentBlock->FastPebLock & ~((SIZE_T)0xFFFF);   // Address in current ntdll (WOW64 if is x32 on x64)
+ for(;;Addr -= 0x10000)
+  {
+   DOS_HEADER* DosHdr  = (DOS_HEADER*)Addr;
+   if((DosHdr->FlagMZ != SIGN_MZ))continue;
+   if((DosHdr->OffsetHeaderPE >= 0x1000))continue;
+   WIN_HEADER<PECURRENT>* WinHdr = (WIN_HEADER<PECURRENT>*)&(((BYTE*)Addr)[DosHdr->OffsetHeaderPE]);
+   if((WinHdr->FlagPE != SIGN_PE))continue;
+   if(Cache)BaseAddr = (PVOID)Addr; 
+   return (PVOID)Addr;
+  }
+}
+//------------------------------------------------------------------------------------
+// Use ntdll.dll as SrcModule, 42 bytes in StubBuf for each function 
+// Import table must be writable! 
+// StubBuf must be made executable
+// Log output should be initially disabled if ResolveSysSrvCallImports called from same module
+template<typename T, bool RawSrcPE=false, bool RawDstPE=false> static int ResolveSysCallImports(PVOID TgtModule, PVOID SrcModule, PBYTE StubBuf, PBYTE AddrBuf, UINT BufSize, bool DestroyImp=true)
+{
+ static const int SysCallEntrySize = 42;   // Max encountered is 41 (WOW64, QueryInformationProcess)
+ if(!IsValidPEHeader(SrcModule) || !IsValidPEHeader(TgtModule)){DBGMSG("On of modules is invalid!"); return -1;}
+ if(IsValidModuleX64(SrcModule) != IsValidModuleX64(TgtModule)){DBGMSG("Modules not match!"); return -2;}
+ LPSTR SrcModName = GetExpModuleName(SrcModule, RawSrcPE);
+ if(!SrcModName){DBGMSG("No source module name found!"); return -3;}
+ SImportThunk<T>* AddrRec   = NULL; 
+ SImportThunk<T>* LookUpRec = NULL; 
+ UINT DBuffOffs = 0;
+ LPSTR ModName = TFindImportTable<T>((PBYTE)TgtModule, SrcModName, &LookUpRec, &AddrRec, RawDstPE);
+ if(!ModName)return NULL;   // Find First import entry
+ if(DestroyImp){for(int ctr=0;ModName[ctr];ctr++)ModName[ctr]=0;}
+ for(;LookUpRec->Value;DBuffOffs+=SysCallEntrySize,LookUpRec++,AddrRec++)
+  {
+   if(BufSize < SysCallEntrySize){DBGMSG("No space left!"); return -4;}
+   SImportByName* INam = (SImportByName*)&((PBYTE)TgtModule)[(RawDstPE)?(RvaToFileOffset((PBYTE)TgtModule, LookUpRec->Value)):(LookUpRec->Value)];     // ModuleBase    
+   PBYTE ProcAddr = (PBYTE)TGetProcedureAddress<T,RawSrcPE>((PBYTE)SrcModule, (LPSTR)&INam->Name);
+   if(!ProcAddr){DBGMSG("Proc not found: %s", (LPSTR)&INam->Name); continue;}
+   LookUpRec->Value = AddrRec->Value = (T)&AddrBuf[DBuffOffs]; // AddrBuf may be in a remote memory and have adifferent address from StubBuf   // NOTE: A resolved import table is detectable!    
+   if(*(PDWORD)&ProcAddr[7] == 0x2504F600)            // Skip 'test byte_ptr ds:7FFE0308h, 1' and 'jnz short'
+    {
+     memcpy(&StubBuf[DBuffOffs], ProcAddr, 8);
+     memcpy(&StubBuf[DBuffOffs+8], &ProcAddr[18], 8);
+    }
+     else memcpy(&StubBuf[DBuffOffs], ProcAddr, SysCallEntrySize);  
+   DBGMSG("Resolved %08X, %p: %s",DBuffOffs,&AddrBuf[DBuffOffs],(LPSTR)&INam->Name);
+   if(DestroyImp)
+    {
+     for(int ctr=0;INam->Name[ctr];ctr++)INam->Name[ctr]=0;
+     INam->Hint = 0;
+    }
+  }
+ if(DestroyImp)
+  {
+   DOS_HEADER* DosHdr = (DOS_HEADER*)TgtModule;
+   WIN_HEADER<PECURRENT>* WinHdr = (WIN_HEADER<PECURRENT>*)&(((BYTE*)TgtModule)[DosHdr->OffsetHeaderPE]);
+   WinHdr->OptionalHeader.DataDirectories.ImportTable.DirectoryRVA = WinHdr->OptionalHeader.DataDirectories.ImportTable.DirectorySize = 0;    // Prevents a normal import resolving again
+  }
+ return DBuffOffs;
+}
+//------------------------------------------------------------------------------------
 
 /*UINT  _stdcall GetEntryPoint(PVOID Header);
 void  _stdcall SetEntryPoint(PVOID Header, UINT Entry);

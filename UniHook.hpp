@@ -4,7 +4,7 @@
 #ifndef UniHookH
 #define UniHookH
 /*
-  Copyright (c) 2018 Victor Sheinmann, Vicshann@gmail.com
+  Copyright (c) 2020 Victor Sheinmann, Vicshann@gmail.com
 
   Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), 
   to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, 
@@ -84,19 +84,27 @@ template<auto HookProc, int VftIdx> struct SVftHookEx      //  'T HProc' will cr
    if(this->TargetVFT == *(void***)TgtThis)return;  // Already hooked
    this->TargetVFT = *(void***)TgtThis;
    *(void**)&this->OrigProc = this->TargetVFT[VftIdx]; 
-   DWORD OldProt = 0;
-   VirtualProtect(&this->TargetVFT[VftIdx],sizeof(PVOID),PAGE_EXECUTE_READWRITE,&OldProt);  // TODO: Test if it is writable first
+   PVOID  BaseAddress = &this->TargetVFT[VftIdx];
+   SIZE_T RegionSize  = sizeof(PVOID);
+   ULONG  OldProtect  = 0;
+   NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, PAGE_EXECUTE_READWRITE, &OldProtect);   // VirtualProtect(&this->TargetVFT[VftIdx],sizeof(PVOID),PAGE_EXECUTE_READWRITE,&OldProt);  // TODO: Test if it is writable first
    *(decltype(HookProc)*)&this->TargetVFT[VftIdx] = HookProc;
-   VirtualProtect(&this->TargetVFT[VftIdx],sizeof(PVOID),OldProt,&OldProt);     
+   BaseAddress = &this->TargetVFT[VftIdx];
+   RegionSize  = sizeof(PVOID);
+   NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, OldProtect, &OldProtect);    // VirtualProtect(&this->TargetVFT[VftIdx],sizeof(PVOID),OldProt,&OldProt);       
   }
 //------------------------
  void Remove(void)
   {
    if(!this->TargetVFT)return;
-   DWORD OldProt = 0;
-   VirtualProtect(&this->TargetVFT[VftIdx],sizeof(PVOID),PAGE_EXECUTE_READWRITE,&OldProt);
+   PVOID  BaseAddress = &this->TargetVFT[VftIdx];
+   SIZE_T RegionSize  = sizeof(PVOID);
+   ULONG  OldProtect  = 0;
+   NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, PAGE_EXECUTE_READWRITE, &OldProtect);    // VirtualProtect(&this->TargetVFT[VftIdx],sizeof(PVOID),PAGE_EXECUTE_READWRITE,&OldProtect);
    *(decltype(HookProc)*)&this->TargetVFT[VftIdx] = this->OrigProc;
-   VirtualProtect(&this->TargetVFT[VftIdx],sizeof(PVOID),OldProt,&OldProt);     
+   BaseAddress = &this->TargetVFT[VftIdx];
+   RegionSize  = sizeof(PVOID);
+   NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, OldProtect, &OldProtect);    // VirtualProtect(&this->TargetVFT[VftIdx],sizeof(PVOID),OldProt,&OldProt);     
   }
 };
 
@@ -149,14 +157,12 @@ bool SetHookIntr(PBYTE ProcAddr=NULL, UINT Flags=EHookFlg::hfFillNop|EHookFlg::h
  HDE64 dhde;
 #else
  HDE32 dhde;
-#endif
- DWORD PrevProt  = 0;					   
+#endif					   
  UINT  CodeLen   = 0;
  this->HookLen   = 0;
 // if(!HookFunc)HookFunc = HProc;       // No more bloating
  if(!ProcAddr)ProcAddr = *(PBYTE*)&this->HookAddr;
  if(*ProcAddr == 0xFC)ProcAddr++;   // CLD  // Just in case
- VirtualProtect(this,sizeof(*this),PAGE_EXECUTE_READWRITE,&PrevProt);	 // On some platforms a data sections is not executable!		   
  for(PBYTE DisAddr=ProcAddr;this->HookLen < TrLen;DisAddr += dhde.len)   // MSVC compiler crash if 'this->HookLen += dhde.len' is here
   {
    this->HookLen += dhde.Disasm(DisAddr);
@@ -266,8 +272,10 @@ bool SetHookIntr(PBYTE ProcAddr=NULL, UINT Flags=EHookFlg::hfFillNop|EHookFlg::h
  *(PVOID*)&this->HookProc = HookFunc;   // *(PVOID*)&this->HookProc = (PVOID)HookFunc;
  *(PVOID*)&this->HookAddr = (PVOID)ProcAddr;
  *(PVOID*)&this->OrigProc = (PVOID)&StolenCode;
- VirtualProtect(this,sizeof(*this),PAGE_EXECUTE_READWRITE,&PrevProt);	// Module`s data section may be not executable!		   
- VirtualProtect(ProcAddr,TrLen,PAGE_EXECUTE_READWRITE,&PrevProt);  
+ PVOID  BaseAddress = ProcAddr;
+ SIZE_T RegionSize  = TrLen;
+ ULONG  OldProtect  = 0;	   
+ NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, PAGE_EXECUTE_READWRITE, &OldProtect);   // VirtualProtect(ProcAddr,TrLen,PAGE_EXECUTE_READWRITE,&PrevProt);  
  *(__m128i*)&Patch = *(__m128i*)ProcAddr;
  *(__m128i*)&this->OriginCode = *(__m128i*)&Patch;
  if(Flags & EHookFlg::hfFillNop)memset(&Patch,0x90,this->HookLen);      // Optional, good for debugging
@@ -294,8 +302,12 @@ bool SetHookIntr(PBYTE ProcAddr=NULL, UINT Flags=EHookFlg::hfFillNop|EHookFlg::h
 #endif
 #endif
  _mm_storeu_si128((__m128i*)ProcAddr, *(__m128i*)&Patch);  // SSE2, single operation, should be safe       // TODO: memcpy with aligned SSE2 16 byte copy
- VirtualProtect(ProcAddr,TrLen,PrevProt,&PrevProt); 
- FlushInstructionCache(GetCurrentProcess(),ProcAddr,sizeof(this->OriginCode));   // Is it really needed here?
+ NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, OldProtect, &OldProtect);   // VirtualProtect(ProcAddr,TrLen,PrevProt,&PrevProt); 
+
+ BaseAddress = this;
+ RegionSize  = sizeof(*this);
+ NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, PAGE_EXECUTE_READWRITE, &OldProtect);  // VirtualProtect(this,sizeof(*this),PAGE_EXECUTE_READWRITE,&PrevProt);	 // On some platforms a data sections is not executable!
+// FlushInstructionCache(GetCurrentProcess(),ProcAddr,sizeof(this->OriginCode));   // Is it really needed here?   (Just returns 1)
  return true;
 }  
 //------------------------------------------------------------------------------------
@@ -307,7 +319,7 @@ bool IsActive(void){return (bool)this->HookLen;}
 bool SetHook(LPSTR ProcName, LPSTR LibName, UINT Flags=EHookFlg::hfFillNop|EHookFlg::hfFollowJmp, T HookFunc=NULL)
 {
  if(this->IsActive() && !(Flags & EHookFlg::hfForceHook))return false;       // Already set
- HMODULE  hLib  = GetModuleHandleA(LibName);
+ HMODULE  hLib  = (HMODULE)NNTDLL::GetModuleBaseLdr(LibName);            // GetModuleHandleA(LibName);
  if(!hLib && LibName)hLib  = LoadLibraryA(LibName);             // Only with a ForceLoad flag?
  PBYTE ProcAddr = (PBYTE)GetProcAddr(hLib, ProcName);    // 'C:\Windows\AppPatch\AcLayers.dll' sometimes intercept GetProcAddress and substitutes its result
  if(!ProcAddr){DBGMSG("Failed: %s:%s",LibName?LibName:"",ProcName); return false;}
@@ -320,10 +332,10 @@ bool SetHook(LPSTR ProcName, LPSTR LibName, UINT Flags=EHookFlg::hfFillNop|EHook
 // First jump is a special case of redirection
 // hfFollowJmp flag have no effect!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 //
-bool SetHook(PBYTE ProcAddr=NULL, UINT Flags=EHookFlg::hfFillNop|EHookFlg::hfFollowJmp, T HookFunc=NULL)  // Separated to prevent code bloating because of templating
+bool SetHook(PVOID ProcAddr=NULL, UINT Flags=EHookFlg::hfFillNop|EHookFlg::hfFollowJmp, T HookFunc=NULL)  // Separated to prevent code bloating because of templating
 {
  if(!HookFunc)HookFunc = HProc;
- return SetHookIntr(ProcAddr, Flags, HookFunc); 
+ return SetHookIntr((PBYTE)ProcAddr, Flags, HookFunc); 
 }
 //------------------------------------------------------------------------------------
 bool Remove(bool Any=true)     // NOTE: If someone else takes our jump code and after that we exit - CRASH!   // TODO: Rethink hook chaining
@@ -331,11 +343,13 @@ bool Remove(bool Any=true)     // NOTE: If someone else takes our jump code and 
  if(!this->HookLen)return false;
  if(IsAddrHooked(this->HookAddr, (Any)?(NULL):(this->HookProc)))   // If some other instance is not restored it already // NOTE: Original code will be lost if first instance sees that someone else hooked it here
   {
-   DWORD PrevProt = 0;					   
-   VirtualProtect(this->HookAddr,this->HookLen,PAGE_EXECUTE_READWRITE,&PrevProt);
+   PVOID  BaseAddress = this->HookAddr;
+   SIZE_T RegionSize  = this->HookLen;
+   ULONG  OldProtect  = 0;
+   NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, PAGE_EXECUTE_READWRITE, &OldProtect);  	// VirtualProtect(this->HookAddr,this->HookLen,PAGE_EXECUTE_READWRITE,&PrevProt);				      
    _mm_storeu_si128((__m128i*)this->HookAddr, *(__m128i*)&this->OriginCode);      // SSE2, single operation            
-   VirtualProtect(this->HookAddr,this->HookLen,PrevProt,&PrevProt);
-   FlushInstructionCache(GetCurrentProcess(),this->HookAddr,sizeof(this->OriginCode));    // Is it really needed here?
+   NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, OldProtect, &OldProtect);   // VirtualProtect(this->HookAddr,this->HookLen,PrevProt,&PrevProt);
+//   FlushInstructionCache(GetCurrentProcess(),this->HookAddr,sizeof(this->OriginCode));    // Is it really needed here? (Just returns 1)
   }
  this->HookLen = 0;
  return true;
@@ -364,7 +378,7 @@ static const int JmpLen = 5;       // jmp Rel32
  BYTE  CodeBeg[128];            // Must be executable!
  BYTE  CodeEnd[128];
 //------------------------------------------------------------------------------------
-SHookRtlDispatchException(void)
+/*SHookRtlDispatchException(void)       // Use it on already zeroed memory!!!!! // Avoid global initializers! No .CRT section needed!
 {
  memset(this,0,sizeof(SHookRtlDispatchException));
 }
@@ -372,15 +386,21 @@ SHookRtlDispatchException(void)
 ~SHookRtlDispatchException()
 {
  this->Remove();
-}
+} */
 //------------------------------------------------------------------------------------
 bool IsActive(void){return this->ProcBegPtr && this->ProcEndPtr;}
 //------------------------------------------------------------------------------------
 PVOID _stdcall FindRtlDispatchException(void)
 {
- PBYTE PBase = (PBYTE)GetProcAddress(GetModuleHandleA("ntdll.dll"),"KiUserExceptionDispatcher");
- if(!PBase)return NULL;
- PBase += 8;
+ static PBYTE PBase = NULL;
+ if(!PBase)
+  {
+   char PrName[] = {~'K',~'i',~'U',~'s',~'e',~'r',~'E',~'x',~'c',~'e',~'p',~'t',~'i',~'o',~'n',~'D',~'i',~'s',~'p',~'a',~'t',~'c',~'h',~'e',~'r',0};
+   for(int ctr=0;PrName[ctr];ctr++)PrName[ctr] = ~PrName[ctr];
+   PBase = (PBYTE)GetProcAddr(GetNtDllBaseFast(), PrName);   // "KiUserExceptionDispatcher"       
+   if(!PBase)return NULL;
+  }
+ PBase += 8;     
  for(UINT ctr=0;;ctr++,PBase++)
   {
    if(ctr >= 56)return NULL;
@@ -392,7 +412,6 @@ PVOID _stdcall FindRtlDispatchException(void)
      PVOID Addr = RelAddrToAddr(PBase-1,5,*(PDWORD)PBase);
      DBGMSG("Addr: %p",Addr);
      return Addr;
-     break;
     }
   }  
  return NULL;
@@ -419,31 +438,36 @@ bool _stdcall SetHook(THookProc ProcBefore, THookProc ProcAfter)
  this->EndCodeLen = 0;
  this->BegCodeLen = 0;
  for(PBYTE DisAddr=this->ProcBegPtr;this->BegCodeLen < JmpLen;DisAddr += dhde.len)this->BegCodeLen += dhde.Disasm(DisAddr);   // Calc len of code at beginning
- for(UINT Depth=0;;)   // MSVC compiler crash if 'this->HookLen += dhde.len' is here
+ for(UINT Depth=0;;)  // Trace to exit point(There is only one)    // MSVC compiler crash if 'this->HookLen += dhde.len' is here
   {
+//   DBGMSG("Disasm at: %p",ProcEndPtr);
    UINT CmdLen = dhde.Disasm(ProcEndPtr);
    if((ProcEndPtr[0] == 0x0F)&&((ProcEndPtr[1] & 0xF0) == 0x80))  // Long jump
     {
      ProcEndPtr = (PBYTE)RelAddrToAddr(ProcEndPtr,6,*(long*)&ProcEndPtr[2]);
+     DBGMSG("Jump 1 to: %p",ProcEndPtr);
      Depth = 0;
      continue;
     }
    else if(ProcEndPtr[0] == 0xE9)  // Long jump
     {
      ProcEndPtr = (PBYTE)RelAddrToAddr(ProcEndPtr,5,*(long*)&ProcEndPtr[1]);
+     DBGMSG("Jump 2 to: %p",ProcEndPtr);
      Depth = 0;
      continue;
     }
    else if((ProcEndPtr[0] == 0xEB)||((ProcEndPtr[0] & 0xF0) == 0x70))  // Short jump
     {
-     ProcEndPtr = (PBYTE)RelAddrToAddr(ProcEndPtr,2,*(long*)&ProcEndPtr[1]);
+     ProcEndPtr = (PBYTE)RelAddrToAddr(ProcEndPtr,2,*(char*)&ProcEndPtr[1]);
+     DBGMSG("Jump 3 to: %p",ProcEndPtr);
      Depth = 0;
      continue;
     }
    else if((ProcEndPtr[0] == 0xC3)||(ProcEndPtr[0] == 0xC2))   // retn or ret 8
     {
+     DBGMSG("RET at %p",ProcEndPtr);
      EndCodeLen = (ProcEndPtr[0] == 0xC3)?(1):(3);
-     for(int DIdx=Depth-1;(DIdx >= 0) && (EndCodeLen < JmpLen);DIdx--)
+     for(int DIdx=Depth-1;(DIdx >= 0) && (EndCodeLen < JmpLen);DIdx--)    // Step back to have space for a JUMP
       {
        PBYTE Ptr = AddrQueue[DIdx];
        EndCodeLen += (ProcEndPtr - Ptr);
@@ -498,32 +522,183 @@ bool _stdcall SetHook(THookProc ProcBefore, THookProc ProcAfter)
  PatchEnd[0]  = 0xE9;     // Uses CodeBeg address
  *(long*)&PatchEnd[1] = AddrToRelAddr<PBYTE>(&this->ProcEndPtr[0],5,&CodeEnd[0]);
 #endif
- DWORD PrevProt;
- VirtualProtect(this->ProcBegPtr,sizeof(PatchBeg),PAGE_EXECUTE_READWRITE,&PrevProt);
+ PVOID  BaseAddress = this->ProcBegPtr;
+ SIZE_T RegionSize  = sizeof(PatchBeg);
+ ULONG  OldProtect  = 0;
+ NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, PAGE_EXECUTE_READWRITE, &OldProtect);  // VirtualProtect(this->ProcBegPtr,sizeof(PatchBeg),PAGE_EXECUTE_READWRITE,&PrevProt);
  _mm_storeu_si128((__m128i*)this->ProcBegPtr, *(__m128i*)&PatchBeg);  // SSE2, single operation, should be safe
- VirtualProtect(this->ProcBegPtr,sizeof(PatchBeg),PrevProt,&PrevProt);
+ NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, OldProtect, &OldProtect);   // VirtualProtect(this->ProcBegPtr,sizeof(PatchBeg),PrevProt,&PrevProt);
 
- VirtualProtect(this->ProcEndPtr,sizeof(PatchEnd),PAGE_EXECUTE_READWRITE,&PrevProt);
+ BaseAddress = this->ProcEndPtr;
+ RegionSize  = sizeof(PatchEnd);
+ NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, PAGE_EXECUTE_READWRITE, &OldProtect);  // VirtualProtect(this->ProcEndPtr,sizeof(PatchEnd),PAGE_EXECUTE_READWRITE,&PrevProt);
  _mm_storeu_si128((__m128i*)this->ProcEndPtr, *(__m128i*)&PatchEnd);  // SSE2, single operation, should be safe
- VirtualProtect(this->ProcEndPtr,sizeof(PatchEnd),PrevProt,&PrevProt);
+ NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, OldProtect, &OldProtect);   // VirtualProtect(this->ProcEndPtr,sizeof(PatchEnd),PrevProt,&PrevProt);
  return true;
 }
 //------------------------------------------------------------------------------------
 bool Remove(void)
 {
  if(!this->IsActive())return false;
- DWORD PrevProt;
- VirtualProtect(this->ProcBegPtr,sizeof(OrigCodeBeg),PAGE_EXECUTE_READWRITE,&PrevProt);
+ PVOID  BaseAddress = this->ProcBegPtr;
+ SIZE_T RegionSize  = sizeof(OrigCodeBeg);
+ ULONG  OldProtect  = 0;
+ NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, PAGE_EXECUTE_READWRITE, &OldProtect);  // VirtualProtect(this->ProcBegPtr,sizeof(OrigCodeBeg),PAGE_EXECUTE_READWRITE,&PrevProt);
  _mm_storeu_si128((__m128i*)this->ProcBegPtr, *(__m128i*)&OrigCodeBeg);  // SSE2, single operation, should be safe
- VirtualProtect(this->ProcBegPtr,sizeof(OrigCodeBeg),PrevProt,&PrevProt);
+ NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, OldProtect, &OldProtect);   // VirtualProtect(this->ProcBegPtr,sizeof(OrigCodeBeg),PrevProt,&PrevProt);
 
- VirtualProtect(this->ProcEndPtr,sizeof(OrigCodeEnd),PAGE_EXECUTE_READWRITE,&PrevProt);
+ BaseAddress = this->ProcEndPtr;
+ RegionSize  = sizeof(OrigCodeEnd);
+ NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, PAGE_EXECUTE_READWRITE, &OldProtect);  // VirtualProtect(this->ProcEndPtr,sizeof(OrigCodeEnd),PAGE_EXECUTE_READWRITE,&PrevProt);
  _mm_storeu_si128((__m128i*)this->ProcEndPtr, *(__m128i*)&OrigCodeEnd);  // SSE2, single operation, should be safe
- VirtualProtect(this->ProcEndPtr,sizeof(OrigCodeEnd),PrevProt,&PrevProt);
+ NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, OldProtect, &OldProtect);   // VirtualProtect(this->ProcEndPtr,sizeof(OrigCodeEnd),PrevProt,&PrevProt);
  return true;
 }
 //------------------------------------------------------------------------------------
 
+};
+//------------------------------------------------------------------------------------
+struct SHookLdrpInitialize      
+{
+ typedef void (_stdcall *THookProc)(volatile PCONTEXT Ctx, volatile PVOID NtDllBase);  // WinXP: Stack; Win7x32: Stack
+#ifdef _AMD64_
+ static const int JmpLen = 6;      // jmp [Rel32]; + Addr nearby
+#else
+static const int JmpLen = 5;      // jmp Rel32
+#endif
+ bool  ArgsOnStack;
+ PBYTE PatchBegPtr;
+ PBYTE ProcBegPtr;
+ ULONG BegCodeLen;
+ ULONG PatchSize;
+ BYTE  OrigCodeBeg[16];
+ BYTE  CodeBeg[128];            // Must be executable!
+
+ bool IsActive(void){return this->PatchBegPtr && this->ProcBegPtr;}
+//------------------------------------------------------------------------------------
+PVOID _stdcall FindLdrpInitialize(void)
+{
+ static PBYTE PBase = NULL;
+ if(!PBase)
+  {
+   char PrName[] = {~'L',~'d',~'r',~'I',~'n',~'i',~'t',~'i',~'a',~'l',~'i',~'z',~'e',~'T',~'h',~'u',~'n',~'k',0};
+   for(int ctr=0;PrName[ctr];ctr++)PrName[ctr] = ~PrName[ctr];
+   PBase = (PBYTE)GetProcAddr(GetNtDllBaseFast(), PrName);   // "LdrInitializeThunk"    
+   if(!PBase)return NULL;
+  }
+#ifdef _AMD64_
+ HDE64 dhde;
+#else
+ HDE32 dhde;
+#endif
+ PBYTE LastInstr = PBase;
+ for(UINT offs=0;offs < 32;LastInstr=PBase, PBase += dhde.len, offs += dhde.len)
+  {
+   int len = dhde.Disasm(PBase);    
+   if(len != 5)continue;   // Not call(E8) or jump(E9)
+   if((*PBase != 0xE8) && (*PBase != 0xE9))continue;
+   PVOID Addr = RelAddrToAddr(PBase,5,*(PDWORD)&PBase[1]);
+#ifndef _AMD64_
+   ArgsOnStack = (*LastInstr != 0x8B);   // i.e. Fastcall on Win10 WOW64    // 8F bor mov reg32, reg32
+#else
+   ArgsOnStack = true;    // Usual fastcall
+#endif
+   DBGMSG("Addr: %p, OnStk=%u",Addr, (int)ArgsOnStack);
+   return Addr;
+  }
+ return NULL;
+}
+//------------------------------------------------------------------------------------
+bool _stdcall SetHook(THookProc ProcBefore)
+{
+#ifdef _AMD64_
+ HDE64 dhde;
+#else
+ HDE32 dhde;
+#endif
+ this->ProcBegPtr = (PBYTE)FindLdrpInitialize();
+ if(!this->ProcBegPtr){DBGMSG("Failed to find LdrpInitialize!"); return false;}
+ this->BegCodeLen = 0;
+#ifdef _AMD64_
+ this->PatchBegPtr = &this->ProcBegPtr[-1];
+ ULONG ABytesNum = 0;
+ for(BYTE Val=*this->PatchBegPtr;(ABytesNum < 8)&&(Val == *this->PatchBegPtr);this->PatchBegPtr--)ABytesNum++;    // 0xCC or 0x90
+ if(ABytesNum < 8){DBGMSG("Not enough space for hook address!"); return false;}
+ this->PatchBegPtr++;
+ this->PatchSize   = ABytesNum;
+#else
+ this->PatchBegPtr = this->ProcBegPtr;
+ this->PatchSize   = 0;
+#endif
+ for(PBYTE DisAddr=this->ProcBegPtr;this->BegCodeLen < JmpLen;DisAddr += dhde.len)   // MSVC compiler crash if 'this->HookLen += dhde.len' is here
+  {
+   this->BegCodeLen += dhde.Disasm(DisAddr);
+  }
+ this->PatchSize += this->BegCodeLen;
+ BYTE PatchBuf[16];
+ _mm_storeu_si128((__m128i*)&OrigCodeBeg, *(__m128i*)this->PatchBegPtr);  // SSE2, single operation, should be safe
+ _mm_storeu_si128((__m128i*)&PatchBuf, *(__m128i*)&OrigCodeBeg); 
+#ifdef _AMD64_
+ *(PVOID*)&PatchBuf    = &CodeBeg;   // Trampoline code
+ *(PWORD)&PatchBuf[8]  = 0x25FF;     // Jmp [Rel32]
+ *(long*)&PatchBuf[10] = AddrToRelAddr<PBYTE>(this->ProcBegPtr, 6, this->PatchBegPtr);
+
+ *(PDWORD)&CodeBeg[ 0]  = 0xB8485251;   // push rcx;  push rdx; movabs
+ *(PVOID*)&CodeBeg[ 4]  = ProcBefore;
+ *(PDWORD)&CodeBeg[12]  = 0x20EC8348;   // sub rsp, 32  // reserve for 4 args
+ *(UINT64*)&CodeBeg[16] = 0x595A20C48348D0FF;    // call rax; add rsp, 32; pop rdx; pop rcx   // Caller removes args from stack
+ memcpy(&CodeBeg[24], this->ProcBegPtr, this->BegCodeLen);
+ UINT Offs = 24 + this->BegCodeLen;
+ *(PWORD)&CodeBeg[Offs] = 0xB848;    // movabs RAX
+ *(PVOID*)&CodeBeg[Offs+2]  = &this->ProcBegPtr[this->BegCodeLen];  // Continue to original code
+ *(PWORD)&CodeBeg[Offs+2+8] = 0xE0FF;    // jmp RAX
+#else
+ PatchBuf[0] = 0xE9;
+ *(long*)&PatchBuf[1] = AddrToRelAddr<PBYTE>(this->ProcBegPtr, 5, &CodeBeg[0]);
+ UINT DPOffs = 0;
+ if(ArgsOnStack)
+  {
+   *(PDWORD)&CodeBeg[0] = 0x082474FF;   // push [ESP+8]
+   *(PDWORD)&CodeBeg[4] = 0x082474FF;   // push [ESP+8]
+   CodeBeg[8] = 0xE8;            // call rel32
+   *(long*)&CodeBeg[9]  = AddrToRelAddr<PBYTE>(&CodeBeg[8], 5, (PBYTE)ProcBefore);
+   DPOffs = 13;
+  }
+   else
+    {
+     *(PDWORD)&CodeBeg[0]  = 0x51525251;    // push ecx;  push edx;  push edx;  push ecx
+     CodeBeg[4] = 0xE8;    // call rel32
+     *(long*)&CodeBeg[5]   = AddrToRelAddr<PBYTE>(&CodeBeg[4], 5, (PBYTE)ProcBefore);
+     *(PWORD)&CodeBeg[9]   = 0x595A;   // pop edx;  pop ecx
+     DPOffs = 11;
+    }
+ memcpy(&CodeBeg[DPOffs], this->ProcBegPtr, this->BegCodeLen);
+ DPOffs += this->BegCodeLen;
+ CodeBeg[DPOffs] = 0x68;    // push
+ *(PVOID*)&CodeBeg[DPOffs+1] = &this->ProcBegPtr[this->BegCodeLen];     // Continue to original code
+ CodeBeg[DPOffs+5] = 0xC3;  // ret
+#endif
+ PVOID  BaseAddress = this->PatchBegPtr;
+ SIZE_T RegionSize  = this->PatchSize;
+ ULONG  OldProtect  = 0;
+ NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, PAGE_EXECUTE_READWRITE, &OldProtect);  
+ _mm_storeu_si128((__m128i*)this->PatchBegPtr, *(__m128i*)&PatchBuf);  // SSE2, single operation, should be safe
+ NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, OldProtect, &OldProtect);  
+ return true;
+}
+//------------------------------------------------------------------------------------
+bool Remove(void)
+{
+ if(!this->IsActive())return false;
+ PVOID  BaseAddress = this->PatchBegPtr;
+ SIZE_T RegionSize  = this->PatchSize;
+ ULONG  OldProtect  = 0;
+ NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, PAGE_EXECUTE_READWRITE, &OldProtect);  
+ _mm_storeu_si128((__m128i*)this->PatchBegPtr, *(__m128i*)&OrigCodeBeg);  // SSE2, single operation, should be safe
+ NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, OldProtect, &OldProtect);  
+ return true;
+}
+//------------------------------------------------------------------------------------
 };
 //------------------------------------------------------------------------------------
 #endif

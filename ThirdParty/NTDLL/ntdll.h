@@ -1418,6 +1418,14 @@ typedef TLDR_DATA_TABLE_ENTRY<LDR_DATA_TABLE_BASE_IO>  LDR_DATA_TABLE_ENTRY_IO;
 extern "C" {
 #endif
 
+typedef struct _USER_STACK {
+    PVOID FixedStackBase;
+    PVOID FixedStackLimit;
+    PVOID ExpandableStackBase;
+    PVOID ExpandableStackLimit;
+    PVOID ExpandableStackBottom;
+} USER_STACK, *PUSER_STACK; 
+
 typedef struct _INITIAL_TEB
 {
     struct
@@ -2518,6 +2526,10 @@ typedef enum _FILE_INFORMATION_CLASS
     FileStatInformation, // FILE_STAT_INFORMATION
     FileMaximumInformation
 } FILE_INFORMATION_CLASS, *PFILE_INFORMATION_CLASS;
+
+typedef struct _FILE_DISPOSITION_INFORMATION {
+  BOOLEAN DeleteFile;
+} FILE_DISPOSITION_INFORMATION, *PFILE_DISPOSITION_INFORMATION;
 
 typedef struct _SYSTEM_BASIC_INFORMATION
 {

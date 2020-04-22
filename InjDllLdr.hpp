@@ -14,6 +14,11 @@
   WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. 
 */
 
+
+/* Requires:
+   FormatPE.h
+   NtDllEx.hpp
+*/
 struct InjLdr
 {  
 static const SIZE_T RemThModMarker = 0x0F;
@@ -25,16 +30,27 @@ static const SIZE_T RemThModMarker = 0x0F;
 #define DBGMSG(msg,...)
 #endif
                               
-enum EMapFlf {mfNone, mfInjVAl=0x00100000,mfInjMap=0x00200000,mfInjAtom=0x00400000,mfInjWnd=0x00800000,  mfRunUAPC=0x01000000,mfRunRMTH=0x02000000,mfRunThHij=0x04000000,  mfRawMod=0x10000000,mfX64Mod=0x20000000};  // These must not conflict with PE::EFixMod
+enum EMapFlf {mfNone, mfInjVAl=0x00100000,mfInjMap=0x00200000,mfInjAtom=0x00400000,mfInjWnd=0x00800000,  mfRunUAPC=0x01000000,mfRunRMTH=0x02000000,mfRunThHij=0x04000000,mfRawRMTH=0x08000000,  mfRawMod=0x10000000,mfX64Mod=0x20000000,mfResSyscall=0x40000000};  // These must not conflict with PE::EFixMod
 //------------------------------------------------------------------------------------
-static HANDLE OpenRemoteProcess(DWORD ProcessID, UINT Flags)
+static HANDLE OpenRemoteProcess(DWORD ProcessID, UINT Flags, bool Suspend=false)
 {
  DWORD FVals = PROCESS_VM_OPERATION|PROCESS_QUERY_INFORMATION;
  if(Flags & mfRunRMTH)FVals |= PROCESS_CREATE_THREAD;
  if(Flags & mfInjVAl)FVals |= PROCESS_VM_WRITE;
- HANDLE res = OpenProcess(FVals,false,ProcessID);
- if(!res){LOGMSG("Failed to open process: %08X(%u)", ProcessID,ProcessID);}
- return res;
+ if(Suspend)FVals |= PROCESS_SUSPEND_RESUME;
+ HANDLE hResHndl = NULL;             
+ CLIENT_ID CliID;
+ OBJECT_ATTRIBUTES ObjAttr;
+ CliID.UniqueThread  = 0;
+ CliID.UniqueProcess = (HANDLE)SIZE_T(ProcessID);
+ ObjAttr.Length = sizeof(ObjAttr);
+ ObjAttr.RootDirectory = NULL;  
+ ObjAttr.Attributes = 0;           // bInheritHandle ? 2 : 0;
+ ObjAttr.ObjectName = NULL;
+ ObjAttr.SecurityDescriptor = ObjAttr.SecurityQualityOfService = NULL;
+ if(NTSTATUS stat = NtOpenProcess(&hResHndl, FVals, &ObjAttr, &CliID)){LOGMSG("Failed to open process: %08X(%u)", ProcessID,ProcessID);}
+   else if(Suspend){NTSTATUS stat = NtSuspendProcess(hResHndl); DBGMSG("Entire process been suspended: Status=%08X, Handle=%p",stat,hResHndl);}
+ return hResHndl;
 }
 //------------------------------------------------------------------------------------
 static bool UnMapRemoteMemory(HANDLE hProcess, PVOID BaseAddr)
@@ -43,37 +59,89 @@ static bool UnMapRemoteMemory(HANDLE hProcess, PVOID BaseAddr)
  return (STATUS_SUCCESS == NtUnmapViewOfSection(hProcess, BaseAddr));
 }
 //------------------------------------------------------------------------------------
+private: static int PrepareRawModule(PBYTE LocalBase, PBYTE RemoteBase, PVOID NtDllBase, SIZE_T ModASize, SIZE_T ModFullSize, UINT Flags, int MaxSecs, SIZE_T* DataSize)
+{
+ TFixRelocations<PECURRENT, 2>(LocalBase, RemoteBase);  // Do this BEFORE ResolveSysCallImports which will overwrite some affected parts
+ if(Flags & mfResSyscall)
+  {
+   int len = ResolveSysCallImports<PECURRENT,false,true>(LocalBase, NtDllBase, &LocalBase[ModFullSize], &RemoteBase[ModFullSize], ModASize-ModFullSize, true);
+   if(len < 0){LOGMSG("Failed to resolve syscalls: %i", len); return -1;}
+   *DataSize = ModFullSize + len + 8;    
+  }
+ DOS_HEADER     *DosHdr = (DOS_HEADER*)LocalBase;
+ WIN_HEADER<PECURRENT>  *WinHdr = (WIN_HEADER<PECURRENT>*)&LocalBase[DosHdr->OffsetHeaderPE];
+ DATA_DIRECTORY *ReloctDir = &WinHdr->OptionalHeader.DataDirectories.FixUpTable;
+ DATA_DIRECTORY* ImportDir = &WinHdr->OptionalHeader.DataDirectories.ImportTable;
+ DATA_DIRECTORY* ExportDir = &WinHdr->OptionalHeader.DataDirectories.ExportTable;
+ DATA_DIRECTORY* ResourDir = &WinHdr->OptionalHeader.DataDirectories.ResourceTable;
+ ReloctDir->DirectoryRVA = ReloctDir->DirectorySize = 0;       // Relocs are done
+ ImportDir->DirectoryRVA = ImportDir->DirectorySize = 0;       // Imports are resolved (Syscalls only)
+ ExportDir->DirectoryRVA = ExportDir->DirectorySize = 0;   
+ ResourDir->DirectoryRVA = ResourDir->DirectorySize = 0;   
+ if((MaxSecs > 0) && (MaxSecs < WinHdr->FileHeader.SectionsNumber))WinHdr->FileHeader.SectionsNumber = MaxSecs;
+
+ EncryptModuleParts(LocalBase, NtDllBase, Flags);       // It need to save Flags at least        // GetModuleHandleA("ntdll.dll")
+ return 0;
+}
+//------------------------------------------------------------------------------------
 // ModuleData may be raw or already mapped module(If mapped, it must not have an encrypted headers)
 //
-static int InjModuleIntoProcessAndExec(HANDLE hProcess, PVOID ModuleData, UINT ModuleSize, UINT Flags, PVOID Param=NULL, PVOID Addr=NULL)  // Param is for lpReserved of DllMain when injecting using mfInjUAPC
+public: static int InjModuleIntoProcessAndExec(HANDLE hProcess, PVOID ModuleData, SIZE_T ModuleSize, UINT Flags, int MaxSecs=-1, PVOID Param=NULL, PVOID Addr=NULL, PVOID NtDllBase=NULL, SIZE_T RawStackSize=0)  // Param is for lpReserved of DllMain when injecting using mfInjUAPC
 {
  if(!ModuleData || !IsValidPEHeader(ModuleData)){LOGMSG("Bad PE image: ModuleData=%p", ModuleData); return -1;}
- SIZE_T MapModSize = GetImageSize(ModuleData);
- SIZE_T ModSize    = (MapModSize > ModuleSize)?(MapModSize):(ModuleSize);   
- UINT   EPOffset   = GetModuleEntryOffset((PBYTE)ModuleData, Flags & mfRawMod);
- PVOID  RemoteAddr = Addr;
- PBYTE  Buf = (PBYTE)VirtualAlloc(NULL,ModSize,MEM_COMMIT,PAGE_EXECUTE_READWRITE);
+ if(!(Flags & mfRawRMTH))RawStackSize = 0;
+ if(RawStackSize)RawStackSize = ((RawStackSize + 0xFFFF) & ~0xFFFF);     // Is DEP may react to thread`s stack being in same executable block?
+ SIZE_T ExtraSize   = ((Flags & mfResSyscall) && !RawStackSize)?4096:0;      // Align RawStackSize to 64k?  // 4096 for syscall block
+ SIZE_T ModFullSize = (SizeOfSections(ModuleData, MaxSecs, true, false) + 0xFFFF) & ~0xFFFF;   // Only .text(Data merged) and .bss    // (((MapModSize > ModuleSize)?(MapModSize):(ModuleSize)) + 0xFFFF) & ~0xFFFF;   
+ UINT   EPOffset    = GetModuleEntryOffset((PBYTE)ModuleData, Flags & mfRawMod);
+ PVOID  RemoteAddr  = Addr;
+ SIZE_T ModASize    = ((ModFullSize+RawStackSize+ExtraSize) + 0xFFFF) & ~0xFFFF;    // Stack size must include syscall table if syscall resolving is forces
+ PVOID  FlagArg     = NULL;
+ PBYTE  Buf         = NULL;  
+
+ if(!NtDllBase)NtDllBase = GetNtDllBaseFast(false);    // Must be clean of any hooks and not a raw file 
+ NtAllocateVirtualMemory(NtCurrentProcess,(PVOID*)&Buf,0,&ModASize,MEM_COMMIT,PAGE_EXECUTE_READWRITE);   // Temporary local buffer
  memcpy(Buf,ModuleData,ModuleSize);       // Copy before encryption
- ModuleData = Buf;
- EncryptModuleParts(ModuleData, GetModuleHandleA("ntdll.dll"), Flags);       // It need to save Flags at least
- if(Flags & mfInjVAl)
+ ModuleData = Buf;        // Now points to prepared data
+ if(MaxSecs > 0)ModuleSize = SizeOfSections(ModuleData, MaxSecs, true, (Flags & InjLdr::mfRawMod));       // Only .text(Data merged) and .bss
+ if(Flags & mfInjVAl)        
   {
-   RemoteAddr = (PBYTE)VirtualAllocEx(hProcess,NULL,ModSize,MEM_COMMIT,PAGE_EXECUTE_READWRITE);
-   if(!RemoteAddr){LOGMSG("VirtualAllocEx failed(%u): Size=%08X", GetLastError(), ModSize); return -6;}
-   if(!WriteProcessMemory(hProcess,RemoteAddr,ModuleData,ModSize,NULL)){LOGMSG("WriteProcessMemory failed(%u): Size=%08X", GetLastError(), ModSize); return -7;}
+   if(NTSTATUS status = NtAllocateVirtualMemory(hProcess,&RemoteAddr,0,&ModASize,MEM_COMMIT,PAGE_EXECUTE_READWRITE)){LOGMSG("NtAllocateVirtualMemory failed(%08X): Size=%08X", status, ModASize); return -6;}     // RemoteAddr = (PBYTE)VirtualAllocEx(hProcess,NULL,ModSize,MEM_COMMIT,PAGE_EXECUTE_READWRITE);
+   if(PrepareRawModule((PBYTE)ModuleData, (PBYTE)RemoteAddr, NtDllBase, ModASize, ModFullSize, Flags, MaxSecs, &ModuleSize) < 0)return -8;
+   FlagArg = PVOID((SIZE_T)RemoteAddr | ((Flags >> 24) & RemThModMarker));     // Mark base address   // Passed to DllMain as hModule
+#ifndef _AMD64_
+   if(RawStackSize)
+    {
+     ModuleSize = ModFullSize + RawStackSize;
+     *(PVOID*)&((PBYTE)ModuleData)[ModuleSize-(sizeof(void*)*4)] = FlagArg;   // 4 Extra reserved args
+    }
+#endif
+   if(NTSTATUS status = NtWriteVirtualMemory(hProcess, RemoteAddr, ModuleData, ModuleSize, &ModASize)){LOGMSG("NtWriteVirtualMemory failed(%08X): Size=%08X", status, ModASize); return -7;}
   }
  else if(Flags & mfInjMap)
   {
-   HANDLE hSec = CreateFileMappingW(INVALID_HANDLE_VALUE,NULL,PAGE_EXECUTE_READWRITE|SEC_COMMIT,0,ModSize,NULL);
-   if(!hSec){LOGMSG("CreateMapping failed(%u): Size=%08X", GetLastError(), ModSize); return -2;}
+   OBJECT_ATTRIBUTES ObjAttrs = {0};
+   ObjAttrs.Length = sizeof(OBJECT_ATTRIBUTES); 
+   HANDLE hSec = NULL;
+   LARGE_INTEGER MaxSize;
+   MaxSize.QuadPart = ModASize;  
+   if(NTSTATUS status = NtCreateSection(&hSec, SECTION_ALL_ACCESS, &ObjAttrs, &MaxSize, PAGE_EXECUTE_READWRITE, SEC_COMMIT, NULL)){LOGMSG("CreateMapping failed(%08X): Size=%08X", status, ModASize); return -2;}  
    PVOID LocalAddr = NULL;
-   NTSTATUS res = NtMapViewOfSection(hSec,hProcess,&RemoteAddr,0,ModSize,NULL,&ModSize,ViewShare,0,PAGE_EXECUTE_READWRITE);
-   if(res){CloseHandle(hSec); LOGMSG("Remote MapSection failed: Addr=%p, Size=%08X", RemoteAddr, ModSize); return -3;}
-   res = NtMapViewOfSection(hSec,GetCurrentProcess(),&LocalAddr,0,ModSize,NULL,&ModSize,ViewShare,0,PAGE_EXECUTE_READWRITE);
-   CloseHandle(hSec);
-   if(res){LOGMSG("Local MapSection failed: Addr=%p, Size=%08X", LocalAddr, ModSize); return -4;}  
-   memcpy(LocalAddr,ModuleData,ModSize);
-   NtUnmapViewOfSection(GetCurrentProcess(), LocalAddr);
+   NTSTATUS res = NtMapViewOfSection(hSec,hProcess,&RemoteAddr,0,ModASize,NULL,&ModASize,ViewShare,0,PAGE_EXECUTE_READWRITE);  // Map remotely
+   if(res){NtClose(hSec); LOGMSG("Remote MapSection failed: Addr=%p, Size=%08X", RemoteAddr, ModASize); return -3;}
+   res = NtMapViewOfSection(hSec,NtCurrentProcess,&LocalAddr,0,ModASize,NULL,&ModASize,ViewShare,0,PAGE_EXECUTE_READWRITE);    // Map locally
+   NtClose(hSec);
+   if(res){LOGMSG("Local MapSection failed: Addr=%p, Size=%08X", LocalAddr, ModASize); return -4;}  
+   if(PrepareRawModule((PBYTE)ModuleData, (PBYTE)RemoteAddr, NtDllBase, ModASize, ModFullSize, Flags, MaxSecs, &ModuleSize) < 0)return -8;
+   FlagArg = PVOID((SIZE_T)RemoteAddr | ((Flags >> 24) & RemThModMarker));     // Mark base address   // Passed to DllMain as hModule
+   memcpy(LocalAddr,ModuleData,ModuleSize);
+#ifndef _AMD64_
+   if(RawStackSize)
+    {
+     *(PVOID*)&((PBYTE)LocalAddr)[(ModFullSize + RawStackSize)-(sizeof(void*)*4)] = FlagArg;   // 4 Extra reserved args
+    }
+#endif
+   NtUnmapViewOfSection(NtCurrentProcess, LocalAddr);
   }
  else if(Flags & mfInjAtom)
   {
@@ -84,24 +152,35 @@ static int InjModuleIntoProcessAndExec(HANDLE hProcess, PVOID ModuleData, UINT M
 
   }
 
- VirtualFree(ModuleData,0,MEM_RELEASE);
+ ModASize = 0;
+ NtFreeVirtualMemory(NULL,&ModuleData,&ModASize,MEM_RELEASE);  
  PVOID RemEntry = &((PBYTE)RemoteAddr)[EPOffset];
 
- if(Flags & (mfInjVAl|mfInjMap))
+ if(Flags & (mfInjVAl|mfInjMap))    // Mapped or Allocated remotely
   {
-   if(Flags & mfRunUAPC)
+   if(Flags & mfRunUAPC)         // An APC queued to all existing threads
     {
 
     }   
-   else if(Flags & mfRunRMTH)   // Calls DLLMain as ThreadProc(hModule)
+   else if(Flags & mfRunRMTH)    // Calls DLLMain as ThreadProc(hModule)
     {
-     PVOID FlagArg = PVOID((SIZE_T)RemoteAddr | RemThModMarker);     // Mark base address
-     HANDLE hTh = CreateRemoteThread(hProcess,NULL,0,(LPTHREAD_START_ROUTINE)RemEntry,FlagArg,0,NULL);        // Firefox Quantum: It gets into LdrInitializeThunk but not into specified ThreadProc!!!!
-     if(!hTh){LOGMSG("Failed to create a remote thread (%u): RemEntry=%p, FlagArg=%p", GetLastError(), RemEntry, FlagArg); return -5;}
-     LOGMSG("RemEntry=%p, FlagArg=%p", RemEntry, FlagArg);
-     WaitForSingleObject(hTh, INFINITE);
+     HANDLE hThread  = NULL;
+     DWORD  ThreadId = 0;
+     DWORD  Status   = 0;
+     if(Flags & mfRawRMTH)   // Fails on latest Win 10 for x32 processes 
+      {
+       PVOID  StackBase = NULL; 
+       SIZE_T StackSize = RawStackSize;
+       if(RawStackSize)StackBase = &((PBYTE)RemoteAddr)[ModFullSize];   
+       Status = NNTDLL::NativeCreateThread(RemEntry, FlagArg, hProcess, FALSE, &StackBase, &StackSize, &hThread, &ThreadId);   // On WinXP it receives APC for LdrInitializeThunk before it is suspended?   // WinXP, StartNewProcess: LdrpInitializeProcess:LdrpRunInitializeRoutines:Kernel32EntryPoint:CsrClientConnectToServer fails with 0xC0000142
+      }
+       else {hThread = CreateRemoteThread(hProcess,NULL,0,(LPTHREAD_START_ROUTINE)RemEntry,FlagArg,0,&ThreadId); Status = GetLastError();}       // Firefox Quantum: It gets into LdrInitializeThunk but not into specified ThreadProc!!!!
+     if(!hThread){LOGMSG("Failed to create a remote thread (%08X): RemEntry=%p, FlagArg=%p", Status, RemEntry, FlagArg); return -5;}
+     LOGMSG("ThreadId=%u, RawTh=%u, RemEntry=%p, FlagArg=%p", ThreadId, bool(Flags & mfRawRMTH), RemEntry, FlagArg);
+//     NtWaitForSingleObject(hThread, FALSE, NULL);   // WaitForSingleObject(hTh, INFINITE);   // No waiting - the thread may be reused
+     NtClose(hThread);
     }
-   else if(Flags & mfRunThHij)
+   else if(Flags & mfRunThHij)   // An existing thread hijacked
     {
 
     }
@@ -110,16 +189,16 @@ static int InjModuleIntoProcessAndExec(HANDLE hProcess, PVOID ModuleData, UINT M
  return 0;
 }
 //------------------------------------------------------------------------------------
-static void UnmapAndTerminateSelf(PVOID BaseAddr)
+static void UnmapAndTerminateSelf(PVOID BaseAddr)  // TODO: Replace with chain of  NtUnmapViewOfSection(-1, hLibModule & 0xFFFFFFFFFFFFFFFC) or LdrUnloadDll(hLibModule) and RtlExitUserThread(v4);
 {
  LOGMSG("Ejecting: %p", BaseAddr);
  MakeFakeHeaderPE((PBYTE)BaseAddr);   // Don`t care if the header encrypted or not
- FreeLibraryAndExitThread(HMODULE((SIZE_T)BaseAddr | 3),0);  // Can unmap any DLL(Not removing it from list) or view of section
+ FreeLibraryAndExitThread(HMODULE((SIZE_T)BaseAddr | 3),0);  // Can unmap any PE image(Not removing it from list) or view of section ()
 }
 //------------------------------------------------------------------------------------
 static BYTE EncryptModuleParts(PVOID BaseAddr, PVOID NtDllBase, UINT Flags)
 {
- DWORD Ticks  = GetTickCount();
+ DWORD Ticks  = NNTDLL::GetTicks();   //  GetTickCount();
  BYTE EncKey  = 0;
  for(int idx=4;!EncKey && (idx < 28);idx++)EncKey = Ticks >> idx;
  Flags |= EncKey;
@@ -142,10 +221,11 @@ __declspec(noinline) static PVOID PEImageInitialize(PVOID BaseAddr, PVOID NtDllB
 {
  PBYTE ModuleBase = PBYTE((SIZE_T)BaseAddr & ~RemThModMarker);
  DOS_HEADER* DosHdr = (DOS_HEADER*)ModuleBase;
- UINT  Flags  = (DosHdr->Reserved1 & ~(ExcludeFlg|fmSelfMov))|fmFixSec|fmFixImp|fmFixRel;
+ UINT  Flags  = (DosHdr->Reserved1 & ~(ExcludeFlg|fmSelfMov))|fmFixSec|fmFixImp|fmFixRel;   // If you already resolved imports just destroy import descriptors
  UINT  RetFix = 0;
  int    mres  = 0;
  if(!NtDllBase)NtDllBase = (PVOID)*(UINT64*)&DosHdr->Reserved2;
+ if(!NtDllBase)GetNtDllBaseFast(false);
  if(Flags & mfX64Mod)mres = TFixUpModuleInplace<PETYPE64>(ModuleBase,NtDllBase,Flags,&RetFix);    
   else mres = TFixUpModuleInplace<PETYPE32>(ModuleBase,NtDllBase,Flags,&RetFix); 
  if(mres < 0)return NULL;
@@ -165,7 +245,7 @@ _declspec(noinline) static PVOID ReflectiveRelocateSelf(PVOID BaseAddr, PVOID Nt
  DOS_HEADER* DosHdr = (DOS_HEADER*)ModuleBase;
  NTSTATUS (NTAPI* pNtAllocateVirtualMemory)(HANDLE ProcessHandle,PVOID* BaseAddress,ULONG_PTR ZeroBits,PSIZE_T RegionSize,ULONG AllocationType,ULONG Protect) = NULL;
 
- DWORD NNtAllocateVirtualMemory[] = {0x93BE8BB1,0x9E9C9093,0x96A99A8B,0x9E8A8B8D,0x929AB293,0xFF868D90};  // NtAllocateVirtualMemory     
+ DWORD NNtAllocateVirtualMemory[] = {0x93BE8BB1u,0x9E9C9093u,0x96A99A8Bu,0x9E8A8B8Du,0x929AB293u,0xFF868D90u};  // NtAllocateVirtualMemory     
  NNtAllocateVirtualMemory[0] = ~NNtAllocateVirtualMemory[0];
  NNtAllocateVirtualMemory[1] = ~NNtAllocateVirtualMemory[1];
  NNtAllocateVirtualMemory[2] = ~NNtAllocateVirtualMemory[2];
@@ -173,6 +253,7 @@ _declspec(noinline) static PVOID ReflectiveRelocateSelf(PVOID BaseAddr, PVOID Nt
  NNtAllocateVirtualMemory[4] = ~NNtAllocateVirtualMemory[4];
  NNtAllocateVirtualMemory[5] = ~NNtAllocateVirtualMemory[5];
  if(!NtDllBase)NtDllBase = (PVOID)*(UINT64*)&DosHdr->Reserved2;
+ if(!NtDllBase)GetNtDllBaseFast(false);
  *(PVOID*)&pNtAllocateVirtualMemory = TGetProcedureAddress<PECURRENT>((PBYTE)NtDllBase, (LPSTR)&NNtAllocateVirtualMemory);
  if(!pNtAllocateVirtualMemory)return NULL;
  UINT VirSize = *(UINT*)&DosHdr->Reserved2[10];
@@ -180,7 +261,7 @@ _declspec(noinline) static PVOID ReflectiveRelocateSelf(PVOID BaseAddr, PVOID Nt
 
  PVOID  BaseAddress = NULL;
  SIZE_T RegionSize  = VirSize;    
- NTSTATUS stat = pNtAllocateVirtualMemory((HANDLE)-1, &BaseAddress, 0, &RegionSize, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+ NTSTATUS stat = pNtAllocateVirtualMemory(NtCurrentProcess, &BaseAddress, 0, &RegionSize, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
  if(stat)return NULL;
  PBYTE* RetPtr = (PBYTE*)_AddressOfReturnAddress();
  UINT   RetRVA = *RetPtr - ModuleBase;   // File Offset of return address    
@@ -223,32 +304,36 @@ static int HideSelfProxyDll(PVOID DllBase, PVOID pNtDll, LPSTR RealDllPath, PVOI
  SysPath[SysPLen] = 0;
 
  SIZE_T ModSize = GetRealModuleSize(DllBase);
- PVOID  ModCopy = VirtualAlloc(NULL,ModSize,MEM_COMMIT,PAGE_EXECUTE_READWRITE);  
+ SIZE_T ModALen = ModSize;
+ PVOID  ModCopy = NULL;
+ NtAllocateVirtualMemory(NtCurrentProcess,&ModCopy,0,&ModALen,MEM_COMMIT,PAGE_EXECUTE_READWRITE);  //  PVOID  ModCopy = VirtualAlloc(NULL,ModSize,MEM_COMMIT,PAGE_EXECUTE_READWRITE); 
  memcpy(ModCopy,DllBase,ModSize);
  HANDLE hFile = CreateFileA(RealDllPath,GENERIC_READ|GENERIC_EXECUTE,FILE_SHARE_READ|FILE_SHARE_DELETE,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);
  if(hFile == INVALID_HANDLE_VALUE){LOGMSG("Failed to open: %s", RealDllPath); return -1;}
  HANDLE hSec  = CreateFileMappingA(hFile,NULL,SEC_IMAGE|PAGE_EXECUTE_READ,0,0,NULL);                                                      // Mapping to same address may fail if there is not enough unallocated space. Add a dummy data space to make your proxy DLL of same size as an real one
- if(!hSec){CloseHandle(hFile); LOGMSG("Failed to create mapping for: %s", RealDllPath); return -2;}
+ if(!hSec){NtClose(hFile); LOGMSG("Failed to create mapping for: %s", RealDllPath); return -2;}
 
  *TBaseOfImagePtr<PECURRENT>((PBYTE)ModCopy) = (PECURRENT)DllBase;    // Need current Base for Reloc recalculation
- TFixRelocations<PECURRENT>((PBYTE)ModCopy, false);
+ TFixRelocations<PECURRENT, false>((PBYTE)ModCopy, (PBYTE)ModCopy);
  DBGMSG("Start redirecting itself: NewBase=%p, Size=%08X",ModCopy,ModSize);
  RedirRet((PBYTE)DllBase, (PBYTE)ModCopy);   // After this we are inside of ModCopy
  DBGMSG("Done redirecting!");
  *(PVOID*)_AddressOfReturnAddress() = &((PBYTE)ModCopy)[(PBYTE)_ReturnAddress() - (PBYTE)DllBase];
  if(NtUnmapViewOfSection(NtCurrentProcess, DllBase)){LOGMSG("Failed to unmap this proxy dll: %p", DllBase);return -3;}  
- DBGMSG("Proxy dll unmapped");                                                                  
+ DBGMSG("Proxy dll unmapped"); 
+ 
+
  PVOID MapAddr = MapViewOfFileEx(hSec,FILE_MAP_EXECUTE|FILE_MAP_READ,0,0,0,DllBase);
- int err = GetLastError();
- CloseHandle(hSec);
- CloseHandle(hFile);
+ int err = GetLastError();     // <<<<<<<<<<<<<<<<<<<<<<
+ NtClose(hSec);
+ NtClose(hFile);
  if(!MapAddr){LOGMSG("Failed to map a real DLL(%u): %p!", err, DllBase); return -4;}
  DBGMSG("A real dll is unmapped");
  TSectionsProtectRW<PECURRENT>((PBYTE)MapAddr, false);
  DBGMSG("A real dll`s memory is unprotected");
- TFixRelocations<PECURRENT>((PBYTE)MapAddr, false);
+ TFixRelocations<PECURRENT, false>((PBYTE)MapAddr, (PBYTE)MapAddr);
  DBGMSG("A real dll`s relocs fixed");
-   DWORD NLdrLoadDll[] = {~0x4C72644C, ~0x4464616F, ~0x00006C6C};  // LdrLoadDll     
+   DWORD NLdrLoadDll[] = {~0x4C72644Cu, ~0x4464616Fu, ~0x00006C6Cu};  // LdrLoadDll     
    NLdrLoadDll[0] = ~NLdrLoadDll[0];
    NLdrLoadDll[1] = ~NLdrLoadDll[1];
    NLdrLoadDll[2] = ~NLdrLoadDll[2];
@@ -303,24 +388,17 @@ static int HideSelfProxyDll(PVOID DllBase, PVOID pNtDll, LPSTR RealDllPath, PVOI
  return (MapAddr == DllBase);
 }
 //------------------------------------------------------------------------------------
-static PVOID GetModuleBase(LPSTR ModName)
-{
- PEB_LDR_DATA* ldr = NtCurrentTeb()->ProcessEnvironmentBlock->Ldr;
- DBGMSG("PEB_LDR_DATA: %p, %s",ldr,ModName);
- for(LDR_DATA_TABLE_ENTRY_MO* me = ldr->InMemoryOrderModuleList.Flink;me != (LDR_DATA_TABLE_ENTRY_MO*)&ldr->InMemoryOrderModuleList;me = me->InMemoryOrderLinks.Flink)     // Or just use LdrFindEntryForAddress?
-  {
-   if(!me->BaseDllName.Length || !me->BaseDllName.Buffer)continue;
-//   DBGMSG("Base=%p, Name='%ls'",me->DllBase,me->BaseDllName.Buffer);    // Zero terminated?     // Spam
-   bool Match = true;
-   UINT ctr = 0;
-   for(UINT tot=me->BaseDllName.Length/sizeof(WCHAR);ctr < tot;ctr++)
-    {
-     if(me->BaseDllName.Buffer[ctr] != (WCHAR)ModName[ctr]){Match=false; break;}
-    }
-   if(Match && !ModName[ctr])return me->DllBase;
-  }
- DBGMSG("Not found for: %s",ModName);
- return NULL;
+PVOID LoadRawDllFile(LPSTR DllPath)
+{   
+ HANDLE hFile = CreateFileA(DllPath,GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);   // TODO: Receive this from debugger to avoid CreateFile("ntdll.dll") detection
+ if(hFile == INVALID_HANDLE_VALUE)return NULL;
+ DWORD Result   = 0;
+ DWORD FileSize = GetFileSize(hFile,NULL);
+ PBYTE pLibMem  = (PBYTE)VirtualAlloc(NULL,FileSize,MEM_COMMIT,PAGE_EXECUTE_READWRITE);  // if(Ptr)VirtualFree(Ptr,0,MEM_RELEASE);
+ if(FileSize)ReadFile(hFile,pLibMem,FileSize,&Result,NULL);
+ CloseHandle(hFile); 
+ TFixRelocations<PECURRENT, true>(pLibMem, pLibMem);  // Left it raw
+ return pLibMem;
 }
 //------------------------------------------------------------------------------------
 

@@ -13,13 +13,13 @@
   WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. 
 */
 
+#include <emmintrin.h>
 #include "Utils.h"
 #include "FormatPE.h"
 //====================================================================================
                                             // sprintf: hex, bits
-HANDLE hLogFile = INVALID_HANDLE_VALUE;
-HANDLE hConsOut = INVALID_HANDLE_VALUE;
-HANDLE hConsErr = INVALID_HANDLE_VALUE;
+HANDLE hLogFile = NULL;
+HANDLE hConsOut = NULL;
 
 wchar_t   LogFilePath[MAX_PATH];	
 int    LogMode = lmNone;	
@@ -127,23 +127,31 @@ void* __cdecl operator new[](size_t n)
 //---------------------------------------------------------------------------
 void __cdecl operator delete(void* p)
 {
+#ifndef _NODESTR
  HeapFree(GetProcessHeap(),0,p);
-}
+#endif
+} 
 //---------------------------------------------------------------------------
 void __cdecl operator delete(void* p, size_t n)
 {
+#ifndef _NODESTR
  HeapFree(GetProcessHeap(),0,p);
+#endif
 }
 //---------------------------------------------------------------------------
 void __cdecl operator delete[](void* p)
 {
+#ifndef _NODESTR
  HeapFree(GetProcessHeap(),0,p);
+#endif
 }
 //---------------------------------------------------------------------------
 void __cdecl operator delete[](void* p, size_t n)
 {
+#ifndef _NODESTR
  HeapFree(GetProcessHeap(),0,p);
-}
+#endif
+}   
 //---------------------------------------------------------------------------
 
 
@@ -173,14 +181,67 @@ extern "C" __declspec(naked) float _cdecl _CIsqrt(float &Value)
  __asm RET
 }
 //---------------------------------------------------------------------------
-extern "C" __declspec(naked) long _cdecl _ftol2(float &Value)
+extern "C" __declspec(naked) long _cdecl _ftol2(float &Value)  // What is FPU rounding mode? Should be TRUNCATE
 {
  __asm PUSH EAX
  __asm PUSH EAX
- __asm FISTP QWORD PTR [ESP]
+ __asm FISTP QWORD PTR [ESP]    // SSE3: FISTTP converts the value in ST into a signed integer using truncation (chop) as rounding mode,
  __asm POP  EAX
  __asm POP  EDX
  __asm RET
+}
+//---------------------------------------------------------------------------
+static const unsigned long long _Int32ToUInt32[] = {0ULL, 0x41F0000000000000ULL};
+
+extern "C" __declspec(naked) double _cdecl _ultod3(unsigned long long val)  // needed for SSE code for 32-bit arch   // SSE2
+{
+ __asm
+ {
+   xorps   xmm0, xmm0
+   cvtsi2sd xmm0, ecx
+   shr     ecx, 31
+   addsd   xmm0, ds:_Int32ToUInt32[ecx*8]
+   test    edx, edx
+   jz      short _ultod3_uint32
+   xorps   xmm1, xmm1
+   cvtsi2sd xmm1, edx
+   shr     edx, 31
+   addsd   xmm1, ds:_Int32ToUInt32[edx*8]
+   mulsd   xmm1, ds:_Int32ToUInt32[8]     //  _DP2to32
+   addsd   xmm0, xmm1
+ _ultod3_uint32:                       
+   retn
+ }
+}
+//---------------------------------------------------------------------------
+extern "C" __declspec(naked) double _cdecl _ltod3(long long val)  // needed for SSE code for 32-bit arch   // SSE2
+{
+ __asm
+ {
+   xorps   xmm1, xmm1
+   cvtsi2sd xmm1, edx
+   xorps   xmm0, xmm0
+   cvtsi2sd xmm0, ecx
+   shr     ecx, 31
+   mulsd   xmm1, ds:_Int32ToUInt32[8]          //_DP2to32
+   addsd   xmm0, ds:_Int32ToUInt32[ecx*8]
+   addsd   xmm0, xmm1
+   retn
+ }
+}
+//---------------------------------------------------------------------------
+//  Only works for inputs in the range: [0, 2^52)  // SSE2
+unsigned long long double_to_uint64(__m128d x)    // Generated a bad optimized code!    // NOTE: Incorrect for a negative x. Good only for ftoa_simple
+{  
+// x = _mm_sub_pd(x, _mm_set_sd(0.5));    // Remove rounding effect
+ x = _mm_add_pd(x, _mm_set1_pd(0x0010000000000000-0.5));     // No rounding now!
+ __m128i res = _mm_xor_si128(_mm_castpd_si128(x), _mm_castpd_si128(_mm_set1_pd(0x0010000000000000)));
+ return *(unsigned long long*)&res;  
+}
+
+extern "C" __declspec(naked) unsigned long long _cdecl _dtoul3(double val) // needed for SSE code for 32-bit arch   // double passed in xmm0 and not retrievable by C++ code!   //      // Truncating
+{
+ __asm jmp double_to_uint64
 }
 //---------------------------------------------------------------------------
 /*extern "C" __declspec(naked) unsigned __int64 _cdecl _aullshr(unsigned __int64 Value, unsigned int Shift)  // MS calls this function as _fastcall here!!!!
@@ -336,6 +397,134 @@ Lbl_77CA46C3:
     RETN 16                          
 }
 }
+//---------------------------------------------------------------------------
+extern "C" __declspec(naked)  int _cdecl _aulldvrm(unsigned __int64 dividend, unsigned __int64 divisor)   
+{
+__asm
+{
+   PUSH    ESI
+   MOV     EAX, [ESP+0x14]
+   OR      EAX, EAX
+   JNZ     SHORT LOC_4B2EC641
+   MOV     ECX, [ESP+0x10]
+   MOV     EAX, [ESP+0x0C]
+   XOR     EDX, EDX
+   DIV     ECX
+   MOV     EBX, EAX
+   MOV     EAX, [ESP+8]
+   DIV     ECX
+   MOV     ESI, EAX
+   MOV     EAX, EBX
+   MUL     DWORD PTR [ESP+0x10]
+   MOV     ECX, EAX
+   MOV     EAX, ESI
+   MUL     DWORD PTR [ESP+0x10]
+   ADD     EDX, ECX
+   JMP     SHORT LOC_4B2EC688
+LOC_4B2EC641:                          
+   MOV     ECX, EAX
+   MOV     EBX, [ESP+0x10]
+   MOV     EDX, [ESP+0x0C]
+   MOV     EAX, [ESP+8]
+LOC_4B2EC64F:                          
+   SHR     ECX, 1
+   RCR     EBX, 1
+   SHR     EDX, 1
+   RCR     EAX, 1
+   OR      ECX, ECX
+   JNZ     SHORT LOC_4B2EC64F
+   DIV     EBX
+   MOV     ESI, EAX
+   MUL     DWORD PTR [ESP+0x14]
+   MOV     ECX, EAX
+   MOV     EAX, [ESP+0x10]
+   MUL     ESI
+   ADD     EDX, ECX
+   JB      SHORT LOC_4B2EC67D
+   CMP     EDX, [ESP+0x0C]
+   JA      SHORT LOC_4B2EC67D
+   JB      SHORT LOC_4B2EC686
+   CMP     EAX, [ESP+8]
+   JBE     SHORT LOC_4B2EC686
+LOC_4B2EC67D:                                                                 
+   DEC     ESI
+   SUB     EAX, [ESP+0x10]
+   SBB     EDX, [ESP+0x14]
+LOC_4B2EC686:                                                                
+   XOR     EBX, EBX
+LOC_4B2EC688:                         
+   SUB     EAX, [ESP+8]
+   SBB     EDX, [ESP+0x0C]
+   NEG     EDX
+   NEG     EAX
+   SBB     EDX, 0
+   MOV     ECX, EDX      // Unusual return format (2 results, 128 bit)
+   MOV     EDX, EBX
+   MOV     EBX, ECX
+   MOV     ECX, EAX
+   MOV     EAX, ESI
+   POP     ESI
+   RETN    16
+}
+}
+//---------------------------------------------------------------------------
+extern "C" __declspec(naked)  int _cdecl _aullrem(unsigned __int64 dividend, unsigned __int64 divisor)   
+{
+__asm
+{
+   PUSH    EBX
+   MOV     EAX, [ESP+0x14]
+   OR      EAX, EAX
+   JNZ     SHORT LOC_4B2EC6D1
+   MOV     ECX, [ESP+0x10]
+   MOV     EAX, [ESP+0x0C]
+   XOR     EDX, EDX
+   DIV     ECX
+   MOV     EAX, [ESP+8]
+   DIV     ECX
+   MOV     EAX, EDX
+   XOR     EDX, EDX
+   JMP     SHORT LOC_4B2EC721
+LOC_4B2EC6D1:                           
+   MOV     ECX, EAX
+   MOV     EBX, [ESP+0x10]
+   MOV     EDX, [ESP+0x0C]
+   MOV     EAX, [ESP+8]
+LOC_4B2EC6DF:                           
+   SHR     ECX, 1
+   RCR     EBX, 1
+   SHR     EDX, 1
+   RCR     EAX, 1
+   OR      ECX, ECX
+   JNZ     SHORT LOC_4B2EC6DF
+   DIV     EBX
+   MOV     ECX, EAX
+   MUL     DWORD PTR [ESP+0x14]
+   XCHG    EAX, ECX
+   MUL     DWORD PTR [ESP+0x10]
+   ADD     EDX, ECX
+   JB      SHORT LOC_4B2EC70A
+   CMP     EDX, [ESP+0x0C]
+   JA      SHORT LOC_4B2EC70A
+   JB      SHORT LOC_4B2EC712
+   CMP     EAX, [ESP+8]
+   JBE     SHORT LOC_4B2EC712
+LOC_4B2EC70A:                         
+   SUB     EAX, [ESP+0x10]
+   SBB     EDX, [ESP+0x14]
+LOC_4B2EC712:                          
+   SUB     EAX, [ESP+8]
+   SBB     EDX, [ESP+0x0C]
+   NEG     EDX
+   NEG     EAX
+   SBB     EDX, 0
+LOC_4B2EC721:                        
+   POP     EBX
+   RETN    16
+}
+}
+//---------------------------------------------------------------------------
+
 
 
 // __asm jmp BinLongUDivStub
@@ -359,108 +548,427 @@ __declspec(naked) void _stdcall fix__fpreset(void)  // Fix conflict of BDS and T
 //---------------------------------------------------------------------------
 bool _stdcall IsLogHandle(HANDLE Hnd)
 {
- return ((Hnd == hLogFile)||(Hnd == hConsOut)||(Hnd == hConsErr));
+ return ((Hnd == hLogFile)||(Hnd == hConsOut));
 }
 //---------------------------------------------------------------------------
 // OPt: InterprocSync, Reopen/Update log // Depth // Fastcall, Max 3 constant args
+// float pushed as double, char pushed as a signed size_t
 //
-void  _cdecl LogProc(char* ProcName, char* Message, ...)
+void  _cdecl LogProc(int Flags, char* ProcName, char* Message, ...)
 {
- struct SLogger
-  {
-   static void _cdecl DoLogFile(HANDLE none1, PVOID data, DWORD datalen, PDWORD none2, PVOID none3){pLogProc((LPSTR)data,datalen);}  
-  };
-static CRITICAL_SECTION csec;
-
- if(!LogMode)return;                          // || !Message || !*Message
- if(!csec.DebugInfo)InitializeCriticalSection(&csec);
-
- int msglen;
- LPSTR MsgPtr;
- DWORD Result;
  va_list args;
- BYTE Buffer[1025+256];     //  > 4k creates __chkstk   // 1024 is MAX for wsprintf
- BYTE OutBuffer[1025+256];
+ static volatile  ULONG MsgIdx = 0;
+ NTSTATUS Status;
+ UINT  MSize = 0;
+ char* MPtr  = NULL;
+ char TmpBuf[1024*3];   // avoid chkstk
 
+ if(!Message)return;   // NULL text string
  va_start(args,Message);
- if(!ProcName || ((size_t)ProcName > 65536))
-  {
- Buffer[0] = 0;
- if(ProcName && Message && Message[0])
-  {
-#ifdef LOGTHID
-#ifdef LOGTICK
-   wsprintf((LPSTR)&Buffer,"%08X %06X %s -> ",GetTickCount(),GetCurrentThreadId(),ProcName);
-#else
-   wsprintf((LPSTR)&Buffer,"%04X %s -> "GetCurrentThreadId(),ProcName);
-#endif
-#else
-#ifdef LOGTICK
-   wsprintf((LPSTR)&Buffer,"%08X %s -> ",GetTickCount(),ProcName);
-#else
-   lstrcat((LPSTR)&Buffer,ProcName);
-   lstrcat((LPSTR)&Buffer," -> ");
-#endif  
-#endif
-  }
- if(Message)
-  {
-   lstrcat((LPSTR)&Buffer,Message);
-   lstrcat((LPSTR)&Buffer,"\r\n");
-   msglen = wvsprintf((LPSTR)&OutBuffer,(LPSTR)&Buffer,args);   // TODO: Local implementation with Float types support
-   MsgPtr = (LPSTR)&OutBuffer;
-  }
-   else {msglen = 0; MsgPtr = NULL;}
-  }
-   else
-	{
-	 if(Message)msglen = va_arg(args,size_t);  //(size_t)ProcName;
-	 MsgPtr = Message;
-	}
- EnterCriticalSection(&csec);
- if(LogMode & lmCons){if(hConsOut == INVALID_HANDLE_VALUE){hConsOut = GetStdHandle(STD_OUTPUT_HANDLE); SetConsoleTextAttribute(hConsOut,FOREGROUND_YELLOW);}}     // {if(!AttachConsole(-1) && (GetLastError() != ERROR_ACCESS_DENIED))AllocConsole();} 
- if(LogMode & lmSErr){if(hConsErr == INVALID_HANDLE_VALUE){hConsErr = GetStdHandle(STD_ERROR_HANDLE);}}
- if((LogMode & lmFile) && *LogFilePath)
-  {
-   if(hLogFile == INVALID_HANDLE_VALUE)
+ ULONG MIndex = _InterlockedIncrement((long*)&MsgIdx);
+ if(!(Flags & lfRawTextMsg))   // Format a normal message
+  {   
+   MPtr = TmpBuf;
+   UINT Len = 0;
+   if(Flags & lfLogTime)
     {
-     hLogFile = CreateFileW(LogFilePath,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,((LogMode & lmFileUpd)?(OPEN_ALWAYS):(CREATE_ALWAYS)),FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL); 
-     if(LogMode & lmFileUpd)SetFilePointer(hLogFile,0,NULL,FILE_END);
+     SIZE_T Ticks = NNTDLL::GetTicks();
+     ConvertToHexStr(Ticks, 8, TmpBuf, true, &Len); // Ticks time
+     MSize += Len;
+     TmpBuf[MSize++] = 0x20;
     }
-  } 
- if(msglen > 0)
-  {
-   if(LogMode & lmProc)pLogProc(MsgPtr,msglen);
-   if(LogMode & lmCons)WriteConsole(hConsOut,MsgPtr,msglen,&Result,NULL);
-   if(LogMode & lmSErr)WriteConsole(hConsErr,MsgPtr,msglen,&Result,NULL);
-   if((LogMode & lmFile)&&(hLogFile != INVALID_HANDLE_VALUE))WriteFile(hLogFile,MsgPtr,msglen,&Result,NULL);
+   if(Flags & lfLogMsgIdx)
+    {
+     ConvertToHexStr(MIndex, 8, &TmpBuf[MSize], true, &Len);  // Message Index (For message order detection)
+     MSize += Len;
+     TmpBuf[MSize++] = 0x20;
+    }
+   if(Flags & lfLogThID)
+    {
+     ConvertToHexStr(NtCurrentThreadId(), 6, &TmpBuf[MSize], true, &Len);   // Thread ID
+     MSize += Len;
+     TmpBuf[MSize++] = 0x20;
+    }
+   if(ProcName && (Flags & lfLogName))    
+    {
+     for(;*ProcName;ProcName++,MSize++)TmpBuf[MSize] = *ProcName;
+     TmpBuf[MSize++] = 0x20;
+    }
+   if(MSize)  // Have some logger info
+    {
+     TmpBuf[MSize++] = '-';
+     TmpBuf[MSize++] = '>';
+     TmpBuf[MSize++] = 0x20;
+    }
+   MSize += FormatToBuffer(Message, &TmpBuf[MSize], (sizeof(TmpBuf)-3)-MSize, args);
+   if(Flags & lfLineBreak)
+    {
+     TmpBuf[MSize++] = '\r';
+     TmpBuf[MSize++] = '\n';
+    }
+   TmpBuf[MSize]   = 0;  // User`s LogProc may want this
   }
-  else if(!Message)     // HEX dump
-   {
-    DWORD Size = va_arg(args,size_t);
-    PBYTE Buff = va_arg(args,PBYTE);
-    UINT  CPos = 0;
-    while(Size > 0)
-     {
-      UINT len = 0;
-	  for(;(CPos < 512)&&(Size > 0);CPos++,Size--)
-       {
-        WORD chr      = HexToChar(Buff[CPos]);
-        Buffer[len++] = chr;
-        Buffer[len++] = chr >> 8;
-       }
-      if(LogMode & lmProc)pLogProc((LPSTR)&Buffer,len);
-      if(LogMode & lmCons)WriteConsole(hConsOut,&Buffer,len,&Result,NULL);
-      if(LogMode & lmSErr)WriteConsole(hConsErr,&Buffer,len,&Result,NULL);
-      if((LogMode & lmFile)&&(hLogFile != INVALID_HANDLE_VALUE))WriteFile(hLogFile,&Buffer,len,&Result,NULL);
-	 }
-    if(LogMode & lmProc)pLogProc("\r\n",2);
-    if(LogMode & lmCons)WriteConsole(hConsOut,"\r\n",2,&Result,NULL);
-    if(LogMode & lmSErr)WriteConsole(hConsErr,"\r\n",2,&Result,NULL);
-    if((LogMode & lmFile)&&(hLogFile != INVALID_HANDLE_VALUE))WriteFile(hLogFile,"\r\n",2,&Result,NULL);
-   }
- LeaveCriticalSection(&csec);
- va_end(args);  
+   else  // Log raw text (No line break supported)
+    {
+     MSize = ProcName?((UINT)ProcName):(NSTR::StrLen(Message));  // ProcName is message size 
+     MPtr  = Message;
+    }
+ va_end(args);
+
+ if(LogMode & lmProc)pLogProc(MPtr, MSize);
+ if(LogMode & lmFile)
+  {                                                                                                                 
+   if(!hLogFile)  // NOTE: Without FILE_APPEND_DATA offsets must be specified to NtWriteFile
+    {          // (LogMode & lmFileUpd)?FILE_APPEND_DATA:FILE_WRITE_DATA       //           //  LogMode |= lmFileUpd;
+     Status = NNTDLL::FileCreateSync(LogFilePath, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ|FILE_SHARE_WRITE, (LogMode & lmFileUpd)?FILE_OPEN_IF:FILE_OVERWRITE_IF, FILE_NON_DIRECTORY_FILE, &hLogFile);
+     if(Status)return;
+    }
+   LARGE_INTEGER offset = {};
+   IO_STATUS_BLOCK iosb = {};
+   Status = NtWriteFile(hLogFile, NULL, NULL, NULL, &iosb, MPtr, MSize, &offset, NULL);
+  }
+ if(LogMode & lmCons)
+  {           
+   LARGE_INTEGER offset = {};
+   IO_STATUS_BLOCK iosb = {};
+   if(!hConsOut)hConsOut = NtCurrentPeb()->ProcessParameters->StandardOutput;
+   Status = NtWriteFile(hConsOut, NULL, NULL, NULL, &iosb, MPtr, MSize, &offset, NULL);
+  }
+}
+//---------------------------------------------------------------------------
+enum EFlags {
+ FLAGS_ZEROPAD   = (1U <<  0U),
+ FLAGS_LEFT      = (1U <<  1U),
+ FLAGS_PLUS      = (1U <<  2U),
+ FLAGS_SPACE     = (1U <<  3U),
+ FLAGS_HASH      = (1U <<  4U),
+ FLAGS_UPPERCASE = (1U <<  5U),
+ FLAGS_CHAR      = (1U <<  6U),
+ FLAGS_SHORT     = (1U <<  7U),
+ FLAGS_LONG      = (1U <<  8U),
+ FLAGS_LONG_LONG = (1U <<  9U),
+ FLAGS_PRECISION = (1U << 10U),
+ FLAGS_ADAPT_EXP = (1U << 11U)
+};
+
+inline bool _is_digit(char ch)
+{
+ return (ch >= '0') && (ch <= '9');
+}
+//---------------------------------------------------------------------------
+// internal ASCII string to unsigned int conversion
+inline unsigned int _atoi(char** Str)
+{
+ unsigned int x = 0;
+ for(unsigned char ch;(ch=*(*Str) - '0') <= 9;(*Str)++)x = (x*10) + ch;        // Can use a different base?
+ return x;
+}
+//---------------------------------------------------------------------------
+template<typename T> inline unsigned int _strnlen_s(T str, size_t maxsize)
+{
+ if(!str)return 0;
+ T s = str;
+ for (; *s && maxsize--; ++s);
+ return (unsigned int)(s - str);
+}
+//---------------------------------------------------------------------------
+template<typename T> size_t _ntoa(char* buffer, size_t idx, size_t maxlen, T value, bool negative, T base, unsigned int prec, unsigned int width, unsigned int flags)
+{
+ char buf[32];
+ size_t len = 0U;
+ if (!value)flags &= ~FLAGS_HASH;   // no hash for 0 values
+ // write if precision != 0 and value is != 0
+ if (!(flags & FLAGS_PRECISION) || value) {
+    do {
+      const char digit = (char)(value % base);    // Not cheap!!!
+      buf[len++] = digit < 10 ? '0' + digit : (flags & FLAGS_UPPERCASE ? 'A' : 'a') + digit - 10;
+      value /= base;
+    } while (value && (len < sizeof(buf)));
+  }
+
+  // pad leading zeros
+  if (!(flags & FLAGS_LEFT)) {
+    if (width && (flags & FLAGS_ZEROPAD) && (negative || (flags & (FLAGS_PLUS | FLAGS_SPACE))))width--;    
+    while ((len < prec) && (len < sizeof(buf)))buf[len++] = '0';
+    while ((flags & FLAGS_ZEROPAD) && (len < width) && (len < sizeof(buf)))buf[len++] = '0';  
+  }
+
+  // handle hash
+  if (flags & FLAGS_HASH) {
+    if (!(flags & FLAGS_PRECISION) && len && ((len == prec) || (len == width)) && (--len && (base == 16U)))len--;   
+    if ((base == 16U) && !(flags & FLAGS_UPPERCASE) && (len < sizeof(buf)))buf[len++] = 'x';
+    else if ((base == 16U) && (flags & FLAGS_UPPERCASE) && (len < sizeof(buf)))buf[len++] = 'X';
+    else if ((base == 2U) && (len < sizeof(buf)))buf[len++] = 'b';   
+    if(len < sizeof(buf))buf[len++] = '0';
+  }
+
+  if (len < sizeof(buf)) {
+    if (negative)buf[len++] = '-';   
+    else if (flags & FLAGS_PLUS)buf[len++] = '+';  // ignore the space if the '+' exists
+    else if (flags & FLAGS_SPACE)buf[len++] = ' ';
+  }
+
+  const size_t start_idx = idx;
+  // pad spaces up to given width
+  if (!(flags & FLAGS_LEFT) && !(flags & FLAGS_ZEROPAD)) {
+    for (size_t i = len; i < width; i++)buffer[idx++] = ' ';   // out(' ', buffer, idx++, maxlen);
+  }
+
+  // reverse string
+  if((idx+len) > maxlen)return idx;     // ???
+  while (len)buffer[idx++] = buf[--len];
+
+  // append pad spaces up to given width
+ if (flags & FLAGS_LEFT){while (idx - start_idx < width)buffer[idx++] = ' ';}    // out(' ', buffer, idx++, maxlen);    //    if(((width - (idx - start_idx)) + idx) > maxlen)   // Too costlly to check  
+ return idx;
+}
+//---------------------------------------------------------------------------
+int _stdcall FormatToBuffer(char* format, char* buffer, UINT maxlen, va_list va)
+{
+ size_t idx = 0U;
+ while(*format && (idx < (size_t)maxlen))   // format specifier?  %[flags][width][.precision][length]
+  {
+   if(*format != '%'){buffer[idx++]=*(format++); continue;}  
+   format++; 
+
+   // evaluate flags 
+   unsigned int n;
+   unsigned int flags = 0U;    
+    do { switch(*format) {
+        case '0': flags |= FLAGS_ZEROPAD; format++; n = 1U; break;
+        case '-': flags |= FLAGS_LEFT;    format++; n = 1U; break;
+        case '+': flags |= FLAGS_PLUS;    format++; n = 1U; break;
+        case ' ': flags |= FLAGS_SPACE;   format++; n = 1U; break;
+        case '#': flags |= FLAGS_HASH;    format++; n = 1U; break;
+        default :                                   n = 0U; break;
+      } } while (n);
+    
+    // evaluate width field
+    unsigned int width = 0U;
+    if (_is_digit(*format))width = _atoi(&format);
+    else if (*format == '*') {
+      const int w = va_arg(va, int);
+      if (w < 0) {flags |= FLAGS_LEFT; width = (unsigned int)-w;}    // reverse padding        
+      else  width = (unsigned int)w;
+      format++;
+    }
+
+    // evaluate precision field
+    unsigned int precision = 0U;
+    if (*format == '.') {
+      flags |= FLAGS_PRECISION;
+      format++;
+      if (_is_digit(*format))precision = _atoi(&format);      
+      else if (*format == '*') {
+        const int prec = (int)va_arg(va, int);
+        precision = prec > 0 ? (unsigned int)prec : 0U;
+        format++;
+      }
+    }
+    
+    // evaluate length field
+    switch (*format) {     
+      case 'l' :
+        if(*(++format) == 'l'){flags |= FLAGS_LONG_LONG; format++;}
+          else flags |= FLAGS_LONG;      
+        break;
+      case 'h':
+        if(*(++format) == 'h'){flags |= FLAGS_CHAR; format++;}
+          else flags |= FLAGS_SHORT; 
+        break;
+/*      case 't' :
+        flags |= (sizeof(ptrdiff_t) == sizeof(long) ? FLAGS_LONG : FLAGS_LONG_LONG);
+        format++;
+        break;
+      case 'j' :
+        flags |= (sizeof(intmax_t) == sizeof(long) ? FLAGS_LONG : FLAGS_LONG_LONG);
+        format++;
+        break;  */
+      case 'z' :
+        flags |= (sizeof(size_t) == sizeof(long) ? FLAGS_LONG : FLAGS_LONG_LONG);
+        format++;
+        break;
+      default :
+        break;
+    }
+ 
+    switch (*format) {       // evaluate specifier
+//      case 'd' :
+      case 'i' :
+      case 'u' :
+      case 'x' :
+      case 'X' :
+      case 'o' :
+      case 'b' : {
+        // set the base
+        unsigned int base;
+        if (*format == 'x' || *format == 'X')base = 16U;        
+        else if (*format == 'o')base = 8U;
+        else if (*format == 'b')base = 2U;
+        else {base = 10U; flags &= ~FLAGS_HASH;}   // no hash for dec format
+                
+        if (*format == 'X')flags |= FLAGS_UPPERCASE;     // uppercase       
+        if (*format != 'i')flags &= ~(FLAGS_PLUS | FLAGS_SPACE);    // no plus or space flag for u, x, X, o, b   //  && (*format != 'd')
+        // ignore '0' flag when precision is given
+        if (flags & FLAGS_PRECISION)flags &= ~FLAGS_ZEROPAD;
+        // convert the integer
+        if (*format == 'i') {   // signed         //  || (*format == 'd')         
+          if (flags & FLAGS_LONG_LONG) {
+            const long long value = va_arg(va, long long);
+            idx = _ntoa<unsigned long long>(buffer, idx, maxlen, (unsigned long long)(value > 0 ? value : 0 - value), value < 0, base, precision, width, flags);
+          }
+          else if (flags & FLAGS_LONG) {
+            const long value = va_arg(va, long);
+            idx = _ntoa<unsigned long>(buffer, idx, maxlen, (unsigned long)(value > 0 ? value : 0 - value), value < 0, base, precision, width, flags);
+          }
+          else {
+            const int value = (flags & FLAGS_CHAR) ? (char)va_arg(va, int) : (flags & FLAGS_SHORT) ? (short int)va_arg(va, int) : va_arg(va, int);
+            idx = _ntoa<unsigned long>(buffer, idx, maxlen, (unsigned int)(value > 0 ? value : 0 - value), value < 0, base, precision, width, flags);
+          }
+        }
+        else {   // unsigned          
+          if (flags & FLAGS_LONG_LONG)idx = _ntoa<unsigned long long>(buffer, idx, maxlen, va_arg(va, unsigned long long), false, base, precision, width, flags);
+          else if (flags & FLAGS_LONG)idx = _ntoa<unsigned long>(buffer, idx, maxlen, va_arg(va, unsigned long), false, base, precision, width, flags);
+          else {
+            const unsigned int value = (flags & FLAGS_CHAR) ? (unsigned char)va_arg(va, unsigned int) : (flags & FLAGS_SHORT) ? (unsigned short int)va_arg(va, unsigned int) : va_arg(va, unsigned int);
+            idx = _ntoa<unsigned long>(buffer, idx, maxlen, value, false, base, precision, width, flags);
+          }
+        }
+        format++;
+        break;
+      }
+      case 'f' :
+      case 'F' : {
+        size_t prec = (flags & FLAGS_PRECISION)?precision:14;   // Is 14 optimal?
+        if(*format == 'F') {flags |= FLAGS_UPPERCASE; prec |= 0x1000;}  // ffUpperCase
+        if(flags & FLAGS_HASH)prec |= 0x8000;       // ffZeroPad                      // ffCommaSep  // Or may be ffZeroPad 0x8000? 
+        size_t len = 0;
+        char buf[52];
+        char* ptr = ftoa_simple(va_arg(va, double), prec, buf, sizeof(buf), &len);   // After this we have some space at beginning of the buffer
+        bool negative = (*ptr == '-');
+        if (!(flags & FLAGS_LEFT) && (flags & FLAGS_ZEROPAD)) {
+          if (width && (negative || (flags & (FLAGS_PLUS | FLAGS_SPACE)))) width--;   
+          while ((len < width) && (len < sizeof(buf))){*(--ptr) = '0'; len++;}   // Width adds zeroes BEFORE
+        }
+        if ((len < sizeof(buf)) && !negative) {  
+          if (flags & FLAGS_PLUS){*(--ptr) = '+'; len++;} // ignore the space if the '+' exists    
+          else if (flags & FLAGS_SPACE){*(--ptr) = ' '; len++;} 
+        } 
+        const size_t start_idx = idx;
+        if (!(flags & FLAGS_LEFT) && !(flags & FLAGS_ZEROPAD)) {    // pad spaces up to given width         // TODO: CopyPadded inline function
+          for (size_t i = len; i < width; i++)buffer[idx++] = ' '; }  // out(' ', buffer, idx++, maxlen);  
+        while(len--)buffer[idx++] = *(ptr++);       //out(buf[--len], buffer, idx++, maxlen); // reverse string 
+        if (flags & FLAGS_LEFT) {     // append pad spaces up to given width
+          while (idx - start_idx < width)buffer[idx++] = ' '; }  // out(' ', buffer, idx++, maxlen);             
+        format++; }
+        break;
+#if defined(PRINTF_SUPPORT_EXPONENTIAL)
+      case 'e':
+      case 'E':
+      case 'g':
+      case 'G':
+        if ((*format == 'g')||(*format == 'G')) flags |= FLAGS_ADAPT_EXP;
+        if ((*format == 'E')||(*format == 'G')) flags |= FLAGS_UPPERCASE;
+        idx = _etoa(out, buffer, idx, maxlen, va_arg(va, double), precision, width, flags);
+        format++;
+        break;
+#endif  // PRINTF_SUPPORT_EXPONENTIAL
+      case 'c' : {
+        unsigned int l = 1U;       
+        if (!(flags & FLAGS_LEFT)){while (l++ < width)buffer[idx++] = ' ';}  // pre padding         //  TODO: Buffer limit               
+        buffer[idx++] = (char)va_arg(va, int);  // char output       // out((char)va_arg(va, int), buffer, idx++, maxlen);       
+        if (flags & FLAGS_LEFT){while (l++ < width)buffer[idx++] = ' ';}    // post padding          
+        format++;
+        break;
+      }
+
+      case 's' : {
+        char* cp;
+        wchar_t* wp;
+        unsigned int l;
+        if(flags & FLAGS_LONG)
+         {
+          wp = va_arg(va, wchar_t*);
+          l  = _strnlen_s(wp, precision ? precision : (size_t)-1);    // precision or a full size 
+         }
+        else
+         {
+          cp = va_arg(va, char*);
+          l  = _strnlen_s(cp, precision ? precision : (size_t)-1);    // precision or a full size 
+         }
+        unsigned int f = l;    // Full len  of the string       
+        if(flags & FLAGS_PRECISION) f = l = (l < precision ? l : precision);    // Not greater than precision or 0
+        if(!(flags & FLAGS_LEFT)){while (l++ < width)buffer[idx++] = ' ';}      // pre padding       
+        if(flags & FLAGS_LONG)idx += UTF::Utf16To8(buffer, wp, f, idx, 0);      
+         else {for (;f;f--)buffer[idx++] = *(cp++);}   // string output         //  out(*(p++), buffer, idx++, maxlen);  // while ((*p != 0) && (!(flags & FLAGS_PRECISION) || precision--))buffer[idx++] = *(p++);       
+        if(flags & FLAGS_LEFT){while (l++ < width)buffer[idx++] = ' ';}         // post padding
+        format++;
+        break;
+      }
+
+      case 'd' :
+      case 'D' : {   // Width is data block size, precision is line size(single line if not specified)
+        if(*format == 'D')flags |= FLAGS_UPPERCASE;
+        unsigned char* DPtr  = va_arg(va, unsigned char*);
+        unsigned int   RLen  = precision?precision:width;   // If no precision is specified then write everything in one line 
+        unsigned int DelMult = (flags & FLAGS_SPACE)?3:2;
+        for(unsigned int offs=0,roffs=0,rpos=0;idx < maxlen;offs++,roffs++)
+         {
+          bool HaveMore = offs < width;
+          if(!HaveMore || (roffs >= RLen))
+           {
+            if(flags & FLAGS_HASH)   // Include char dump
+             {
+              unsigned int IndCnt = (flags & FLAGS_SPACE)?1:2;
+              IndCnt += (RLen - roffs) * DelMult;  // Indent missing HEX space     //if(!SingleLine)
+              if((idx+IndCnt) > maxlen)goto Exit;    // No more space
+              memset(&buffer[idx], ' ', IndCnt);
+              idx += IndCnt;            
+              for(unsigned int ctr=0;(ctr < roffs)&&(idx < maxlen);ctr++)   // Create Text string
+               {
+                unsigned char Val = DPtr[rpos+ctr];
+                if(Val < 0x20)Val = '.';
+                buffer[idx++] = Val;
+               }
+             }
+            if(!HaveMore || ((idx+4) > maxlen))break;
+            buffer[idx++] = '\r';      // Add only if there is another line follows
+            buffer[idx++] = '\n';
+            rpos  = offs;
+            roffs = 0;
+           }
+          unsigned short Val = HexToChar(DPtr[offs]);
+          buffer[idx++] = Val;
+          buffer[idx++] = Val >> 8;
+          if(flags & FLAGS_SPACE)buffer[idx++] = ' ';
+         } 
+        format++; 
+        break; }
+
+      case 'p' : {
+        width = sizeof(void*) * 2U;
+        flags |= FLAGS_ZEROPAD | FLAGS_UPPERCASE;
+        const bool is_ll = sizeof(uintptr_t) == sizeof(long long);
+        if (is_ll)idx = _ntoa<unsigned long long>(buffer, idx, maxlen, (uintptr_t)va_arg(va, void*), false, 16U, precision, width, flags);
+          else idx = _ntoa<unsigned long>(buffer, idx, maxlen, (unsigned long)((uintptr_t)va_arg(va, void*)), false, 16U, precision, width, flags);
+        format++;
+        break;
+      }
+
+      case 'n': {       // Nothing printed. The number of characters written so far is stored in the pointed location.
+        int* p = va_arg(va, int*);
+        *p = idx; }     
+        break;
+
+      default:
+        buffer[idx++] = *(format++);       //out(*format, buffer, idx++, maxlen); format++;       
+        break;
+    }
+  }
+
+Exit:
+ buffer[idx] = 0;  // out((char)0, buffer, idx < maxlen ? idx : maxlen - 1U, maxlen);
+ return (int)idx;
 }
 //---------------------------------------------------------------------------
 void _stdcall SetINIValueInt(LPSTR SectionName, LPSTR ValueName, int Value, LPSTR FileName)
@@ -566,15 +1074,15 @@ UINT64 _stdcall QueryFileSize(LPSTR File)
 //---------------------------------------------------------------------------
 SIZE_T _stdcall GetRealModuleSize(PVOID ModuleBase)
 {
- MEMORY_BASIC_INFO meminfo;
-
+ MEMORY_BASIC_INFORMATION meminfo;
+ SIZE_T RetLen     = 0; 
  SIZE_T ModuleSize = 0;
  PBYTE  ModuleAddr = (PBYTE)ModuleBase;
  memset(&meminfo, 0, sizeof(MEMORY_BASIC_INFO));
- while(VirtualQuery((LPCVOID)ModuleAddr, (MEMORY_BASIC_INFORMATION*)&meminfo, sizeof(MEMORY_BASIC_INFO)))   // Use MEMORY_IMAGE_INFORMATION instead?
+ while(!NtQueryVirtualMemory(NtCurrentProcess,ModuleAddr,MemoryBasicInformation,&meminfo,sizeof(MEMORY_BASIC_INFORMATION),&RetLen))   // Use MEMORY_IMAGE_INFORMATION instead?
   {
    ModuleAddr += meminfo.RegionSize;
-   if(meminfo.AllocationBase == (ULONG_PTR)ModuleBase)ModuleSize += meminfo.RegionSize;
+   if(meminfo.AllocationBase == ModuleBase)ModuleSize += meminfo.RegionSize;
 	 else break;
   }
  return ModuleSize;
@@ -736,7 +1244,7 @@ DWORD _stdcall HexStrToDW(LPSTR String, UINT Bytes)   // Fast, but not safe  // 
  return Result;
 }
 //---------------------------------------------------------------------------
-LPSTR _stdcall ConvertToDecDW(DWORD Value, LPSTR Number)
+/*LPSTR _stdcall ConvertToDecDW(DWORD Value, LPSTR Number)     // TODO: Remove
 {
  char  DecNums[] = "0123456789";
  int   DgCnt = 0;
@@ -754,7 +1262,7 @@ LPSTR _stdcall ConvertToDecDW(DWORD Value, LPSTR Number)
  Number[DgCnt] = 0;
  for(DgCnt = 0;(DgCnt < 9) && (Number[DgCnt] == '0');DgCnt++);
  return (LPSTR)(((DWORD)Number) + DgCnt);
-}
+} */
 //---------------------------------------------------------------------------
 /*UINT _fastcall DecStrToNum(char* Str)   // Primitive - get rid of it! // Stops on first non numberic char without a problem
 {
@@ -1466,7 +1974,7 @@ ULONGLONG __stdcall BinLongUMul(ULONGLONG Multiplicand, ULONGLONG Multiplier)
  return Summ;
 }
 //====================================================================================
-UINT __stdcall SaveMemoryToFile(LPSTR FileName, DWORD ProcessID, DWORD Address, DWORD BlockSize, BYTE ErrorByte)
+UINT __stdcall SaveMemoryToFile(LPSTR FileName, DWORD ProcessID, SIZE_T Address, SIZE_T BlockSize, BYTE ErrorByte)
 {
  DWORD       ReadBytes;
  DWORD       PrBReaded;
@@ -1926,7 +2434,7 @@ BOOL _stdcall ForceProcessSingleCore(HANDLE hProcess)
   {
    for(UINT ctr=31;ctr > 0;ctr--) // Leave first core for something else and find next
 	{
-	 if(SystAffMask >> ctr)return SetProcessAffinityMask(hProcess, (((DWORD)1) << ctr));
+	 if(SystAffMask >> ctr)return SetProcessAffinityMask(hProcess, UINT(((UINT)1) << ctr));
 	}
   }
  return false;
@@ -2188,40 +2696,6 @@ int __stdcall SetProcessPrivilegeState(bool bEnable, LPSTR PrName, HANDLE hProce
  return 0;
 }
 //------------------------------------------------------------------------------------------------------------
-// Starting in Windows 8.1, GetVersion() and GetVersionEx() are subject to application manifestation
-// See https://stackoverflow.com/questions/32115255/c-how-to-detect-windows-10
-//
-extern "C" { NTSTATUS NTAPI RtlGetVersion(PRTL_OSVERSIONINFOW lpVersionInformation); }
-DWORD _fastcall GetRealVersionInfo(PDWORD dwMajor, PDWORD dwMinor, PDWORD dwBuild, PDWORD dwPlatf)
-{
- RTL_OSVERSIONINFOW osInfo;
- osInfo.dwOSVersionInfoSize = sizeof(osInfo);
- RtlGetVersion(&osInfo);
- if(dwMajor)*dwMajor = osInfo.dwMajorVersion;
- if(dwMinor)*dwMinor = osInfo.dwMinorVersion;
- if(dwBuild)*dwBuild = osInfo.dwBuildNumber;
- if(dwPlatf)*dwPlatf = osInfo.dwPlatformId;
- DWORD Composed = (osInfo.dwPlatformId << 16)|(osInfo.dwMinorVersion << 8)|osInfo.dwMajorVersion;
- return Composed;
-}
-//---------------------------------------------------------------------------
-int _stdcall GetMappedFilePath(PVOID DllBase, PWSTR PathBuf, UINT BufChrLen)   // Returns as '\Device\HarddiskVolume'
-{
- SIZE_T RetLen;
- BYTE Buffer[1028];            
- if(!NtQueryVirtualMemory(NtCurrentProcess,DllBase,MemoryMappedFilenameInformation,&Buffer,sizeof(Buffer),&RetLen) && RetLen)
-  {
-   PWSTR DllPath = ((UNICODE_STRING*)&Buffer)->Buffer;
-   UINT  PathLen = ((UNICODE_STRING*)&Buffer)->Length;
-   RetLen = (BufChrLen-1) * sizeof(WCHAR);
-   if(PathLen > RetLen)PathLen = RetLen;
-   memcpy(PathBuf, DllPath, PathLen);
-   *((WCHAR*)&((PBYTE)PathBuf)[PathLen]) = 0;
-   return PathLen / sizeof(WORD);
-  }
- return 0;
-};
-//------------------------------------------------------------------------------------
 
 //------------------------------------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------------------------

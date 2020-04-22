@@ -1,7 +1,7 @@
 
 #pragma once 
 /*
-  Copyright (c) 2018 Victor Sheinmann, Vicshann@gmail.com
+  Copyright (c) 2020 Victor Sheinmann, Vicshann@gmail.com
 
   Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), 
   to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, 
@@ -17,6 +17,10 @@
 #include "ntdll.h"
 #include "FormatPE.h"
 #include "ShMemIPC.hpp"
+
+#ifndef ctENCSA
+#define ctENCSA(val) val
+#endif
 
 struct GhDbg
 {
@@ -62,84 +66,23 @@ struct DbgEvtEx: public DEBUG_EVENT
  wchar_t FilePath[1];
 };
 //====================================================================================
-template<typename T> class CGrowArr    // Can invalidate old pointers after it grows
-{
- T* Data;
- size_t Used; 
- size_t Allocated;    // Grow only
-
-void Resize(size_t Cnt)     // All heap functions are Slow!
-{
- this->Used = (Cnt*sizeof(T));
- if(this->Used && (this->Used <= this->Allocated))return;   // Already allocated
-   else this->Allocated = this->Used + (this->Used / 2);
- if(this->Allocated && this->Data)this->Data = (T*)HeapReAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,this->Data,this->Allocated);
-   else if(!this->Data)this->Data = (T*)HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,this->Allocated);
-     else if(!this->Allocated && this->Data){HeapFree(GetProcessHeap(),0,this->Data); this->Data=NULL;}
-}
-//------------------------------------------------------------------------------------
-
-public:
- CGrowArr(void){this->Data = NULL;}
- CGrowArr(size_t Cnt){this->Used = 0; this->Allocated = (Cnt*sizeof(T)); this->Data = (T*)HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,this->Allocated);}
- ~CGrowArr(){this->Clear();}
- operator  T*() {return this->Data;}
- UINT Count(void){return (this->Size() / sizeof(T));}
- UINT Size(void){return this->Used;}
-//------------------------------------------------------------------------------------
-T* Add(T* Data, size_t Cnt=1)
-{
-// DBGMSG("Adding: %p, %u",Data,Cnt);
- size_t OIdx = this->Count();
- this->Resize(OIdx+Cnt);
- if(Data)memcpy(&this->Data[OIdx], Data, Cnt*sizeof(T));
- return &this->Data[OIdx];
-}
-//------------------------------------------------------------------------------------
-bool Remove(size_t Idx, size_t Cnt=1)
-{
-// DBGMSG("Removing: %u, %u",Idx,Cnt);
- size_t OIdx = this->Count();
- if(Idx >= OIdx)return false;
- size_t LIdx = Idx + Cnt;
- if(LIdx < OIdx)
-  {
-   memmove(&this->Data[Idx], &this->Data[LIdx], (OIdx-LIdx)*sizeof(T)); 
-   this->Resize(OIdx-Cnt); 
-  }
-  else this->Resize(Idx);       // At the end of list
- return true;
-}
-//------------------------------------------------------------------------------------
-bool Remove(T* Itm, size_t Cnt=1)
-{
- return this->Remove(size_t(Itm - this->Data), Cnt);
-}
-//------------------------------------------------------------------------------------
-void Clear(void){this->Resize(0);}
-
-}; 
-//====================================================================================
-class CThreadList
+class CThreadList    // TODO: Decompose or reorganize
 {
 public:
 struct SThDesc
 {
- enum ThFlags {tfNone=0,tfOpenedHnd=1,tfMarkedForRemove=2};
- BYTE   Flags;
- BYTE   Index;
- bool   TFlag;
- bool   DbgCont;
- WORD   SuspCtr;
- DWORD  ThreadID;  // Not WORD
- HANDLE hThread;
- PVOID  pContext;  // Non NULL only if thread is in Exception Handler (Suspended) 
- TEB*   pThTeb;
+ enum ThFlags {tfNone=0,tfTraceFlg=0x01,tfDbgCont=0x02,tfOpenedHnd=0x04,tfMarkedForRemove=0x08,tfSuspendedForAll=0x10,  tfTraceFlagMsk=0x0100};
+ volatile ULONG  Flags;
+ volatile DWORD  Index;  
+ volatile DWORD  ThreadID;  // Not WORD
+ volatile HANDLE hThread;
+ volatile PVOID  pContext;  // Non NULL only if thread is in Exception Handler (Suspended) 
+ volatile TEB*   pThTeb;
  struct SHwBp
   {
    PBYTE Addr;
    ULONG Size;
-  } HwBpLst[4]; 
+  } volatile HwBpLst[4]; 
  struct SDbgCtx
   {
    SIZE_T Dr0;
@@ -149,45 +92,106 @@ struct SThDesc
    SIZE_T Dr6;
    SIZE_T Dr7;
    bool   TrFlg;    // Unreliable, because this flag can be accessed with pushf/popf
-  } DbgCtx;   
-};
-private:   
- CGrowArr<SThDesc> ThreadLst; 
- CRITICAL_SECTION csec;
+  } volatile DbgCtx;  
+//------------------------------------------------------------------------------------  
+inline void  SyncResFlags(ULONG Flg){_InterlockedAnd((long*)&this->Flags,~Flg);}
+inline void  SyncSetFlags(ULONG Flg){_InterlockedOr((long*)&this->Flags,Flg);}
+inline ULONG SyncGetFlags(ULONG Flg){return this->Flags & Flg;}
+inline void  SetTraceFlagState(bool State)
+{
+ if(State)this->SyncSetFlags(tfTraceFlg); 
+   else this->SyncResFlags(tfTraceFlg);
+}
+//------------------------------------------------------------------------------------
+inline void  SetDbgContinueState(bool State)
+{
+ if(State)this->SyncSetFlags(tfDbgCont); 
+   else this->SyncResFlags(tfDbgCont);
+}
+//------------------------------------------------------------------------------------
 
+};
+
+
+private:   
+ SHM::CGrowArr<SThDesc, 128> ThreadLst; 
+ SHM::CArgPack<sizeof(DbgEvtEx) * 32> EvtStk;
+ SHM::CCritSectEx<> csec; 
+ int TotalInStack;
+
+//------------------------------------------------------------------------------------
 void RemoveThreadFromListByIdx(DWORD Index)
 {
-// EnterCriticalSection(&this->csec);
- if((this->ThreadLst[Index].Flags & SThDesc::tfOpenedHnd) && this->ThreadLst[Index].hThread)CloseHandle(this->ThreadLst[Index].hThread);
+ if((this->ThreadLst[Index].Flags & SThDesc::tfOpenedHnd) && this->ThreadLst[Index].hThread)NtClose(this->ThreadLst[Index].hThread);
+// DBGMSG("Index=%u, ThreadID=%u",Index,this->ThreadLst[Index].ThreadID); 
  this->ThreadLst[Index].hThread  = NULL;          
  this->ThreadLst[Index].ThreadID = 0;
-// LeaveCriticalSection(&this->csec);
+}
+//------------------------------------------------------------------------------------
+SThDesc* GetThreadDesc(UINT Index)      
+{
+ if(!this->IsThreadIndexExist(Index))return NULL;
+ return &this->ThreadLst[Index];
 }
 //------------------------------------------------------------------------------------
 
 public:
+ UINT DbgEventCnt;
+
 //------------------------------------------------------------------------------------
-CThreadList(void): ThreadLst(16)
+CThreadList(void)
 {
- InitializeCriticalSection(&this->csec);
+ this->TotalInStack = 0;
+ this->DbgEventCnt  = 0;
  this->Clear();
 }
 //------------------------------------------------------------------------------------
 ~CThreadList()
 {
- DeleteCriticalSection(&this->csec);
+ this->Clear();
 }
 //------------------------------------------------------------------------------------
-int AddThreadToList(TEB* pThTeb, DWORD ThreadID=0, HANDLE hThread=NULL, bool CanOpen=true)
+void Lock(void)
+{
+// DBGMSG("Locking..."); 
+ this->csec.Lock(); 
+// DBGMSG("Locked"); 
+}
+//------------------------------------------------------------------------------------
+void UnLock(void)
+{
+// DBGMSG("UnLocking...");
+ this->csec.Unlock();
+// DBGMSG("Unlocked");
+}
+//------------------------------------------------------------------------------------
+int EventsInStack(void){return this->TotalInStack;}
+//------------------------------------------------------------------------------------
+DbgEvtEx* PushDbgEvent(UINT ExtraSize=0)   // Requires ThreadList lock
+{
+ this->TotalInStack++;
+ return (DbgEvtEx*)this->EvtStk.PushBlkEx(sizeof(DbgEvtEx) + ExtraSize);
+}
+//------------------------------------------------------------------------------------
+DbgEvtEx* PopDbgEvent(UINT* Size=NULL)    // Requires ThreadList lock
+{
+ if(this->TotalInStack <= 0){DBGMSG("No events in stack!"); return NULL;}
+ this->TotalInStack--;
+ return (DbgEvtEx*)this->EvtStk.PopBlkEx(Size);
+}
+//------------------------------------------------------------------------------------
+// Windows Server 2003 and Windows XP: The value of the THREAD_ALL_ACCESS flag increased on Windows Server 2008 and Windows Vista. If an application compiled for Windows Server 2008 and 
+// Windows Vista is run on Windows Server 2003 or Windows XP, the THREAD_ALL_ACCESS flag contains access bits that are not supported and the function specifying this flag fails with ERROR_ACCESS_DENIED. 
+//
+int AddThreadToList(TEB* pThTeb, DWORD ThreadID=0, HANDLE hThread=NULL, LARGE_INTEGER* CreateTime=NULL, bool CanOpen=true)
 { 
- EnterCriticalSection(&this->csec);
  int NewThIdx = -1;
  if(!ThreadID && pThTeb)ThreadID = (DWORD)pThTeb->ClientId.UniqueThread;
  for(UINT ctr=0,total=this->ThreadLst.Count();ctr < total;ctr++)
   {
    SThDesc* ThDes = &this->ThreadLst[ctr];
-   if(ThreadID && (ThDes->ThreadID == ThreadID)){LeaveCriticalSection(&this->csec); return ctr;}      // Already in list
-   if(hThread  && (ThDes->hThread  == hThread )){LeaveCriticalSection(&this->csec); return ctr;}      // Already in list
+   if(ThreadID && (ThDes->ThreadID == ThreadID))return ctr;      // Already in list
+   if(hThread  && (ThDes->hThread  == hThread ))return ctr;      // Already in list
    if(!ThDes->hThread)NewThIdx = ctr;
   }
  SThDesc* ThDes;
@@ -200,150 +204,154 @@ int AddThreadToList(TEB* pThTeb, DWORD ThreadID=0, HANDLE hThread=NULL, bool Can
 // DBGMSG("Adding a new thread: %u",NewThIdx);
  ThDes->ThreadID = ThreadID;
  ThDes->Index    = NewThIdx;                                  
- ThDes->SuspCtr  = 0;
  ThDes->pContext = NULL;
  ThDes->pThTeb   = pThTeb;
  if(CanOpen && !hThread)
   {
-   ThDes->hThread = OpenThread(THREAD_ALL_ACCESS,FALSE,ThreadID);    // What for?      THREAD_GET_CONTEXT|THREAD_SET_CONTEXT|THREAD_SUSPEND_RESUME
-   if(!ThDes->hThread)
+   CLIENT_ID CliID;
+   OBJECT_ATTRIBUTES ObjAttr;
+   CliID.UniqueThread  = (HANDLE)SIZE_T(ThreadID);
+   CliID.UniqueProcess = 0;
+   ObjAttr.Length = sizeof(ObjAttr);
+   ObjAttr.RootDirectory = NULL;  
+   ObjAttr.Attributes = 0;           // bInheritHandle ? 2 : 0;
+   ObjAttr.ObjectName = NULL;
+   ObjAttr.SecurityDescriptor = ObjAttr.SecurityQualityOfService = NULL;
+   if(NTSTATUS stat = NtOpenThread((HANDLE*)&ThDes->hThread, SYNCHRONIZE|THREAD_GET_CONTEXT|THREAD_SET_CONTEXT|THREAD_QUERY_INFORMATION|THREAD_SET_INFORMATION|THREAD_SUSPEND_RESUME|THREAD_TERMINATE, &ObjAttr, &CliID))   
     {
-     ThDes->ThreadID = NULL;
-     LeaveCriticalSection(&this->csec);
-     DBGMSG("Failed to open thread %u: %u",ThreadID,GetLastError());
+     ThDes->hThread  = NULL;
+     ThDes->ThreadID = 0;
+     DBGMSG("Failed to open thread %u at %u: %08X",ThreadID,NewThIdx,stat);
      return -1;
     }
    ThDes->Flags = SThDesc::tfOpenedHnd;
+   if(ThreadID != NtCurrentThreadId())
+    {
+     if(NTSTATUS stat = NtSuspendThread(ThDes->hThread, NULL)){DBGMSG("Failed to suspend: %08X",stat);}
+       else ThDes->Flags |= SThDesc::tfSuspendedForAll;
+    }
+   if(CreateTime)
+    {
+     KERNEL_USER_TIMES times;
+     ULONG RetLen = 0;
+     if(NTSTATUS stat = NtQueryInformationThread(ThDes->hThread,ThreadTimes,&times,sizeof(times),&RetLen)){DBGMSG("Failed to query thread times: %08X",stat);}  // A debugger will request this many times anyway
+     CreateTime->QuadPart = times.CreateTime.QuadPart;
+    }
   }
    else
     {
      ThDes->Flags   = SThDesc::tfNone;
      ThDes->hThread = hThread;   
     }
- DBGMSG("ThreadID=%08X(%u), hThread=%08X, Index=%u",ThDes->ThreadID,ThDes->ThreadID,ThDes->hThread,NewThIdx);
- LeaveCriticalSection(&this->csec);
+ DBGMSG("ThreadID=%08X(%u), hThread=%08X, CreateTime=%016llX, Index=%u",ThDes->ThreadID,ThDes->ThreadID,ThDes->hThread,(CreateTime?CreateTime->QuadPart:0),NewThIdx);
  return NewThIdx;
 }
 //------------------------------------------------------------------------------------
+static bool IsCurrentThreadDesc(SThDesc* Desc, TEB* CurrTeb)
+{
+ if(Desc->pThTeb != CurrTeb)return false;
+ if(Desc->ThreadID != (UINT)CurrTeb->ClientId.UniqueThread){DBGMSG("Inconsistent Thread entry %u for %u(%u)!",Desc->Index,Desc->ThreadID,(UINT)CurrTeb->ClientId.UniqueThread); return false;}   // Current TEB has been reused!
+ return true;
+}
+//------------------------------------------------------------------------------------
 bool IsThreadInList(DWORD ThreadID, HANDLE hThread=NULL){return (this->FindThreadIdxInList(NULL, ThreadID, hThread) >= 0);}
-bool IsThreadIndexExist(UINT Index){return ((Index < this->ThreadLst.Count()) || this->ThreadLst[Index].hThread);}
+bool IsThreadIndexExist(UINT Index){return ((Index < this->ThreadLst.Count()) && this->ThreadLst[Index].hThread);}
+//------------------------------------------------------------------------------------
+PTEB GetTebByIndex(UINT Index)
+{
+ PTEB val = NULL;
+ if(Index < this->ThreadLst.Count())val = (PTEB)this->ThreadLst[Index].pThTeb;  // NULL if the slot is empty
+ return val;
+}
+//------------------------------------------------------------------------------------
 HANDLE GetHandleByIndex(UINT Index)
 {
  HANDLE val = NULL;
- EnterCriticalSection(&this->csec);
  if(Index < this->ThreadLst.Count())val = this->ThreadLst[Index].hThread;  // NULL if the slot is empty
- LeaveCriticalSection(&this->csec);
  return val;
 }
 //------------------------------------------------------------------------------------
 HANDLE GetHandleByID(UINT ThreadID)
 {
- EnterCriticalSection(&this->csec);
  int Idx = this->FindThreadIdxInList(NULL, ThreadID, NULL);
- if(Idx < 0){LeaveCriticalSection(&this->csec); return NULL;}
- HANDLE val = NULL;
- if(Idx < this->ThreadLst.Count())val = this->ThreadLst[Idx].hThread;  // NULL if the slot is empty
- LeaveCriticalSection(&this->csec);
- return val;
+ if(Idx < 0)return NULL;
+ if(Idx < (int)this->ThreadLst.Count())return this->ThreadLst[Idx].hThread;  // NULL if the slot is empty
+ return NULL;
 }
 //------------------------------------------------------------------------------------
-int FindThreadIdxInList(SThDesc& Res, DWORD ThreadID, HANDLE hThread=NULL)
+int FindThreadIdxInList(SThDesc** Res, DWORD ThreadID, HANDLE hThread=NULL)   // Returns a first thread in the list if both ThreadID and hThread are NULL
 {
- EnterCriticalSection(&this->csec);
- SThDesc* Ptr;
- int Idx = this->FindThreadIdxInList(&Ptr, ThreadID, hThread);
- if(Idx < 0){LeaveCriticalSection(&this->csec); return -1;}
- memcpy(&Res,Ptr,sizeof(SThDesc));
- LeaveCriticalSection(&this->csec);
- return Idx;
-}
-//------------------------------------------------------------------------------------
-int FindThreadIdxInList(SThDesc** Res, DWORD ThreadID, HANDLE hThread=NULL)
-{
- EnterCriticalSection(&this->csec);
  for(UINT ctr=0,total=this->ThreadLst.Count();ctr < total;ctr++)
   {
    if(!this->ThreadLst[ctr].hThread)continue;     // The slot is empty
    if(hThread  && (this->ThreadLst[ctr].hThread  != hThread))continue;
    if(ThreadID && (this->ThreadLst[ctr].ThreadID != ThreadID))continue; 
    if(Res)*Res = &this->ThreadLst[ctr]; 
-   LeaveCriticalSection(&this->csec);
    return ctr;
   }
- LeaveCriticalSection(&this->csec);
 // DBGMSG("Thread %u:%08X not found!",ThreadID,hThread);
  return -1;
 }
 //------------------------------------------------------------------------------------
-SThDesc* GetThreadDesc(UINT Index)     
-{
- if(!this->IsThreadIndexExist(Index))return NULL;
- return &this->ThreadLst[Index];
-}
-//------------------------------------------------------------------------------------
 bool RemoveThreadFromList(DWORD ThreadID, HANDLE hThread=NULL)   // A process can create and delete some thread very frequently so no memory moving here, just invalidate removed entries
 {
- EnterCriticalSection(&this->csec);
  int Idx = this->FindThreadIdxInList(NULL, ThreadID, hThread);
- if(Idx < 0){LeaveCriticalSection(&this->csec); return false;}
+ if(Idx < 0)return false;
  this->RemoveThreadFromListByIdx(Idx);
- LeaveCriticalSection(&this->csec);
  return true;
 }
 //------------------------------------------------------------------------------------
 void Clear(void)
 {
- EnterCriticalSection(&this->csec);
+ this->Lock();
  for(UINT ctr=0,total=this->ThreadLst.Count();ctr < total;ctr++)
   {
    SThDesc* ThDes = &this->ThreadLst[ctr];
-   if((ThDes->Flags & SThDesc::tfOpenedHnd) && ThDes->hThread)CloseHandle(ThDes->hThread);
+   if((ThDes->Flags & SThDesc::tfOpenedHnd) && ThDes->hThread)NtClose(ThDes->hThread);
   }
  this->ThreadLst.Clear(); 
- LeaveCriticalSection(&this->csec);
+ this->EvtStk.Clear();
+ this->UnLock();
 }
 //------------------------------------------------------------------------------------
-NTSTATUS Suspend(UINT Idx, PULONG PrevCnt, bool MarkForRemove=false) 
+NTSTATUS Suspend(UINT Idx, PULONG PrevCnt=NULL, bool MarkForRemove=false, bool SuspForAll=false)   // TODO: Report_DEAD_THREAD_DEBUG_EVENT if HANDLE in STATUS_THREAD_IS_TERMINATING
 {
- EnterCriticalSection(&this->csec);
- if(!this->IsThreadIndexExist(Idx)){LeaveCriticalSection(&this->csec); return STATUS_NOT_FOUND;}
- if(this->ThreadLst[Idx].SuspCtr != (UINT)-1)
-  {
-   this->ThreadLst[Idx].SuspCtr++;
-   if(MarkForRemove)this->ThreadLst[Idx].Flags |= SThDesc::tfMarkedForRemove;  // Will be removed after next Resume
-   HANDLE hTh = this->ThreadLst[Idx].hThread; 
-   LeaveCriticalSection(&this->csec);
-//   DBGMSG("Handle=%p",hTh);
-   if(hTh)return NtSuspendThread(hTh, PrevCnt);  // May be this thread
-   return STATUS_SUCCESS;
-  }
- LeaveCriticalSection(&this->csec);
- return STATUS_UNSUCCESSFUL;
-}
-//------------------------------------------------------------------------------------
-NTSTATUS Resume(UINT Idx, PULONG PrevCnt, int DbgContinue=-1) 
-{
- EnterCriticalSection(&this->csec);
- if(!this->IsThreadIndexExist(Idx)){LeaveCriticalSection(&this->csec); return STATUS_NOT_FOUND;}
- if(this->ThreadLst[Idx].SuspCtr > 0)
-  {
-   NTSTATUS Status = STATUS_SUCCESS;
-   this->ThreadLst[Idx].SuspCtr--; 
-   if(DbgContinue >= 0)this->ThreadLst[Idx].DbgCont = DbgContinue;  // ???
-   if(this->ThreadLst[Idx].hThread)Status = NtResumeThread(this->ThreadLst[Idx].hThread, PrevCnt); 
-   if(this->ThreadLst[Idx].Flags & SThDesc::tfMarkedForRemove)this->RemoveThreadFromListByIdx(Idx);  
-   LeaveCriticalSection(&this->csec);   
-   return Status;
-  }
- LeaveCriticalSection(&this->csec);
- return STATUS_UNSUCCESSFUL;
-}
-//------------------------------------------------------------------------------------
-NTSTATUS SuspendAllThreads(DWORD SingleThreadID, int SingleThreadIdx=-1,  bool MarkForRemove=false)   // Suspends only registered threads so ClientThread is safe
-{
- EnterCriticalSection(&this->csec);
+ if(!this->IsThreadIndexExist(Idx))return STATUS_NOT_FOUND;
  NTSTATUS Status = STATUS_UNSUCCESSFUL;
- if(!SingleThreadID && (SingleThreadIdx > 0))
+ if(MarkForRemove)this->ThreadLst[Idx].Flags |= SThDesc::tfMarkedForRemove;  // Will be removed after next Resume
+ if(HANDLE hTh = this->ThreadLst[Idx].hThread)
+  {
+   DBGMSG("Idx=%u, ThID=%u",Idx,this->ThreadLst[Idx].ThreadID);
+   if(IsCurrentThreadDesc(&this->ThreadLst[Idx],NtCurrentTeb()))this->UnLock();   // Unlocks if locked to suspend self
+   if(SuspForAll)
+    {
+     if(this->ThreadLst[Idx].Flags & SThDesc::tfSuspendedForAll){DBGMSG("Already suspended for all - skipping!"); return STATUS_SUCCESS;}
+     this->ThreadLst[Idx].Flags |= SThDesc::tfSuspendedForAll;    // Prevent the thread from suspending again by SuspendAllThreads until ResumeAllThreads is called 
+    }
+   Status = NtSuspendThread(hTh, PrevCnt);
+   DBGMSG("Status=%08X",Status);
+   if(Status == STATUS_THREAD_IS_TERMINATING)this->ReportDeadThreadDbgEvt(Idx);
+  }    
+ return Status;
+}
+//------------------------------------------------------------------------------------
+NTSTATUS Resume(UINT Idx, PULONG PrevCnt=NULL, int DbgContinue=-1)  // TODO: Report_DEAD_THREAD_DEBUG_EVENT if HANDLE in STATUS_THREAD_IS_TERMINATING
+{
+ if(!this->IsThreadIndexExist(Idx))return STATUS_NOT_FOUND;
+ ULONG Prev = 0;
+ NTSTATUS Status = STATUS_UNSUCCESSFUL;
+ if(DbgContinue >= 0)this->ThreadLst[Idx].SetDbgContinueState(DbgContinue);    //   DbgCont = DbgContinue;  // ???
+ if(this->ThreadLst[Idx].hThread)Status = NtResumeThread(this->ThreadLst[Idx].hThread, &Prev); 
+ if((Status || (Prev <= 1)) && (this->ThreadLst[Idx].Flags & SThDesc::tfMarkedForRemove))this->RemoveThreadFromListByIdx(Idx); 
+ if(Status == STATUS_THREAD_IS_TERMINATING)this->ReportDeadThreadDbgEvt(Idx);
+ if(PrevCnt)*PrevCnt = Prev;  
+ return Status;
+}
+//------------------------------------------------------------------------------------
+NTSTATUS SuspendAllThreads(DWORD SingleThreadID, int SingleThreadIdx=-1,  bool MarkForRemove=false, bool SkipSpecified=false)   // Suspends only registered threads so ClientThread is safe    
+{
+ ULONG PrevCnt = 0;
+ if(!SingleThreadID && (SingleThreadIdx >= 0))
   {
    SThDesc* ThDesc = GetThreadDesc(SingleThreadIdx);
    if(ThDesc)SingleThreadID = ThDesc->ThreadID;
@@ -354,26 +362,38 @@ NTSTATUS SuspendAllThreads(DWORD SingleThreadID, int SingleThreadIdx=-1,  bool M
   {
    SThDesc* ThDesc = &this->ThreadLst[ctr];
    if(!ThDesc->hThread)continue;     // The slot is empty
+   if(SkipSpecified && SingleThreadID && (ThDesc->ThreadID == SingleThreadID)){DBGMSG("Skipping: ThID=%u",ThDesc->ThreadID); continue;}
    if(MarkForRemove && SingleThreadID && (ThDesc->ThreadID == SingleThreadID))ThDesc->Flags |= SThDesc::tfMarkedForRemove;  // Will be removed after next Resume
-   if(ThDesc->SuspCtr == (UINT)-1)continue;     // Suspend counter overflow!
-   if(ThDesc->pThTeb == CurrTeb){CurrThDesc = ThDesc; continue;}  // Current thread is in the list - suspend it last
-   ThDesc->SuspCtr++;
-   if(ThDesc->hThread)Status = NtSuspendThread(ThDesc->hThread, NULL);
+   if(ThDesc->Flags & SThDesc::tfSuspendedForAll)continue;    // Already suspended for all
+   if(IsCurrentThreadDesc(ThDesc,CurrTeb)){CurrThDesc = ThDesc; continue;}         // Current thread is in the list - suspend it last  
+   NTSTATUS Status = NtSuspendThread(ThDesc->hThread, &PrevCnt); 
+   ThDesc->Flags  |= SThDesc::tfSuspendedForAll; 
+   DBGMSG("ThID=%u, Status=%08X, SuspLst=%i",ThDesc->ThreadID, Status, PrevCnt);
+   if(Status == STATUS_THREAD_IS_TERMINATING)this->ReportDeadThreadDbgEvt(ctr);
   }
  if(CurrThDesc)
   {
-   CurrThDesc->SuspCtr++;
-   if(CurrThDesc->hThread)Status = NtSuspendThread(CurrThDesc->hThread, NULL);     // This thread
+   HANDLE hThread = CurrThDesc->hThread;
+   DWORD ThID = CurrThDesc->ThreadID;
+   DBGMSG("This Thread: ThID=%u",CurrThDesc->ThreadID);
+   this->UnLock();   // Release BEFORE suspending!
+   if(hThread)   // This thread
+    {
+     NTSTATUS Status = NtSuspendThread(hThread, &PrevCnt); 
+     DBGMSG("CURR: ThID=%u, Status=%08X, SuspLst=%i",ThID, Status, PrevCnt);
+     if(Status == STATUS_THREAD_IS_TERMINATING)
+      {
+       int TIdx = this->FindThreadIdxInList(NULL,ThID); 
+       if(TIdx >= 0)this->ReportDeadThreadDbgEvt(TIdx);
+      }
+    }    
   }
- LeaveCriticalSection(&this->csec);
  return STATUS_SUCCESS;    // Always
 }
 //------------------------------------------------------------------------------------
-NTSTATUS ResumeAllThreads(DWORD SingleThreadID, int SingleThreadIdx=-1, int DbgContinue=-1)
+NTSTATUS ResumeAllThreads(DWORD SingleThreadID, int SingleThreadIdx=-1, int DbgContinue=-1)  
 {
- EnterCriticalSection(&this->csec);
- NTSTATUS Status = STATUS_UNSUCCESSFUL;
- if(!SingleThreadID && (SingleThreadIdx > 0))
+ if(!SingleThreadID && (SingleThreadIdx >= 0))
   {
    SThDesc* ThDesc = GetThreadDesc(SingleThreadIdx);
    if(ThDesc)SingleThreadID = ThDesc->ThreadID;
@@ -383,21 +403,21 @@ NTSTATUS ResumeAllThreads(DWORD SingleThreadID, int SingleThreadIdx=-1, int DbgC
   {
    SThDesc* ThDesc = &this->ThreadLst[ctr];
    if(!ThDesc->hThread)continue;     // The slot is empty
-   if(!ThDesc->SuspCtr)continue;     // Not suspended
-   if((ThDesc->ThreadID == SingleThreadID) && (DbgContinue >= 0))ThDesc->DbgCont = DbgContinue;  // ???
-   ThDesc->SuspCtr--;
-   if(ThDesc->hThread && (ThDesc->pThTeb != CurrTeb))Status = NtResumeThread(ThDesc->hThread, NULL);  // Current thread is already running but suspend count > 0?
-   if(ThDesc->Flags & SThDesc::tfMarkedForRemove)this->RemoveThreadFromListByIdx(ctr);   // Remove ALL marked threads
+   if((ThDesc->ThreadID == SingleThreadID) && (DbgContinue >= 0))ThDesc->SetDbgContinueState(DbgContinue);   //     DbgCont = DbgContinue;  // ???
+   ULONG   PrevCnt = 0;
+   NTSTATUS Status = STATUS_UNSUCCESSFUL;
+   if(!IsCurrentThreadDesc(ThDesc,CurrTeb)){Status = NtResumeThread(ThDesc->hThread, &PrevCnt); ThDesc->Flags &= ~SThDesc::tfSuspendedForAll; DBGMSG("ThID=%u, Status=%08X, SuspLst=%i",ThDesc->ThreadID, Status, PrevCnt);}  // Current thread is already running but suspend count > 0?
+   if((Status || (PrevCnt <= 1)) && (ThDesc->Flags & SThDesc::tfMarkedForRemove))this->RemoveThreadFromListByIdx(ctr);   // Remove ALL marked threads whey they are resumed   // Or Status is something like "TheThreadIsTerminating"
+     else if(Status == STATUS_THREAD_IS_TERMINATING)this->ReportDeadThreadDbgEvt(ctr);
   }
- LeaveCriticalSection(&this->csec);
  return STATUS_SUCCESS;
 }
 //------------------------------------------------------------------------------------
-bool SetContextVal(UINT Idx, PCONTEXT Ctx)
+NTSTATUS SetContextVal(UINT Idx, PCONTEXT Ctx)
 {
- EnterCriticalSection(&this->csec);
- if(!this->IsThreadIndexExist(Idx) || !this->ThreadLst[Idx].pContext){LeaveCriticalSection(&this->csec); return false;}
- PCONTEXT ThCtx = (PCONTEXT)this->ThreadLst[Idx].pContext;
+ if(!this->IsThreadIndexExist(Idx))return STATUS_NOT_FOUND;
+ if(!this->ThreadLst[Idx].pContext)return NtSetContextThread(this->ThreadLst[Idx].hThread, Ctx);    // Not in exception handler
+ PCONTEXT ThCtx = (PCONTEXT)this->ThreadLst[Idx].pContext;       // Exception handler`s Context
  ThCtx->ContextFlags |= Ctx->ContextFlags;   // Merge groups   
 #ifdef _AMD64_ 
  ThCtx->MxCsr = Ctx->MxCsr;        // ?????????????
@@ -500,15 +520,15 @@ bool SetContextVal(UINT Idx, PCONTEXT Ctx)
 
   }
 #endif
- LeaveCriticalSection(&this->csec);
- return true;
+ DBGMSG("Stored locally: %u",Idx);
+ return STATUS_SUCCESS;
 }
 //------------------------------------------------------------------------------------
-bool GetContextVal(UINT Idx, PCONTEXT Ctx)
+NTSTATUS GetContextVal(UINT Idx, PCONTEXT Ctx)
 {
- EnterCriticalSection(&this->csec);
- if(!this->IsThreadIndexExist(Idx) || !this->ThreadLst[Idx].pContext){LeaveCriticalSection(&this->csec); return false;}
- PCONTEXT ThCtx = (PCONTEXT)this->ThreadLst[Idx].pContext;
+ if(!this->IsThreadIndexExist(Idx))return STATUS_NOT_FOUND; 
+ if(!this->ThreadLst[Idx].pContext)return NtGetContextThread(this->ThreadLst[Idx].hThread, Ctx);     // Not in exception handler
+ PCONTEXT ThCtx = (PCONTEXT)this->ThreadLst[Idx].pContext;      // Exception handler`s Context
  Ctx->ContextFlags &= ThCtx->ContextFlags;      // Take only present groups
 #ifdef _AMD64_   
  Ctx->MxCsr = ThCtx->MxCsr;        // ?????????????
@@ -611,39 +631,31 @@ bool GetContextVal(UINT Idx, PCONTEXT Ctx)
 
   }
 #endif
- LeaveCriticalSection(&this->csec);
- return true;
+ DBGMSG("Read locally: %u",Idx);
+ return STATUS_SUCCESS;
 }
 //------------------------------------------------------------------------------------
 bool IsSingleStepping(UINT Idx)
 {
- EnterCriticalSection(&this->csec);
- if(!this->IsThreadIndexExist(Idx)){LeaveCriticalSection(&this->csec); return false;}
- SThDesc* ThDes = &this->ThreadLst[Idx];
- bool res = ThDes->TFlag;
- LeaveCriticalSection(&this->csec);
- return res;
+// if(!this->IsThreadIndexExist(Idx))return false;   // Used only by HandleException anyway
+ return this->ThreadLst[Idx].SyncGetFlags(SThDesc::tfTraceFlg); 
 }
 //------------------------------------------------------------------------------------
 bool UpdTraceFlag(UINT Idx, PCONTEXT Ctx)  
 {
- EnterCriticalSection(&this->csec);
- if(!(Ctx->ContextFlags & CONTEXT_CONTROL) || !this->IsThreadIndexExist(Idx)){LeaveCriticalSection(&this->csec); return false;}
- SThDesc* ThDes = &this->ThreadLst[Idx];
- ThDes->TFlag = (Ctx->EFlags & 0x0100);    // Trap flag mask
- LeaveCriticalSection(&this->csec);
+ if(!(Ctx->ContextFlags & CONTEXT_CONTROL) || !this->IsThreadIndexExist(Idx))return false;
+ this->ThreadLst[Idx].SetTraceFlagState(Ctx->EFlags & SThDesc::tfTraceFlagMsk);       // Trap flag mask
  return true;
 }
 //------------------------------------------------------------------------------------
 bool UpdHardwareBp(UINT Idx, PCONTEXT Ctx)  
 {
- EnterCriticalSection(&this->csec);
- if(!(Ctx->ContextFlags & CONTEXT_DEBUG_REGISTERS) || !this->IsThreadIndexExist(Idx)){LeaveCriticalSection(&this->csec); return false;}
+ if(!(Ctx->ContextFlags & CONTEXT_DEBUG_REGISTERS) || !this->IsThreadIndexExist(Idx))return false;
  SThDesc* ThDes = &this->ThreadLst[Idx];
- memset(&ThDes->HwBpLst,0,sizeof(ThDes->HwBpLst));  
+ memset((void*)&ThDes->HwBpLst,0,sizeof(ThDes->HwBpLst));  
  for(UINT ctr=0;ctr < 4;ctr++)       // Nothing special for x64?
   {
-   if(!(Ctx->Dr7 & (1 << (ctr*2))))continue;       // Skip any not enabled
+   if(!(Ctx->Dr7 & (1ULL << (ctr*2))))continue;       // Skip any not enabled
    BYTE LCod = (Ctx->Dr7 >> (10+(ctr*4))) & 3;     // Breakpoint size
    if(LCod & 2)ThDes->HwBpLst[ctr].Size = (LCod & 1)?(4):(8);
      else ThDes->HwBpLst[ctr].Size = LCod+1;
@@ -663,28 +675,24 @@ bool UpdHardwareBp(UINT Idx, PCONTEXT Ctx)
       break;
     }
   }
- LeaveCriticalSection(&this->csec);
  return true;
 }
 //------------------------------------------------------------------------------------
 bool IsHardwareBpHit(UINT Idx, PVOID Addr)
 {
- EnterCriticalSection(&this->csec);
- if(!this->IsThreadIndexExist(Idx)){LeaveCriticalSection(&this->csec); return false;}
+// if(!this->IsThreadIndexExist(Idx))return false;   // Used only by HandleException anyway
  SThDesc* ThDes = &this->ThreadLst[Idx];
  for(UINT ctr=0;ctr < 4;ctr++)       // Nothing special for x64?
   {
    if(!ThDes->HwBpLst[ctr].Addr)continue;
-   if(((PBYTE)Addr >= ThDes->HwBpLst[ctr].Addr)&&((PBYTE)Addr < &ThDes->HwBpLst[ctr].Addr[ThDes->HwBpLst[ctr].Size])){LeaveCriticalSection(&this->csec); return true;}    
+   if(((PBYTE)Addr >= ThDes->HwBpLst[ctr].Addr)&&((PBYTE)Addr < &ThDes->HwBpLst[ctr].Addr[ThDes->HwBpLst[ctr].Size]))return true;   
   }
- LeaveCriticalSection(&this->csec);
  return false;
 }
 //------------------------------------------------------------------------------------
 bool ReadDbgContext(UINT Idx, PCONTEXT Ctx)    // Remember DRx changes, made by an application 
 {
- EnterCriticalSection(&this->csec);
- if(!this->IsThreadIndexExist(Idx)){LeaveCriticalSection(&this->csec); return false;}
+ if(!this->IsThreadIndexExist(Idx))return false;
  SThDesc* ThDes = &this->ThreadLst[Idx];
  if(Ctx->ContextFlags & CONTEXT_DEBUG_REGISTERS)   // Only if present in Src
   {
@@ -696,14 +704,12 @@ bool ReadDbgContext(UINT Idx, PCONTEXT Ctx)    // Remember DRx changes, made by 
    ThDes->DbgCtx.Dr7 = Ctx->Dr7;
   }
  if(Ctx->ContextFlags & CONTEXT_CONTROL)ThDes->DbgCtx.TrFlg = (Ctx->EFlags & 0x0100);    // ResumeFlag?
- LeaveCriticalSection(&this->csec);
  return false;
 }
 //------------------------------------------------------------------------------------
 bool WriteDbgContext(UINT Idx, PCONTEXT Ctx)   // Restore DRx state to show it to an application
 {
- EnterCriticalSection(&this->csec);
- if(!this->IsThreadIndexExist(Idx)){LeaveCriticalSection(&this->csec); return false;}
+ if(!this->IsThreadIndexExist(Idx))return false;
  SThDesc* ThDes = &this->ThreadLst[Idx];
  if(Ctx->ContextFlags & CONTEXT_DEBUG_REGISTERS)   // Only if required by dest
   {
@@ -715,8 +721,23 @@ bool WriteDbgContext(UINT Idx, PCONTEXT Ctx)   // Restore DRx state to show it t
    Ctx->Dr7 = ThDes->DbgCtx.Dr7;
   }
  if(Ctx->ContextFlags & CONTEXT_CONTROL)Ctx->EFlags = (Ctx->EFlags & ~0x0100)|((UINT)ThDes->DbgCtx.TrFlg << 8);  
- LeaveCriticalSection(&this->csec);
  return false;
+}
+//------------------------------------------------------------------------------------
+int ReportDeadThreadDbgEvt(int ThIndex) // Requires Lock  // TEB is already deallocated. Thread`s handle is in STATUS_THREAD_IS_TERMINATING state  // Somehow a thread may avoid NtTerminateThread and die
+{ 
+ SThDesc* Desc = this->GetThreadDesc(ThIndex); 
+ if(Desc->Flags & SThDesc::tfMarkedForRemove)return 0;    // Already removing
+ this->DbgEventCnt++;
+ DbgEvtEx* evt = this->PushDbgEvent();
+ evt->dwDebugEventCode = EXIT_THREAD_DEBUG_EVENT;
+ evt->dwProcessId = NtCurrentProcessId();    // this->CurProcID; 
+ evt->dwThreadId  = Desc->ThreadID;       // Do not access its TEB in case it is already deallocated
+ evt->PathSize    = 0;
+ evt->u.ExitThread.dwExitCode = 0;
+ Desc->Flags |= SThDesc::tfMarkedForRemove;
+ DBGMSG("PushDbgEvt: ThreadID=%08X(%u), ExitCode=%08X",Desc->ThreadID,Desc->ThreadID,evt->u.ExitThread.dwExitCode);
+ return 0; 
 }
 //------------------------------------------------------------------------------------
 
@@ -724,29 +745,29 @@ bool WriteDbgContext(UINT Idx, PCONTEXT Ctx)   // Restore DRx state to show it t
 //====================================================================================
 class CSwBpList             // TODO: PAGE breakpoints
 {
- CRITICAL_SECTION csec;
- CGrowArr<PVOID> SwBpLst;
+ SHM::CCritSectEx<> csec;      
+ SHM::CGrowArr<PVOID, 32> SwBpLst;
 
 public:
 //------------------------------------------------------------------------------------
-CSwBpList(void): SwBpLst(32)
+CSwBpList(void)
 {
- InitializeCriticalSection(&this->csec);
+
 }
 //------------------------------------------------------------------------------------
 ~CSwBpList()
 {
- DeleteCriticalSection(&this->csec);
+
 }
 //------------------------------------------------------------------------------------
 int AddBP(PVOID Addr)
 {
- EnterCriticalSection(&this->csec);
+ this->csec.Lock(); 
  int BpIdx = -1;
  for(UINT ctr=0,total=this->SwBpLst.Count();ctr < total;ctr++)
   {
    PVOID Val = this->SwBpLst[ctr];
-   if(Val == Addr){LeaveCriticalSection(&this->csec); return ctr;}   // Already in list
+   if(Val == Addr){this->csec.Unlock(); return ctr;}   // Already in list
    if(!Val)BpIdx = ctr;
   }
  if(BpIdx < 0)
@@ -755,18 +776,18 @@ int AddBP(PVOID Addr)
    this->SwBpLst.Add(NULL);
   }
  this->SwBpLst[BpIdx] = Addr;
- LeaveCriticalSection(&this->csec);
+ this->csec.Unlock();
  DBGMSG("Adding SwBP: %u",BpIdx);
  return BpIdx;
 }
 //------------------------------------------------------------------------------------
 int DelBP(PVOID Addr)
 {
- EnterCriticalSection(&this->csec);
+ this->csec.Lock(); 
  int BpIdx = this->GetBpIdxForAddr(Addr);
- if(BpIdx < 0){LeaveCriticalSection(&this->csec); return -1;}
- this->SwBpLst[BpIdx] = NULL;      /////////////     this->SwBpLst.Remove(BpIdx);  //  [idx] = NULL;
- LeaveCriticalSection(&this->csec);
+ if(BpIdx < 0){this->csec.Unlock(); return -1;}
+ this->SwBpLst[BpIdx] = NULL;  
+ this->csec.Unlock();
  DBGMSG("Removing SwBP: %u",BpIdx);
  return BpIdx;
 }
@@ -774,109 +795,19 @@ int DelBP(PVOID Addr)
 int IsHitBP(PVOID Addr){return (this->GetBpIdxForAddr(Addr) >= 0);}
 int GetBpIdxForAddr(PVOID Addr)
 {
- EnterCriticalSection(&this->csec);
+ this->csec.Lock(); 
  for(UINT ctr=0,total=this->SwBpLst.Count();ctr < total;ctr++)
   {
    PVOID Cadr = this->SwBpLst[ctr];
-   if(Cadr && (Cadr == Addr)){LeaveCriticalSection(&this->csec); return ctr;}
+   if(Cadr && (Cadr == Addr)){this->csec.Unlock(); return ctr;}
   }
- LeaveCriticalSection(&this->csec);
+ this->csec.Unlock();
  return -1;
 }
 //------------------------------------------------------------------------------------
 
 };
-//====================================================================================
-struct SNtDll    // Only for a simple system service redirected functions 
-{
- PBYTE   pLibMem;
- HMODULE hNtDll;
- decltype(::NtQueryInformationThread)* NtQueryInformationThread;
- decltype(::NtQueryInformationProcess)* NtQueryInformationProcess;
- decltype(::NtQueryVirtualMemory)* NtQueryVirtualMemory;
- decltype(::NtGetContextThread)* NtGetContextThread;
- decltype(::NtSetContextThread)* NtSetContextThread;
- decltype(::NtReadVirtualMemory)* NtReadVirtualMemory;
- decltype(::NtWriteVirtualMemory)* NtWriteVirtualMemory;
- decltype(::NtProtectVirtualMemory)* NtProtectVirtualMemory;
- decltype(::NtFlushVirtualMemory)* NtFlushVirtualMemory;
- decltype(::NtTerminateThread)* NtTerminateThread;
- decltype(::NtSuspendThread)* NtSuspendThread;
- decltype(::NtResumeThread)* NtResumeThread;
- decltype(::NtQueryObject)* NtQueryObject;
 
-//------------------------------------------------------------------------------------
-SNtDll(void)       // NOTE: Better call this before hooking NtMapViewOfSection
-{
- LPSTR LibPath[MAX_PATH];
- this->hNtDll = GetModuleHandleA("ntdll.dll");
- if(!this->hNtDll || !GetModuleFileNameA(this->hNtDll,(LPSTR)&LibPath,sizeof(LibPath)))return;    
- HANDLE hFile = CreateFileA((LPSTR)&LibPath,GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);   // TODO: Receive this from debugger to avoid CreateFile("ntdll.dll") detection
- if(hFile == INVALID_HANDLE_VALUE)return;
- DWORD Result   = 0;
- DWORD FileSize = GetFileSize(hFile,NULL);
- this->pLibMem  = (PBYTE)VirtualAlloc(NULL,FileSize,MEM_COMMIT,PAGE_EXECUTE_READWRITE);  
- if(FileSize)ReadFile(hFile,this->pLibMem,FileSize,&Result,NULL);
- CloseHandle(hFile); 
- TFixRelocations<PECURRENT>(this->pLibMem,true); 
-
- *(PVOID*)&this->NtQueryObject             = TGetProcedureAddress<PECURRENT,true>(this->pLibMem, "NtQueryObject"); 
- *(PVOID*)&this->NtResumeThread            = TGetProcedureAddress<PECURRENT,true>(this->pLibMem, "NtResumeThread"); 
- *(PVOID*)&this->NtSuspendThread           = TGetProcedureAddress<PECURRENT,true>(this->pLibMem, "NtSuspendThread"); 
- *(PVOID*)&this->NtTerminateThread         = TGetProcedureAddress<PECURRENT,true>(this->pLibMem, "NtTerminateThread"); 
- *(PVOID*)&this->NtFlushVirtualMemory      = TGetProcedureAddress<PECURRENT,true>(this->pLibMem, "NtFlushVirtualMemory"); 
- *(PVOID*)&this->NtProtectVirtualMemory    = TGetProcedureAddress<PECURRENT,true>(this->pLibMem, "NtProtectVirtualMemory"); 
- *(PVOID*)&this->NtWriteVirtualMemory      = TGetProcedureAddress<PECURRENT,true>(this->pLibMem, "NtWriteVirtualMemory"); 
- *(PVOID*)&this->NtReadVirtualMemory       = TGetProcedureAddress<PECURRENT,true>(this->pLibMem, "NtReadVirtualMemory"); 
- *(PVOID*)&this->NtSetContextThread        = TGetProcedureAddress<PECURRENT,true>(this->pLibMem, "NtSetContextThread"); 
- *(PVOID*)&this->NtGetContextThread        = TGetProcedureAddress<PECURRENT,true>(this->pLibMem, "NtGetContextThread"); 
- *(PVOID*)&this->NtQueryVirtualMemory      = TGetProcedureAddress<PECURRENT,true>(this->pLibMem, "NtQueryVirtualMemory"); 
- *(PVOID*)&this->NtQueryInformationProcess = TGetProcedureAddress<PECURRENT,true>(this->pLibMem, "NtQueryInformationProcess"); 
- *(PVOID*)&this->NtQueryInformationThread  = TGetProcedureAddress<PECURRENT,true>(this->pLibMem, "NtQueryInformationThread"); 
-}
-//------------------------------------------------------------------------------------
-~SNtDll()     
-{
- PVOID Ptr = this->pLibMem;
- memset(this,0,sizeof(SNtDll));
- if(Ptr)VirtualFree(Ptr,0,MEM_RELEASE);
-}
-//------------------------------------------------------------------------------------
-/*
-RtlUserThreadStart (Callback)    // CREATE_SUSPENDED thread`s IP 
-  x32  x64
-  EAX  RCX = ThreadProc
-  EBX  RDX = ThreadParam
-*/
-static bool ChangeNewSuspThProcAddr(HANDLE hThread, PVOID NewThProc, PVOID* Param)
-{
- CONTEXT ctx;
- ctx.ContextFlags = CONTEXT_INTEGER;   // CONTEXT_CONTROL - no check if IP is at RtlUserThreadStart
- if(!GetThreadContext(hThread, &ctx)){LOGMSG("Failed to get CONTEXT"); return false;}
-#ifdef _AMD64_ 
- if(NewThProc)ctx.Rcx = (DWORD64)NewThProc;
- if(Param)
-  {
-   DWORD64 Prv = ctx.Rdx;
-   ctx.Rdx = (DWORD64)*Param;
-   *Param  = (PVOID)Prv;
-  }
-#else
- if(NewThProc)ctx.Eax = (DWORD)NewThProc;
- if(Param)
-  {
-   DWORD Prv = ctx.Ebx;
-   ctx.Ebx = (DWORD)*Param;
-   *Param  = (PVOID)Prv;
-  }
-#endif
- if(!SetThreadContext(hThread, &ctx)){LOGMSG("Failed to set CONTEXT"); return false;}
- LOGMSG("New ThProc: %p", NewThProc);
- return true;
-}
-//------------------------------------------------------------------------------------
-
-};
 //====================================================================================
 //
 //
@@ -885,58 +816,101 @@ static bool ChangeNewSuspThProcAddr(HANDLE hThread, PVOID NewThProc, PVOID* Para
 class CDbgClient: public SHM::CMessageIPC        
 {
  bool    BreakWrk;
+ bool    InDbgEvent;
+ DWORD   ExcludedThID;
+ DWORD   DbgBrkThID;
  DWORD   ClientThID;
  DWORD   MainThID;
  DWORD   CurProcID;    
- HMODULE hClientDll;
+ PVOID   hClientDll;
  HANDLE  hIPCThread;
  UINT    IPCSize;
  UINT    UrsOpts;
- SNtDll  NtDll;         // Used to avoid a target application`s hooks
  CSwBpList   BpList;
  CThreadList ThList;
 
 //------------------------------------------------------------------------------------
-_declspec(noinline) static void DoDbgBreak(PVOID This){__debugbreak();}       // <<<<<<<<<<<<<<<< Very fishy!!!!!!!!!!!!!!!!!!!!!
+_declspec(noinline) static void DoDbgBreak(PVOID This){__debugbreak();}       // Makes it harder to track 'int 3'?
 static bool IsAddrInDbgBreak(PVOID Addr){return (((PBYTE)Addr >= (PBYTE)&DoDbgBreak)&&((PBYTE)Addr < ((PBYTE)&DoDbgBreak + 64)));} 
-static DWORD WINAPI DbgBreakThread(LPVOID lpThreadParameter)
-{
- CDbgClient* DbgIPC = (CDbgClient*)lpThreadParameter;
- DoDbgBreak(DbgIPC);  // x64Dbg will continue normally from this  // Any DebugBreak functions may be tracked   
- return 0;
+static void _fastcall DbgBreakThread(PVOID ThreadParameter) 
+{           
+ CDbgClient* DbgIPC = (CDbgClient*)ThreadParameter;
+ DoDbgBreak(DbgIPC);  // x64Dbg will continue normally from this  // Any DebugBreak functions may be tracked  
+ NtTerminateThread(NtCurrentThread, 0);
 }
 //------------------------------------------------------------------------------------
-int DoSuspendThreads(DWORD SingleThreadID, int SingleThreadIdx=-1,  bool MarkForRemove=false, bool SingleOnly=false)   // Suspends only registered threads so ClientThread is safe
+PTEB FindModulesAndTEBs(TEB* CurTeb, SHM::CGrowArrImpl<PBYTE>* ModArr, SHM::CGrowArrImpl<PTEB>* TebArr, int* MainThreadIndex=NULL)
 {
- if(this->EvtSuspAllTh && !SingleOnly)return (int)this->ThList.SuspendAllThreads(SingleThreadID, SingleThreadIdx=-1, MarkForRemove) - 1;
- if(SingleThreadIdx < 0)SingleThreadIdx = this->ThList.FindThreadIdxInList(nullptr, SingleThreadID);
- if(SingleThreadIdx < 0){DBGMSG("Thread ID not found: ThId=%u",SingleThreadID); return -2;}
- return this->ThList.Suspend(SingleThreadIdx, NULL, MarkForRemove);
-}
-//------------------------------------------------------------------------------------
-int DoResumeThreads(DWORD SingleThreadID, int SingleThreadIdx=-1, int DbgContinue=-1, bool SingleOnly=false)
-{
- if(this->EvtSuspAllTh && !SingleOnly)return (int)this->ThList.ResumeAllThreads(SingleThreadID, SingleThreadIdx, DbgContinue) - 1;
- if(SingleThreadIdx < 0)SingleThreadIdx = this->ThList.FindThreadIdxInList(nullptr, SingleThreadID);
- if(SingleThreadIdx < 0){DBGMSG("Thread ID not found: ThId=%u",SingleThreadID); return -2;}
- return this->ThList.Resume(SingleThreadIdx, NULL, DbgContinue);
+ MEMORY_BASIC_INFORMATION meminfo;
+ SIZE_T RetLen = 0;
+ SIZE_T MemoryInformationLength = sizeof(MEMORY_BASIC_INFORMATION);      
+ PBYTE  BaseAddress = NULL;
+ PVOID  LastABase = NULL;
+ PTEB   MainThTeb = NULL;
+ long   MainThIdx = -1;
+ LARGE_INTEGER MinCrtTime;
+ LARGE_INTEGER CurrCrtTime;
+ DBGMSG("Current: PEB=%p, TEB=%p",CurTeb->ProcessEnvironmentBlock,CurTeb);
+ this->ThList.Lock();
+ MinCrtTime.QuadPart = -1i64;   
+ for(;!NtQueryVirtualMemory(NtCurrentProcess,BaseAddress,MemoryBasicInformation,&meminfo,MemoryInformationLength,&RetLen); BaseAddress += meminfo.RegionSize)
+  {
+//   DBGMSG("BLK: Addr=%p, Base=%p, ABase=%p, Size=%08X, Type=%08X, State=%08X, Protect=%08X, AProtect=%08X",BaseAddress,meminfo.BaseAddress,meminfo.AllocationBase,meminfo.RegionSize,meminfo.Type,meminfo.State,meminfo.Protect,meminfo.AllocationProtect);
+   if((meminfo.Type == MEM_IMAGE) && (meminfo.State == MEM_COMMIT))
+    {
+     if(LastABase == meminfo.AllocationBase)continue;
+     LastABase = meminfo.AllocationBase; 
+     if(IsValidPEHeader(BaseAddress))
+      {
+       DBGMSG("Found PE image at %p",BaseAddress);
+       *ModArr->Add(NULL) = BaseAddress;
+      }
+    }
+   else if((meminfo.Type == MEM_PRIVATE) && (meminfo.State == MEM_COMMIT) && (meminfo.Protect == meminfo.AllocationProtect) && (meminfo.Protect == PAGE_READWRITE) && (meminfo.RegionSize >= 0x1000) && (meminfo.RegionSize < 0x100000))   // WinXP TEB >= 0x2000 ? // Win7 x32 TEB Blk is 0x1000  // On latest Win10 many TEBs in same big block as PEB
+    {
+     PBYTE DataPtr = (PBYTE)BaseAddress;
+     for(UINT Offset=0;Offset < meminfo.RegionSize;Offset+=0x1000)   // Find all TEBs in the block
+      {
+       TEB* MayBeTEB = (TEB*)&DataPtr[Offset];
+       if((MayBeTEB->ProcessEnvironmentBlock == CurTeb->ProcessEnvironmentBlock) && (MayBeTEB->ClientId.UniqueProcess == CurTeb->ClientId.UniqueProcess))       //    && (MayBeTEB->CurrentLocale == CurTeb->CurrentLocale))
+        {
+         DBGMSG("Found TEB at %p, %u",MayBeTEB, (UINT)MayBeTEB->ClientId.UniqueThread);
+         if((MayBeTEB != CurTeb) && ((UINT)MayBeTEB->ClientId.UniqueThread != this->ExcludedThID))  // Assuming that CurTeb belongs to Client Thread
+          {
+           int ThIdx = this->ThList.AddThreadToList(MayBeTEB, 0, NULL, &CurrCrtTime);
+           if(ThIdx >= 0)
+            {
+             *TebArr->Add(NULL) = MayBeTEB;    // Includes ClientThread              
+//             DBGMSG("MainThTeb=%p, CurrCrtTime=%016llX, MinCrtTime=%016llX",MainThTeb, CurrCrtTime.QuadPart, MinCrtTime.QuadPart);
+             if((UINT64)CurrCrtTime.QuadPart < (UINT64)MinCrtTime.QuadPart){MainThTeb = MayBeTEB; MainThIdx = ThIdx; MinCrtTime.QuadPart = CurrCrtTime.QuadPart;}    // Not reliable!
+            }
+          }
+           else {DBGMSG("Skipping the excluded thread: %u", (UINT)MayBeTEB->ClientId.UniqueThread);}
+        }
+      }
+    }       
+  }
+ if(MainThreadIndex)*MainThreadIndex = MainThIdx; 
+ this->ThList.UnLock();
+ return MainThTeb;
 }
 //------------------------------------------------------------------------------------
 // NOTE: Buffer is locked by this thread in message enumeration
 //
-int _stdcall ProcessRequestDbg(SMsgHdr* Req)
+int ProcessRequestDbg(SMsgHdr* Req)
 {
- static UINT LastMsg = 0;
- DBGMSG("MsgID=%u, MsgSeqID=%u",Req->MsgID, Req->GetBlk()->MsgSeqID);
- if(Req->GetBlk()->MsgSeqID <= LastMsg){ DBGMSG("HelpME!"); }   // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
- LastMsg = Req->GetBlk()->MsgSeqID;
+ SHM::CArgPack<2048> api;                     // '__chkstk' is disabled with '/Gs100000000' // -Gs9999999
+ SHM::CArgPack<2048> apo;                     // Had to put it here to save some stack space (Because variables for each scope are allocated at beginning of the function)    
+
+ DBGMSG("ReqAddr=%p, MsgID=%u, MsgSeqID=%u",Req,Req->MsgID, Req->GetBlk()->MsgSeqID);
+// static UINT LastMsg = 0;
+// if(Req->GetBlk()->MsgSeqID <= LastMsg){ DBGMSG("Trouble!"); }   // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+// LastMsg = Req->GetBlk()->MsgSeqID;
 
  switch(Req->MsgID)
   {   
    case miQueryInformationProcess:
     {
-     SHM::CArgPack<> api;
-     SHM::CArgPack<1024> apo;
      HANDLE ProcessHandle; 
      PROCESSINFOCLASS ProcessInformationClass; 
      ULONG ProcessInformationLength; 
@@ -948,39 +922,41 @@ int _stdcall ProcessRequestDbg(SMsgHdr* Req)
      api.PopArg(ProcessInformationClass);
      api.PopArg(ProcessInformationLength);  
      if(ProcessHandle != UintToFakeHandle(this->CurProcID)){DBGMSG("Process HANDLE mismatch: %08X:%08X",ProcessHandle,UintToFakeHandle(this->CurProcID)); apo.PushBlk(ProcessInformationLength);}                                                                           
-       else Status = this->NtDll.NtQueryInformationProcess(NtCurrentProcess,ProcessInformationClass,apo.PushBlk(ProcessInformationLength),ProcessInformationLength,&RetLen);   // ULONG or SIZE_T ?
+       else Status = NtQueryInformationProcess(NtCurrentProcess,ProcessInformationClass,apo.PushBlk(ProcessInformationLength),ProcessInformationLength,&RetLen);   // ULONG or SIZE_T ?
      apo.PushArg(RetLen);
      apo.PushArg(Status);
-     DBGMSG("miQueryInformationProcess PutMsg: Status=%08X, Size=%u",Status,apo.GetLen());
+     DBGMSG("miQueryInformationProcess PutMsg: InfoClass=%u, Status=%08X, Size=%u",ProcessInformationClass,Status,apo.GetLen());
      this->PutMsg(mtDbgRsp, miQueryInformationProcess, Req->Sequence, apo.GetPtr(), apo.GetLen());      
     }
    break;
    case miQueryInformationThread:
     {
-     SHM::CArgPack<> api;
-     SHM::CArgPack<1024> apo;
      THREADINFOCLASS ThreadInformationClass; 
      ULONG ThreadInformationLength; 
      ULONG RetLen = 0;        
      HRESULT Status = STATUS_UNSUCCESSFUL;
 
      api.Assign((PBYTE)&Req->Data,Req->DataSize);
-     UINT    ThIdx  = FakeHandleToUint(api.PopArg<HANDLE>());
+     this->ThList.Lock();
+     UINT   ThIdx        = FakeHandleToUint(api.PopArg<HANDLE>());
      HANDLE ThreadHandle = this->ThList.GetHandleByIndex(ThIdx);
+     this->ThList.UnLock();    // NOTE: ThreadHandle may become invalid
      api.PopArg(ThreadInformationClass);
-     api.PopArg(ThreadInformationLength);                                           
-     if(!ThreadHandle){DBGMSG("Thread handle not found: ThIdx=%i",ThIdx); apo.PushBlk(ThreadInformationLength);}
-       else Status = this->NtDll.NtQueryInformationThread(ThreadHandle,ThreadInformationClass,apo.PushBlk(ThreadInformationLength),ThreadInformationLength,&RetLen);    // ULONG or SIZE_T ?
+     api.PopArg(ThreadInformationLength); 
+     if(ThreadHandle)
+      {
+       Status = NtQueryInformationThread(ThreadHandle,ThreadInformationClass,apo.PushBlk(ThreadInformationLength),ThreadInformationLength,&RetLen);    // ULONG or SIZE_T ?
+       if(Status == STATUS_THREAD_IS_TERMINATING)this->ThList.ReportDeadThreadDbgEvt(ThIdx);
+      }
+       else {DBGMSG("Thread handle not found: ThIdx=%i",ThIdx); apo.PushBlk(ThreadInformationLength);}
      apo.PushArg(RetLen);
      apo.PushArg(Status);
-     DBGMSG("miQueryInformationThread PutMsg: Status=%08X, Size=%u",Status,apo.GetLen());
+     DBGMSG("miQueryInformationThread PutMsg: InfoClass=%u, Status=%08X, Size=%u",ThreadInformationClass,Status,apo.GetLen());
      this->PutMsg(mtDbgRsp, miQueryInformationThread, Req->Sequence, apo.GetPtr(), apo.GetLen());      
     }
    break;     
    case miQueryVirtualMemory:     // NOTE: x64Dbg will call this for every memory block and avery request/response will move forward in the buffer (In a small buffer some old messages(Thread reports) will be lost)
     {
-     SHM::CArgPack<> api;
-     SHM::CArgPack<1024> apo;
      PVOID BaseAddress;
      HANDLE ProcessHandle; 
      MEMORY_INFORMATION_CLASS MemoryInformationClass; 
@@ -994,7 +970,7 @@ int _stdcall ProcessRequestDbg(SMsgHdr* Req)
      api.PopArg(MemoryInformationClass);
      api.PopArg(MemoryInformationLength);  
      if(ProcessHandle != UintToFakeHandle(this->CurProcID)){DBGMSG("Process HANDLE mismatch: %08X:%08X",ProcessHandle,UintToFakeHandle(this->CurProcID)); apo.PushBlk(MemoryInformationLength);}                                                                              
-       else Status = this->NtDll.NtQueryVirtualMemory(NtCurrentProcess,BaseAddress,MemoryInformationClass,apo.PushBlk(MemoryInformationLength),MemoryInformationLength,&RetLen);
+       else Status = NtQueryVirtualMemory(NtCurrentProcess,BaseAddress,MemoryInformationClass,apo.PushBlk(MemoryInformationLength),MemoryInformationLength,&RetLen);
      apo.PushArg(RetLen);
      apo.PushArg(Status);
 //     DBGMSG("miQueryVirtualMemory PutMsg: Status=%08X, InfoClass=%u, BaseAddress=%p, Size=%u",Status,MemoryInformationClass,BaseAddress,apo.GetLen()); 
@@ -1003,68 +979,45 @@ int _stdcall ProcessRequestDbg(SMsgHdr* Req)
    break;
    case miDebugActiveProcess:
     {
-     SHM::CArgPack<> api;
-     SHM::CArgPack<> apo;
      BOOL  Reslt = TRUE;
      DWORD dwProcessId = 0;
-     HRESULT Status = STATUS_UNSUCCESSFUL;
-
      api.Assign((PBYTE)&Req->Data,Req->DataSize);
      api.PopArg(dwProcessId);
      if(dwProcessId != this->CurProcID){DBGMSG("Process ID mismatch: %08X:%08X",dwProcessId,this->CurProcID); return -1;}  // Allow to fail here?
+
+     SHM::CGrowArr<PTEB,  128> TebArr;    // NOTE: Stack arrays reserved on stack forever
+     SHM::CGrowArr<PBYTE, 128> ModArr;    // 2048
+     int MainThIdx   = -1;
+     PTEB CurTeb     = NtCurrentTeb();     // ThreadID is DbgIPC->ClientThID and should not be reported to a debugger
+     PTEB MainThTeb  = this->FindModulesAndTEBs(CurTeb, &ModArr, &TebArr, &MainThIdx);
+     DBGMSG("MainThTeb: %p",MainThTeb);    // May happen to be NULL :)
+     this->MainThID  = (UINT)MainThTeb->ClientId.UniqueThread;  // MainThTeb should be present!!!   // Report this only in CREATE_PROCESS_DEBUG_EVENT    // Not guranteed to return a real main(first) thread
+     HANDLE hPHandle = UintToFakeHandle(this->CurProcID);
+     apo.PushArg(hPHandle);
+     HANDLE hTHandle = UintToFakeHandle(MainThIdx);
+     apo.PushArg(hTHandle);
+     apo.PushArg(MainThTeb);
+     apo.PushArg(this->MainThID);
      apo.PushArg(Reslt);
-     DBGMSG("miDebugActiveProcess PutMsg: Status=%08X, Size=%u",apo.GetLen());
-     this->PutMsg(mtDbgRsp, miDebugActiveProcess, Req->Sequence, apo.GetPtr(), apo.GetLen());   // <<<<<<<<< Response not received!  
+     DBGMSG("miDebugActiveProcess PutMsg: hPHandle=%08X, hTHandle=%08X, MainThId=%u, Size=%u",hPHandle,hTHandle,this->MainThID,apo.GetLen());
+     this->PutMsg(mtDbgRsp, miDebugActiveProcess, Req->Sequence, apo.GetPtr(), apo.GetLen());  
 
-     CGrowArr<TEB*>  TebArr(32);
-     CGrowArr<PBYTE> ModArr(64);
-     MEMORY_BASIC_INFORMATION meminfo;
-     SIZE_T RetLen = 0;
-     SIZE_T MemoryInformationLength = sizeof(MEMORY_BASIC_INFORMATION);      
-     PBYTE BaseAddress = NULL;
-     PVOID LastABase = NULL;
-     TEB* CurTeb = NtCurrentTeb();      // ThreadID is DbgIPC->ClientThID and should not be reported to a debugger
-     TEB* MainThTeb = NULL;
-     for(;!this->NtDll.NtQueryVirtualMemory(NtCurrentProcess,BaseAddress,MemoryBasicInformation,&meminfo,MemoryInformationLength,&RetLen); BaseAddress += meminfo.RegionSize)
-      {
-       if(LastABase == meminfo.AllocationBase)continue;
-       LastABase = meminfo.AllocationBase; 
-       if((meminfo.Type == MEM_IMAGE) && (meminfo.State == MEM_COMMIT) && IsValidPEHeader(BaseAddress))
-        {
-         DBGMSG("Found PE image at %p",BaseAddress);
-         *ModArr.Add(NULL) = BaseAddress;
-        }
-       else if((meminfo.Type == MEM_PRIVATE) && (meminfo.State == MEM_COMMIT) && (meminfo.Protect == meminfo.AllocationProtect) && (meminfo.Protect == PAGE_READWRITE) && (meminfo.RegionSize > 0x1000) && (meminfo.RegionSize < 0x4000))   // WinXP TEB >= 0x2000 ?
-        {
-         TEB* MayBeTEB = (TEB*)BaseAddress;
-         if((MayBeTEB != CurTeb) && (MayBeTEB->ProcessEnvironmentBlock == CurTeb->ProcessEnvironmentBlock) && (MayBeTEB->CurrentLocale == CurTeb->CurrentLocale))
-          {
-           DBGMSG("Found TEB at %p",BaseAddress);
-           *TebArr.Add(NULL) = MayBeTEB;    // Includes ClientThread
-           if(MainThTeb)   // TODO: Request the thread creation time and find a first thread?     // Add and suspend threads here?
-            {
-
-            }
-             else if((UINT)MayBeTEB->ClientId.UniqueThread != this->ClientThID)MainThTeb = MayBeTEB;    // INCORRECT: Need sorting by creation time!
-          }
-        }       
-      }
-     this->MainThID = (UINT)MainThTeb->ClientId.UniqueThread;  // MainThTeb should be present!!!   // Report this only in CREATE_PROCESS_DEBUG_EVENT    // Not guranteed to return a real main(first) thread
      DBGMSG("Modules=%u, Threads=%u, MainThreadID=%u, ClientThreadID=%u",ModArr.Count(),TebArr.Count(),this->MainThID,this->ClientThID);
-     this->Report_CREATE_PROCESS_DEBUG_EVENT(MainThTeb, true);   // Report process creation    // Suspend Main Thread
-     for(UINT Ctr=0,Total=ModArr.Count();Ctr < Total;Ctr++)  // TODO: Report ntdll.dll first as it is done originally?
+     for(int Ctr=TebArr.Count()-1;Ctr >= 0;Ctr--)   // Originally all threads suspended by DebugActiveProcess before any of debug events reported but we do not have any handles yet
+      {
+       TEB* pTeb = TebArr[Ctr];
+       UINT ThID = (UINT)pTeb->ClientId.UniqueThread;
+       if((ThID == this->ClientThID)||(ThID == this->MainThID)||(ThID == this->ExcludedThID))continue;   // Do not report Client, Caller thread and Main thread(again)   // Man thread must be reported only in CREATE_PROCESS_DEBUG_EVENT
+       this->Report_CREATE_THREAD_DEBUG_EVENT(pTeb);   // Open a thread`s handle, report it and suspend
+      }
+     for(int Ctr=ModArr.Count()-1;Ctr >= 0;Ctr--)  // TODO: Report ntdll.dll first as it is done originally?
       {
        PVOID hModule = ModArr[Ctr];
        if((hModule == this->hClientDll)||(hModule == CurTeb->ProcessEnvironmentBlock->ImageBaseAddress))continue;                  // Do not report Client DLL and main module
-       this->Report_LOAD_DLL_DEBUG_INFO(hModule, false);     // No suspending here (Only a main thread is registered anyway)
+       this->Report_LOAD_DLL_DEBUG_INFO(MainThTeb, hModule);     // No suspending here (Only a main thread is registered anyway)
       }
-     for(UINT Ctr=0,Total=TebArr.Count();Ctr < Total;Ctr++)   // Originally all threads suspended by DebugActiveProcess before any of debug events reported but we do not have any handles yet
-      {
-       TEB* pTeb = TebArr[Ctr];
-       if(((UINT)pTeb->ClientId.UniqueThread == this->ClientThID)||((UINT)pTeb->ClientId.UniqueThread == this->MainThID))continue;   // Do not report Client thread and Main thread(again)
-       DBGMSG("miDebugActiveProcess: OwnerProcessID=%u, ThreadID=%u",(UINT)pTeb->ClientId.UniqueProcess,(UINT)pTeb->ClientId.UniqueThread);
-       this->Report_CREATE_THREAD_DEBUG_EVENT(pTeb, true);   // Open a thread`s handle, report it and suspend
-      }
+     this->Report_CREATE_PROCESS_DEBUG_EVENT(MainThTeb);   // Report process creation    // Suspend Main Thread
+     this->DispatchDebugEvents(true);    // Dispatch initial events backwards
     }
    break;
    case miDebugActiveProcessStop:
@@ -1074,8 +1027,6 @@ int _stdcall ProcessRequestDbg(SMsgHdr* Req)
    break;
    case miContinueDebugEvent:
     {
-     SHM::CArgPack<> api;
-     SHM::CArgPack<> apo;
      BOOL  Reslt = TRUE;
      DWORD dwProcessId = 0;
      DWORD dwThreadId; 
@@ -1086,12 +1037,25 @@ int _stdcall ProcessRequestDbg(SMsgHdr* Req)
      api.PopArg(dwThreadId);
      api.PopArg(dwContinueStatus);
      if(dwProcessId != this->CurProcID){DBGMSG("Process ID mismatch: %08X:%08X",dwProcessId,this->CurProcID);}
-     int thidx = this->ThList.FindThreadIdxInList(NULL, dwThreadId);
-     if(thidx >= 0)this->ThList.Resume(thidx, NULL, (dwContinueStatus == DBG_CONTINUE)); 
-       else {DBGMSG("miContinueDebugEvent: Thread ID not found: ThId=%u",dwThreadId);}   // Can exit before resuming?    
+     int res = -1;
+     int SingleThreadIdx = -1;
+     bool DbgContinue = (dwContinueStatus == DBG_CONTINUE);
      apo.PushArg(Reslt);
-     DBGMSG("miContinueDebugEvent PutMsg: Size=%u",apo.GetLen());
-     this->PutMsg(mtDbgRsp, miContinueDebugEvent, Req->Sequence, apo.GetPtr(), apo.GetLen());     
+     DBGMSG("miContinueDebugEvent PutMsg: ThId=%u, Size=%u",dwThreadId,apo.GetLen());
+     this->PutMsg(mtDbgRsp, miContinueDebugEvent, Req->Sequence, apo.GetPtr(), apo.GetLen());   // Report before resuming any threads because it may be a thread at NtTerminateProcess
+     this->ThList.Lock();
+     this->ThList.DbgEventCnt--;
+     DBGMSG("EventsAfter=%u, InStack=%u",this->ThList.DbgEventCnt,this->ThList.EventsInStack()); 
+     if(!this->EvtSuspAllTh)     // Resumes all threads or at least the event`s thread
+      {
+       if(SingleThreadIdx < 0)SingleThreadIdx = this->ThList.FindThreadIdxInList(nullptr, dwThreadId);
+       if(SingleThreadIdx >= 0)res = this->ThList.Resume(SingleThreadIdx, NULL, DbgContinue);
+         else {DBGMSG("miContinueDebugEvent: Thread ID not found: ThId=%u",dwThreadId);}  
+      }
+       else res = (this->ThList.DbgEventCnt > 0)?0:(int)this->ThList.ResumeAllThreads(dwThreadId, SingleThreadIdx, DbgContinue); 
+     this->ThList.UnLock();          // What if this thread will be terminatred by NtTerminateProcess before UnLock?
+     if(res < 0){DBGMSG("miContinueDebugEvent: DoResumeThread(s) failed: ThId=%u, Err=%i",dwThreadId,res);}  
+     this->DispatchDebugEvents(true);    // Dispatch any queued debug events
     }
    break;
 
@@ -1103,16 +1067,30 @@ int _stdcall ProcessRequestDbg(SMsgHdr* Req)
 
    case miDebugBreakProcess:  // Unsafe and unstealthy   // Some debuggers will not read any information about a debuggee unless it breaks somwhere (i.e. WinDbg)
     {                      // All of process`s threads may be in some waiting state and because of that a new thread required
-     SHM::CArgPack<> api;
-     SHM::CArgPack<> apo;
-     BOOL   Reslt = TRUE;
+     BOOL   Reslt = FALSE;
      UINT   uExitCode;
      HANDLE hProcess;
      api.Assign((PBYTE)&Req->Data,Req->DataSize);
      api.PopArg(hProcess);
      api.PopArg(uExitCode);
+     DBGMSG("Doing miDebugBreakProcess");         // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<
      if(hProcess != UintToFakeHandle(this->CurProcID)){DBGMSG("Process HANDLE mismatch: %08X:%08X",hProcess,UintToFakeHandle(this->CurProcID));}
-     CloseHandle(CreateThread(NULL,0,&CDbgClient::DbgBreakThread,this,0,NULL));     // Should wait for it?   // Do not report this thread to debugger? Originally it is reported(DebugBreakProcess)
+     HANDLE ThreadHandle = NULL; 
+     PVOID  StackBase = NULL; 
+     SIZE_T StackSize = 0x10000;
+     NtAllocateVirtualMemory(NtCurrentProcess, &StackBase, 0, &StackSize, MEM_COMMIT, PAGE_READWRITE);
+     NTSTATUS stat = NNTDLL::NativeCreateThread(&CDbgClient::DbgBreakThread, this, NtCurrentProcess, TRUE, &StackBase, &StackSize, &ThreadHandle, NULL);  // HANDLE ThreadHandle = CreateThread(NULL,0,&CDbgClient::DbgBreakThread,this,CREATE_SUSPENDED,&this->DbgBrkThID);  // Just to do int3
+     DBGMSG("DebugBreakThread: Addr=%p, StackBase=%p, StackSize=%08X",&CDbgClient::DbgBreakThread,StackBase,StackSize);
+	 if(ThreadHandle)
+      {
+       Reslt = TRUE;
+#ifndef _DEBUG
+       NtSetInformationThread(ThreadHandle, ThreadHideFromDebugger, NULL, NULL);
+#endif
+       NtResumeThread(ThreadHandle, NULL);     // Should wait for it?   // Do not report this thread to debugger? Originally it is reported(DebugBreakProcess)
+       NtClose(ThreadHandle);
+      }
+       else {DBGMSG("Create DebugBreak thread failed with %08X",stat);}
      apo.PushArg(Reslt);
      DBGMSG("miDebugBreakProcess PutMsg: Size=%u",apo.GetLen());
      this->PutMsg(mtDbgRsp, miDebugBreakProcess, Req->Sequence, apo.GetPtr(), apo.GetLen()); 
@@ -1121,47 +1099,58 @@ int _stdcall ProcessRequestDbg(SMsgHdr* Req)
    case miGetThreadContext:
     {                        
      CONTEXT ctx;
-     SHM::CArgPack<sizeof(CONTEXT)+sizeof(HANDLE)> api;                
-     SHM::CArgPack<sizeof(CONTEXT)+sizeof(HANDLE)> apo;
      api.Assign((PBYTE)&Req->Data,Req->DataSize);
-     UINT    ThIdx  = FakeHandleToUint(api.PopArg<HANDLE>());
-     HANDLE ThreadHandle = this->ThList.GetHandleByIndex(ThIdx);
-     if(!ThreadHandle){DBGMSG("Thread handle not found: ThIdx=%i",ThIdx);}
+     this->ThList.Lock();
+     UINT ThIdx = FakeHandleToUint(api.PopArg<HANDLE>());
      api.PopArg(ctx);
-     HRESULT Status = STATUS_SUCCESS;
-     if(!this->ThList.GetContextVal(ThIdx, &ctx))Status = this->NtDll.NtGetContextThread(ThreadHandle, &ctx);  
-       else {DBGMSG("GetContext read locally: %u",ThIdx);}     
+     NTSTATUS Status = STATUS_UNSUCCESSFUL;
+     if(this->ThList.IsThreadIndexExist(ThIdx))
+      {
+       Status = this->ThList.GetContextVal(ThIdx, &ctx);
+       if(!Status)          // Need update here?
+        {
+         DBGMSG("GetContext %u: DbgRegs=%u, Dr7=%p, Dr0=%p, Dr1=%p, Dr2=%p, Dr3=%p",ThIdx,bool(ctx.ContextFlags & CONTEXT_DEBUG_REGISTERS),ctx.Dr7,ctx.Dr0,ctx.Dr1,ctx.Dr2,ctx.Dr3);
+//         if(this->OnlyOwnHwBP)this->ThList.UpdHardwareBp(ThIdx, &ctx);   // Why update it here?????????????????????
+//         if(this->OnlyOwnTF)this->ThList.UpdTraceFlag(ThIdx, &ctx);
+        }  
+         else if(Status == STATUS_THREAD_IS_TERMINATING)this->ThList.ReportDeadThreadDbgEvt(ThIdx);
+      }
+       else {DBGMSG("Thread not found: ThIdx=%i",ThIdx);}
+     this->ThList.UnLock();
      apo.PushArg(ctx);
-     apo.PushArg(Status); 
-     if(!Status && ThreadHandle){if(this->OnlyOwnHwBP)this->ThList.UpdHardwareBp(ThIdx, &ctx); if(this->OnlyOwnTF)this->ThList.UpdTraceFlag(ThIdx, &ctx);}    // Need update here?
-     DBGMSG("miGetThreadContext PutMsg: Status=%08X, Size=%u",Status,apo.GetLen());
-     this->PutMsg(mtDbgRsp, miGetThreadContext, Req->Sequence, apo.GetPtr(), apo.GetLen());     
+     apo.PushArg(Status);
+     DBGMSG("miGetThreadContext PutMsg: Status=%08X, PC=%p, Trace=%u, Size=%u", Status, GetInstrPtr(&ctx), bool(ctx.EFlags&0x0100), apo.GetLen());
+     this->PutMsg(mtDbgRsp, miGetThreadContext, Req->Sequence, apo.GetPtr(), apo.GetLen()); 
     }
    break;
    case miSetThreadContext:
     {
      CONTEXT ctx;
-     SHM::CArgPack<sizeof(CONTEXT)+sizeof(HANDLE)> api;                
-     SHM::CArgPack<> apo;
      api.Assign((PBYTE)&Req->Data,Req->DataSize);
-     UINT    ThIdx  = FakeHandleToUint(api.PopArg<HANDLE>());
-     HANDLE ThreadHandle = this->ThList.GetHandleByIndex(ThIdx);
-     if(!ThreadHandle){DBGMSG("Thread handle not found: ThIdx=%i",ThIdx);}   
+     this->ThList.Lock();
+     UINT ThIdx = FakeHandleToUint(api.PopArg<HANDLE>());   
      api.PopArg(ctx);
-     HRESULT Status = STATUS_SUCCESS;
-     if(!this->ThList.SetContextVal(ThIdx, &ctx))Status = this->NtDll.NtSetContextThread(ThreadHandle, &ctx);
-       else {DBGMSG("SetContext stored locally: %u",ThIdx);}
-     DBGMSG("SetContext %u: DbgRegs=%u, Dr7=%p, Dr0=%p, Dr1=%p, Dr2=%p, Dr3=%p",ThIdx,bool(ctx.ContextFlags & CONTEXT_DEBUG_REGISTERS),ctx.Dr7,ctx.Dr0,ctx.Dr1,ctx.Dr2,ctx.Dr3);
+     NTSTATUS Status = STATUS_UNSUCCESSFUL;
+     if(this->ThList.IsThreadIndexExist(ThIdx))
+      {
+       Status = this->ThList.SetContextVal(ThIdx, &ctx); 
+       if(!Status)
+        {
+         DBGMSG("SetContext %u: DbgRegs=%u, Dr7=%p, Dr0=%p, Dr1=%p, Dr2=%p, Dr3=%p",ThIdx,bool(ctx.ContextFlags & CONTEXT_DEBUG_REGISTERS),ctx.Dr7,ctx.Dr0,ctx.Dr1,ctx.Dr2,ctx.Dr3);
+         if(this->OnlyOwnHwBP)this->ThList.UpdHardwareBp(ThIdx, &ctx);         // A debugger sets this BPs and TF, remember them
+         if(this->OnlyOwnTF)this->ThList.UpdTraceFlag(ThIdx, &ctx);
+        } 
+         else if(Status == STATUS_THREAD_IS_TERMINATING)this->ThList.ReportDeadThreadDbgEvt(ThIdx);
+      }
+       else {DBGMSG("Thread not found: ThIdx=%i",ThIdx);} 
+     this->ThList.UnLock();
      apo.PushArg(Status);
-     if(!Status && ThreadHandle){if(this->OnlyOwnHwBP)this->ThList.UpdHardwareBp(ThIdx, &ctx); if(this->OnlyOwnTF)this->ThList.UpdTraceFlag(ThIdx, &ctx);}
-     DBGMSG("miSetThreadContext PutMsg: Status=%08X, FLAGS=%08X, Size=%u",Status,ctx.ContextFlags, apo.GetLen());
+     DBGMSG("miSetThreadContext PutMsg: Status=%08X, PC=%p, Trace=%u, Size=%u", Status, GetInstrPtr(&ctx), bool(ctx.EFlags&0x0100), apo.GetLen());    // TF = 0x0100
      this->PutMsg(mtDbgRsp, miSetThreadContext, Req->Sequence, apo.GetPtr(), apo.GetLen());     
     }
    break;
    case miReadVirtualMemory:
     {
-     SHM::CArgPack<> api;
-     SHM::CArgPack<1024> apo;
      HANDLE ProcessHandle; 
      PVOID BaseAddress;
      SIZE_T BufferLength; 
@@ -1173,7 +1162,7 @@ int _stdcall ProcessRequestDbg(SMsgHdr* Req)
      api.PopArg(BaseAddress);
      api.PopArg(BufferLength);
      if(ProcessHandle != UintToFakeHandle(this->CurProcID)){DBGMSG("Process HANDLE mismatch: %08X:%08X",ProcessHandle,UintToFakeHandle(this->CurProcID)); apo.PushBlk(BufferLength);}                                        
-       else Status = this->NtDll.NtReadVirtualMemory(NtCurrentProcess, BaseAddress, apo.PushBlk(BufferLength), BufferLength, &RetLen); 
+       else Status = NtReadVirtualMemory(NtCurrentProcess, BaseAddress, apo.PushBlk(BufferLength), BufferLength, &RetLen); 
      apo.PushArg(RetLen);
      apo.PushArg(Status);
 //     DBGMSG("miReadVirtualMemory PutMsg: Status=%08X, BaseAddress=%p, BufferLength=%08X, Size=%u",Status,BaseAddress,BufferLength,apo.GetLen());     
@@ -1182,8 +1171,6 @@ int _stdcall ProcessRequestDbg(SMsgHdr* Req)
    break;
    case miWriteVirtualMemory:
     {
-     SHM::CArgPack<1024> api;
-     SHM::CArgPack<> apo;
      HANDLE ProcessHandle; 
      PVOID BaseAddress;
      SIZE_T BufferLength; 
@@ -1204,10 +1191,10 @@ int _stdcall ProcessRequestDbg(SMsgHdr* Req)
            if(IsBP)this->BpList.AddBP(BaseAddress);
              else this->BpList.DelBP(BaseAddress);
            DBGMSG("miWriteVirtualMemory: Addr=%p, BYTE=%02X, IsBP=%u",BaseAddress,*BufPtr,IsBP);
-           Status = this->NtDll.NtWriteVirtualMemory(NtCurrentProcess, BaseAddress, BufPtr, BufferLength, &RetLen);
+           Status = NtWriteVirtualMemory(NtCurrentProcess, BaseAddress, BufPtr, BufferLength, &RetLen);
            if(Status && IsBP)this->BpList.DelBP(BaseAddress);  // Remove a failed BP  // Case when removing a BP is failed are left undefined
           }
-           else Status = this->NtDll.NtWriteVirtualMemory(NtCurrentProcess, BaseAddress, BufPtr, BufferLength, &RetLen);
+           else Status = NtWriteVirtualMemory(NtCurrentProcess, BaseAddress, BufPtr, BufferLength, &RetLen);
         }
      apo.PushArg(RetLen);
      apo.PushArg(Status);
@@ -1217,8 +1204,6 @@ int _stdcall ProcessRequestDbg(SMsgHdr* Req)
    break;
    case miProtectVirtualMemory:       
     {
-     SHM::CArgPack<> api;
-     SHM::CArgPack<> apo;
      HANDLE ProcessHandle; 
      PVOID BaseAddress;
      SIZE_T RegionSize;
@@ -1232,19 +1217,17 @@ int _stdcall ProcessRequestDbg(SMsgHdr* Req)
      api.PopArg(RegionSize);  
      api.PopArg(NewProtect);
      if(ProcessHandle != UintToFakeHandle(this->CurProcID)){DBGMSG("Process HANDLE mismatch: %08X:%08X",ProcessHandle,UintToFakeHandle(this->CurProcID));}                                                                           
-       else Status = this->NtDll.NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, NewProtect, &OldProtect);
+       else Status = NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, NewProtect, &OldProtect);
      apo.PushArg(OldProtect);
      apo.PushArg(BaseAddress);
      apo.PushArg(RegionSize);
      apo.PushArg(Status);
-     DBGMSG("miProtectVirtualMemory PutMsg: Status=%08X, Size=%u",Status,apo.GetLen());
+     DBGMSG("miProtectVirtualMemory PutMsg: BaseAddress=%p, Status=%08X, Size=%u",BaseAddress,Status,apo.GetLen());
      this->PutMsg(mtDbgRsp, miProtectVirtualMemory, Req->Sequence, apo.GetPtr(), apo.GetLen());      
     }
    break;
    case miFlushVirtualMemory:       
     {
-     SHM::CArgPack<> api;
-     SHM::CArgPack<> apo;
      HANDLE ProcessHandle; 
      PVOID BaseAddress;
      SIZE_T RegionSize;
@@ -1256,7 +1239,7 @@ int _stdcall ProcessRequestDbg(SMsgHdr* Req)
      api.PopArg(BaseAddress);
      api.PopArg(RegionSize);  
      if(ProcessHandle != UintToFakeHandle(this->CurProcID)){DBGMSG("Process HANDLE mismatch: %08X:%08X",ProcessHandle,UintToFakeHandle(this->CurProcID));}                                                                           
-       else Status = this->NtDll.NtFlushVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, &IoStatus);
+       else Status = NtFlushVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, &IoStatus);
      apo.PushArg(IoStatus);
      apo.PushArg(BaseAddress);
      apo.PushArg(RegionSize);
@@ -1265,19 +1248,25 @@ int _stdcall ProcessRequestDbg(SMsgHdr* Req)
      this->PutMsg(mtDbgRsp, miFlushVirtualMemory, Req->Sequence, apo.GetPtr(), apo.GetLen());      
     }
    break;
-   case miTerminateThread:
+   case miTerminateThread:        
     {
-     SHM::CArgPack<> api;
-     SHM::CArgPack<> apo;
      NTSTATUS ExitStatus;
      HRESULT Status = STATUS_UNSUCCESSFUL;
-
      api.Assign((PBYTE)&Req->Data,Req->DataSize);
+     this->ThList.Lock();
      UINT    ThIdx = FakeHandleToUint(api.PopArg<HANDLE>());
      HANDLE ThreadHandle = this->ThList.GetHandleByIndex(ThIdx);
      apo.PopArg(ExitStatus);
-     if(!ThreadHandle){DBGMSG("Thread handle not found: ThIdx=%i",ThIdx);}
-       else Status = (this->AllowThTerm)?(this->NtDll.NtTerminateThread(ThreadHandle, ExitStatus)):(STATUS_SUCCESS);
+     if(ThreadHandle)
+      {
+       if(this->AllowThTerm)
+        {
+         Status = NtTerminateThread(ThreadHandle, ExitStatus);
+         this->Report_EXIT_THREAD_DEBUG_EVENT(this->ThList.GetTebByIndex(ThIdx), ExitStatus, true);    // Our copy of the syscall and no hook will be called for it!
+        }
+         else {Status = STATUS_SUCCESS; this->ThList.UnLock();}
+      }
+       else {DBGMSG("Thread handle not found: ThIdx=%i",ThIdx); this->ThList.UnLock();}    // Do not allow termination before, a target thread may acquire the lock
      apo.PushArg(Status);
      DBGMSG("miTerminateThread PutMsg: Status=%08X, Size=%u",Status,apo.GetLen());
      this->PutMsg(mtDbgRsp, miTerminateThread, Req->Sequence, apo.GetPtr(), apo.GetLen());     
@@ -1285,35 +1274,32 @@ int _stdcall ProcessRequestDbg(SMsgHdr* Req)
    break;
    case miTerminateProcess:
     {
-     SHM::CArgPack<> api;
-     SHM::CArgPack<> apo;
-     BOOL   Reslt = TRUE;
-     UINT   uExitCode;
+     HRESULT Status = STATUS_SUCCESS;
+     NTSTATUS ExitStatus;
      HANDLE hProcess;
      api.Assign((PBYTE)&Req->Data,Req->DataSize);
      api.PopArg(hProcess);
-     api.PopArg(uExitCode);
-     if(hProcess != UintToFakeHandle(this->CurProcID)){DBGMSG("Process HANDLE mismatch: %08X:%08X",hProcess,UintToFakeHandle(this->CurProcID));}
-     apo.PushArg(Reslt);
+     api.PopArg(ExitStatus);
+     if(hProcess != UintToFakeHandle(this->CurProcID)){DBGMSG("Process HANDLE mismatch: %08X:%08X",hProcess,UintToFakeHandle(this->CurProcID)); Status = STATUS_UNSUCCESSFUL;}
+     apo.PushArg(Status);
      DBGMSG("miTerminateProcess PutMsg: Size=%u",apo.GetLen());
      this->PutMsg(mtDbgRsp, miTerminateProcess, Req->Sequence, apo.GetPtr(), apo.GetLen()); 
      if(this->AllowPrTerm && (hProcess == UintToFakeHandle(this->CurProcID)))
       {
        this->EndMsg();
-       DBGMSG("Terminating self with code %u",uExitCode);
-       TerminateProcess(GetCurrentProcess(),uExitCode); 
+       DBGMSG("Terminating self with code %08X",ExitStatus);
+       NtTerminateProcess(NtCurrentProcess, ExitStatus); 
       }
     }
    break;
    case miSuspendThread:
     {
-     SHM::CArgPack<> api;
-     SHM::CArgPack<> apo;
      ULONG  PrevCnt = 0;
-
      api.Assign((PBYTE)&Req->Data,Req->DataSize);
+     this->ThList.Lock();
      UINT    ThIdx  = FakeHandleToUint(api.PopArg<HANDLE>());
-     HRESULT Status = this->ThList.Suspend(ThIdx, &PrevCnt);
+     HRESULT Status = this->ThList.Suspend(ThIdx, &PrevCnt);   // NOTE: Suspending a thread which is in a middle of logging(DBGMSG) will cause a deadlock because of logger`s critical section!!!
+     this->ThList.UnLock();
      apo.PushArg(PrevCnt);
      apo.PushArg(Status);
      DBGMSG("miSuspendThread PutMsg: Status=%08X, Index=%u, Size=%u",Status,ThIdx,apo.GetLen());
@@ -1322,13 +1308,12 @@ int _stdcall ProcessRequestDbg(SMsgHdr* Req)
    break;
    case miResumeThread:
     {
-     SHM::CArgPack<> api;
-     SHM::CArgPack<> apo;
      ULONG  PrevCnt = 0;
-
      api.Assign((PBYTE)&Req->Data,Req->DataSize);
+     this->ThList.Lock();
      UINT    ThIdx  = FakeHandleToUint(api.PopArg<HANDLE>());
      HRESULT Status = this->ThList.Resume(ThIdx, &PrevCnt);
+     this->ThList.UnLock();
      apo.PushArg(PrevCnt);
      apo.PushArg(Status);
      DBGMSG("miResumeThread PutMsg: Status=%08X, Index=%u, Size=%u",Status,ThIdx,apo.GetLen());
@@ -1341,7 +1326,7 @@ int _stdcall ProcessRequestDbg(SMsgHdr* Req)
  return 0;
 }
 //------------------------------------------------------------------------------------
-int _stdcall ProcessRequestUsr(SMsgHdr* Req)
+int ProcessRequestUsr(SMsgHdr* Req)
 {
  switch(Req->MsgID)
   {   
@@ -1352,13 +1337,13 @@ int _stdcall ProcessRequestUsr(SMsgHdr* Req)
      if(this->UsrReqCallback)this->UrsOpts = this->UsrReqCallback(Req,&apo,0);   // Some extra configs
      if(this->UrsOpts)apo.PushArgEx(Sep, NULL, dtNull);    // Separator for a custom config records
      UINT OptCtr = this->UrsOpts;
-     apo.PushArgEx(this->SwBpVal,      "Value of SwBP",             MakeCfgItemID(++OptCtr,dtBYTE));    
-     apo.PushArgEx(this->OnlyOwnTF,    "Report Only Own TF",        MakeCfgItemID(++OptCtr,dtBool));   
-     apo.PushArgEx(this->OnlyOwnHwBP,  "Report Only Own HwBP",      MakeCfgItemID(++OptCtr,dtBool));   
-     apo.PushArgEx(this->OnlyOwnSwBP,  "Report Only Own SwBP",      MakeCfgItemID(++OptCtr,dtBool));
-     apo.PushArgEx(this->HideDbgState, "Hide Debugger State",       MakeCfgItemID(++OptCtr,dtBool));
-     apo.PushArgEx(this->AllowThTerm,  "Allow Thread Termination",  MakeCfgItemID(++OptCtr,dtBool));  
-     apo.PushArgEx(this->AllowPrTerm,  "Allow Process Termination", MakeCfgItemID(++OptCtr,dtBool));    
+     apo.PushArgEx(this->SwBpVal,      ctENCSA("Value of SwBP"),             MakeCfgItemID(++OptCtr,dtBYTE));    
+     apo.PushArgEx(this->OnlyOwnTF,    ctENCSA("Report Only Own TF"),        MakeCfgItemID(++OptCtr,dtBool));   
+     apo.PushArgEx(this->OnlyOwnHwBP,  ctENCSA("Report Only Own HwBP"),      MakeCfgItemID(++OptCtr,dtBool));   
+     apo.PushArgEx(this->OnlyOwnSwBP,  ctENCSA("Report Only Own SwBP"),      MakeCfgItemID(++OptCtr,dtBool));
+     apo.PushArgEx(this->HideDbgState, ctENCSA("Hide Debugger State"),       MakeCfgItemID(++OptCtr,dtBool));
+     apo.PushArgEx(this->AllowThTerm,  ctENCSA("Allow Thread Termination"),  MakeCfgItemID(++OptCtr,dtBool));  
+     apo.PushArgEx(this->AllowPrTerm,  ctENCSA("Allow Process Termination"), MakeCfgItemID(++OptCtr,dtBool));    
 
      DBGMSG("miDbgGetConfigs PutMsg: Size=%u",apo.GetLen());
      this->PutMsg(mtUsrRsp, miDbgGetConfigs, Req->Sequence, apo.GetPtr(), apo.GetLen());      
@@ -1415,57 +1400,108 @@ int _stdcall ProcessRequestUsr(SMsgHdr* Req)
      this->PutMsg(mtUsrRsp, miDbgSetConfigs, Req->Sequence, apo.GetPtr(), apo.GetLen());     
     }
    return 0;
-  }
-    
+  }   
  if(this->UsrReqCallback)return this->UsrReqCallback(Req,0,0);
  return 0;
 }
 //------------------------------------------------------------------------------------
+// Dispath a event on top of event stack
+int DispatchDebugEvents(bool EvtExit=false)
+{
+ if(EvtExit)this->InDbgEvent = false;
+ if(this->InDbgEvent)return 0;    //{DBGMSG("Still inside an event - skipping!"); return 0;}     // Uncomment to test sequential event reporting // NOTE:Unsequential reporting is broken!
+ if(this->ThList.EventsInStack() <= 0)return 0;  // No events to dispatch
+ BYTE Buffer[sizeof(DbgEvtEx) + (MAX_PATH * sizeof(wchar_t)) + 8];    // Max buffer for a DebugEvent structure
+ this->ThList.Lock();
+ this->InDbgEvent = true;     // Report debug events one by one
+ DbgEvtEx* evt = this->ThList.PopDbgEvent();
+ UINT MemSize  = sizeof(DbgEvtEx) + (evt->PathSize * sizeof(wchar_t));   // NOTE: sizeof(DbgEvtEx) must be same in a debugger plugin
+ if(MemSize > sizeof(Buffer))MemSize = sizeof(Buffer);
+ memcpy(&Buffer, evt, MemSize);        // Copy the message to minimize lock time
+ this->ThList.UnLock();
+ DBGMSG("PutMsg: EvtAddr=%p, DebugEventCode=%08X, ThreadId=%u, Size=%08X",evt,evt->dwDebugEventCode,evt->dwThreadId,MemSize);
+ return this->PutMsg(mtDbgRsp, miWaitForDebugEvent, 0, &Buffer, MemSize);  
+}
+//------------------------------------------------------------------------------------
+DbgEvtEx* BegDbgEvent(UINT ThreadID, UINT ExtraSize=0)    // Requires ThList.Lock()
+{
+ DBGMSG("EventsBefore=%u, InStack=%u",this->ThList.DbgEventCnt,this->ThList.EventsInStack()); 
+ if(this->EvtSuspAllTh)this->ThList.SuspendAllThreads(NtCurrentThreadId(),-1,false,true);   // Suspend all other threads if this is a first event in stack
+ this->ThList.DbgEventCnt++;
+ return this->ThList.PushDbgEvent(ExtraSize);
+}
+//------------------------------------------------------------------------------------
+void EndDbgEvent(DbgEvtEx* Evt, int ThIdx)
+{
+ this->ipc.NotifyChange();  // Fake change notification to break main thread waiting for IPC events    // Is this an optimal solution?   // Is it even works?  // What time it takes?
+ DBGMSG("Leave");
+}
+//------------------------------------------------------------------------------------
 
 public:
- int (_stdcall* UsrReqCallback)(SMsgHdr* Req, PVOID ArgA, UINT ArgB);
- bool   AllowPrTerm;
- bool   AllowThTerm;
- bool   HideDbgState;
- bool   EvtSuspAllTh;  // Other threads may measure execution time and fail if suspended (Protectors) // Defauld debug behavoiur is to suspend all threads for eash debug event
- bool   OnlyOwnSwBP;
- bool   OnlyOwnHwBP;
- bool   OnlyOwnTF;
- BYTE   SwBpVal;
+ int (_fastcall* UsrReqCallback)(SMsgHdr* Req, PVOID ArgA, UINT ArgB);
+ bool   AllowPrTerm;   // Allow termination of target process
+ bool   AllowThTerm;   // Allow termination of a target process` thread
+ bool   HideDbgState;  // Hide debugger state (DRx)
+ bool   EvtSuspAllTh;  // Suspend all threads on Debug Events  // Other threads may measure execution time and fail if suspended (Protectors) // Defauld debug behavoiur is to suspend all threads for eash debug event
+ bool   OnlyOwnSwBP;   // Ignore unknown software breakpoints
+ bool   OnlyOwnHwBP;   // Ignore unknown hardware breakpoints
+ bool   OnlyOwnTF;     // Ignore unexpected Trace break
+ BYTE   SwBpVal;       // Software breakpoint value
 
 static inline UINT MakeCfgItemID(UINT CfgIdx, UINT CfgType){return (CfgIdx << 8)|CfgType;}
 static inline UINT ReadCfgItemID(UINT Value, UINT* CfgIdx){if(CfgIdx)*CfgIdx = Value >> 8; return Value & 0xFF;}
-static HANDLE UintToFakeHandle(UINT Idx){return HANDLE(~Idx << 5);}
+static HANDLE UintToFakeHandle(UINT Idx){return HANDLE(SIZE_T(~Idx << 5));}
 static UINT   FakeHandleToUint(HANDLE hTh){return (~(UINT)hTh >> 5);}
 static bool   IsFakeHandle(HANDLE hTh){return !((UINT)hTh & 0x1F) && ((UINT)hTh & 0xF0000000);}      // Pointer Type?
 bool IsDbgThreadID(DWORD ThID){return (ThID == this->ClientThID);}
 bool IsActive(void){return ((bool)this->hIPCThread && !this->BreakWrk);}
 //------------------------------------------------------------------------------------
+static inline PVOID GetInstrPtr(CONTEXT* ctx)
+{
+#ifdef _AMD64_
+ return (PVOID)ctx->Rip;
+#else
+ return (PVOID)ctx->Eip;
+#endif
+}
+//------------------------------------------------------------------------------------
 // Different threads of a debugger will direct their requests here
 //
-static DWORD WINAPI IPCQueueThread(LPVOID lpThreadParameter)
+static void _fastcall IPCQueueThread(LPVOID lpThreadParameter)
 {    
- DBGMSG("Enter: ThreadId=%u",GetCurrentThreadId());
+ DBGMSG("Enter: ThreadId=%u", NtCurrentThreadId());
  CDbgClient* DbgIPC = (CDbgClient*)lpThreadParameter;
- DbgIPC->ClientThID = GetCurrentThreadId();
- DbgIPC->Connect(GetCurrentProcessId(),DbgIPC->IPCSize);       // Create SharedBuffer name for current process, a debugger will connect to it
+ DbgIPC->ClientThID = NtCurrentThreadId();
+ DbgIPC->Connect(NtCurrentProcessId(),DbgIPC->IPCSize);       // Create SharedBuffer name for current process, a debugger will connect to it
  DbgIPC->BreakWrk = false;
  while(!DbgIPC->BreakWrk) 
-  { 
-   SMsgHdr* Cmd = DbgIPC->GetMsg();
-   if(!Cmd)continue;   // Timeout and still no messages
+  {    
+   if(SMsgHdr* Cmd = DbgIPC->GetMsg())   // Timeout and still no messages
+    {
 //   DBGMSG("MsgType=%04X, MsgID=%04X, DataID=%08X, Sequence=%08X, DataSize=%08X",Cmd->MsgType,Cmd->MsgID,Cmd->DataID,Cmd->Sequence,Cmd->DataSize);   // These Debug messages make it hang!!!
-   if(Cmd->MsgType & mtDbgReq)DbgIPC->ProcessRequestDbg(Cmd);
-   if(Cmd->MsgType & mtUsrReq)DbgIPC->ProcessRequestUsr(Cmd);  
+     if(Cmd->MsgType & mtDbgReq)DbgIPC->ProcessRequestDbg(Cmd);
+     if(Cmd->MsgType & mtUsrReq)DbgIPC->ProcessRequestUsr(Cmd); 
+    }
+   DbgIPC->DispatchDebugEvents();   // Must be afrer responses to any requests     // Putting DispatchDebugEvents here overloads IPC when there is too much modules/threads
   }
  DbgIPC->EndMsg();   // Unlock shared buffer if it is still locked
  DbgIPC->ipc.Clear();
  DbgIPC->Disconnect();
  DBGMSG("Exit");
- return 0;
+ NtTerminateThread(NtCurrentThread, 0);
 }
 //------------------------------------------------------------------------------------
-CDbgClient(void)
+static NTSTATUS CreateIpcThread(PHANDLE pThHndl, PVOID Param, BOOL Suspended)
+{
+ PVOID  StackBase = NULL; 
+ SIZE_T StackSize = 0x10000;    // Should be enough
+ NtAllocateVirtualMemory(NtCurrentProcess, &StackBase, 0, &StackSize, MEM_COMMIT, PAGE_READWRITE);
+ DBGMSG("Param=%p",Param);
+ return NNTDLL::NativeCreateThread(&CDbgClient::IPCQueueThread, Param, NtCurrentProcess, Suspended, &StackBase, &StackSize, pThHndl, NULL);  
+}
+//------------------------------------------------------------------------------------
+CDbgClient(PVOID pCallerMod=NULL)
 {
  this->EvtSuspAllTh = true;
  this->HideDbgState = true;
@@ -1478,14 +1514,16 @@ CDbgClient(void)
 
  this->hIPCThread     = NULL;
  this->UsrReqCallback = NULL;
+ this->ExcludedThID   = 0;
+ this->DbgBrkThID     = 0;
  this->ClientThID = 0;
  this->UrsOpts    = 0;
- this->IPCSize    = (1024*1024)*4;  // Smaller is faster   // More DLLs in a target application, more buffer size it will require on attach
+ this->IPCSize    = 0x100000;  // Smaller is faster   // More DLLs in a target application, more buffer size it will require on attach    // (1024*1024)*4;
+ this->InDbgEvent = true;      // Until an Attach event
  this->BreakWrk   = true;
- this->hClientDll = NULL;
- this->CurProcID  = GetCurrentProcessId(); 
+ this->hClientDll = pCallerMod;
+ this->CurProcID  = NtCurrentProcessId(); 
  this->MainThID   = 0;
- GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, (LPCSTR)&CDbgClient::IPCQueueThread, &this->hClientDll);
 }
 //------------------------------------------------------------------------------------
 ~CDbgClient()
@@ -1493,25 +1531,47 @@ CDbgClient(void)
  this->Stop();
 }
 //------------------------------------------------------------------------------------
-bool Start(UINT Size=0, HANDLE hThread=NULL, PVOID IPCThProc=NULL)
-{        
+bool Start(UINT Size=0, HANDLE hThread=NULL, PVOID IPCThProc=NULL, UINT MainThreadId=0, UINT ExcludeThId=0)
+{ 
  if(this->IsActive()){DBGMSG("Already active!"); return false;}
+ this->ExcludedThID = ExcludeThId;
+ this->MainThID     = MainThreadId;
+ this->InDbgEvent   = true; 
  if(Size)this->IPCSize = Size;
  if(!hThread)
   {
    DBGMSG("IPC thread proc: %p",&CDbgClient::IPCQueueThread);
-   this->hIPCThread = CreateThread(NULL,0,&CDbgClient::IPCQueueThread,this,0,NULL);
-  }
-   else
+   NTSTATUS stat = CreateIpcThread(&this->hIPCThread, this, TRUE);
+   if(this->hIPCThread)
     {
-     DBGMSG("Reusing an existing thread: %p",hThread);
+#ifndef _DEBUG
+     NtSetInformationThread(this->hIPCThread, ThreadHideFromDebugger, NULL, NULL);
+#endif
+     NtResumeThread(this->hIPCThread, NULL); 
+    }
+     else {DBGMSG("Failed to create IPC thread: %08X", stat);}
+  }
+   else  
+    {     
      this->hIPCThread = hThread;
      PVOID Param = this;
      if(!IPCThProc)IPCThProc = &CDbgClient::IPCQueueThread;
-     if(!SNtDll::ChangeNewSuspThProcAddr(this->hIPCThread, IPCThProc, &Param))return false;
-     ResumeThread(hThread);    
+     if(hThread != NtCurrentThread)
+      { 
+       DBGMSG("Reusing an existing thread: %p",hThread);     
+       if(!NNTDLL::ChangeNewSuspThProcAddr(this->hIPCThread, IPCThProc, &Param, true))return false;  
+#ifndef _DEBUG
+       NtSetInformationThread(this->hIPCThread, ThreadHideFromDebugger, NULL, NULL);
+#endif
+       NtResumeThread(this->hIPCThread, NULL);
+      }
+       else 
+        {
+         DBGMSG("Reusing the current thread");  
+         CDbgClient::IPCQueueThread(Param);
+        }
     }
- if(!this->hIPCThread){DBGMSG("Failed to create IPC thread: %u", GetLastError());}
+ DBGMSG("Continuing");
  return (bool)this->hIPCThread;
 }
 //------------------------------------------------------------------------------------
@@ -1519,13 +1579,19 @@ bool Stop(void)
 {
  if(!this->IsActive()){DBGMSG("Not active!"); return false;}
  this->BreakWrk = true;
- if(this->ClientThID != GetCurrentThreadId())
+ if(this->ClientThID != NtCurrentThreadId())
   {
    DBGMSG("Waiting for ClientThread termination");
-   DWORD res = WaitForSingleObject(this->hIPCThread,INFINITE); 
-   if(WAIT_OBJECT_0 != res)TerminateThread(this->hIPCThread,0);
+   DWORD res = ShMem::WaitForSingle(this->hIPCThread, 1000);    // Not INFINITE, it will stuck on ExitProcess!
+   if(WAIT_OBJECT_0 != res)
+    {
+     this->ThList.Lock();
+     NtTerminateThread(this->hIPCThread,0);
+     this->ThList.UnLock();
+    }
   }
- CloseHandle(this->hIPCThread);
+ NtClose(this->hIPCThread);
+ this->ThList.ResumeAllThreads(NtCurrentThreadId(), -1, 1);   // In case not all debug events processed
  this->EndMsg();   // Unlock shared buffer if it is still locked
  this->ipc.Clear();
  this->Disconnect();
@@ -1535,75 +1601,87 @@ bool Stop(void)
  return true;
 }
 //------------------------------------------------------------------------------------
-bool HandleException(DWORD ThID, PEXCEPTION_RECORD ExceptionRecord, PCONTEXT Context)     // TODO: Detect and ignore BP/TF exceptions which are not caused by debugger   // TODO: EXCEPTION_ILLEGAL_INSTRUCTION breakpoints
+bool HandleException(DWORD ThreadID, PEXCEPTION_RECORD ExceptionRecord, PCONTEXT Context)     // TODO: Detect and ignore BP/TF exceptions which are not caused by debugger   // TODO: EXCEPTION_ILLEGAL_INSTRUCTION breakpoints
 {  
- if(!ExceptionRecord || !Context || this->IsDbgThreadID(ThID))return false;  // Ignore exceptions from DbgThread. It will stuck if a debugger gets this
- DBGMSG("Code=%08X, Addr=%p, FCtx=%08X",ExceptionRecord->ExceptionCode, ExceptionRecord->ExceptionAddress, Context->ContextFlags);
- int thidx = -1;
+ if(!ExceptionRecord || !Context || this->IsDbgThreadID(ThreadID))return false;  // Ignore exceptions from DbgThread. It will stuck if a debugger gets this
+ DBGMSG("Code=%08X, Addr=%p, FCtx=%08X, ThID=%u",ExceptionRecord->ExceptionCode, ExceptionRecord->ExceptionAddress, Context->ContextFlags, ThreadID);     // Logging can deadlock if this thead is suspended while holding a logging Critical Section
+ int TIdx = -1;
+ bool Res = false;
  CThreadList::SThDesc* Desc = NULL;
- switch(ExceptionRecord->ExceptionCode)
+ switch(ExceptionRecord->ExceptionCode)   // TODO: Breakpoint by a different events
   {
    case EXCEPTION_BREAKPOINT:    // INT3  // IP points to INT3, not after it(Like with DebugAPI), so IP must be incremented
     if(this->OnlyOwnSwBP && !CDbgClient::IsAddrInDbgBreak(ExceptionRecord->ExceptionAddress) && !this->BpList.IsHitBP(ExceptionRecord->ExceptionAddress)){DBGMSG("SkipSwBP: Addr=%p",ExceptionRecord->ExceptionAddress); return false;}     // This INT3 breakpoint was not set by our debugger
-    thidx = this->GetThread(ThID, &Desc);      // Reports this thread if sees it first time
 #ifdef _AMD64_
      Context->Rip++;
 #else
      Context->Eip++;
 #endif
-   case EXCEPTION_SINGLE_STEP:   // TF/DRx
-    {    
-     if(thidx < 0)    // EXCEPTION_SINGLE_STEP
-      {
-       thidx = this->GetThread(ThID, &Desc);    
-       bool TFFail = (this->OnlyOwnTF   && !this->ThList.IsSingleStepping(thidx));
-       bool HwFail = (this->OnlyOwnHwBP && !this->ThList.IsHardwareBpHit(thidx,ExceptionRecord->ExceptionAddress));
-       if((this->OnlyOwnHwBP || this->OnlyOwnTF) && (HwFail && TFFail)){DBGMSG("SkipHwBP: Addr=%p, TFFail=%u, HwFail=%u",ExceptionRecord->ExceptionAddress,TFFail,HwFail); return false;}     // Not TF and not a HwBp
-      }
-     Desc->pContext = Context;          // GetThreadContext/SetThreadContext will access this context instead of latest which is in this ExceptionHandler now
-     this->Report_EXCEPTION_DEBUG_INFO(thidx, ExceptionRecord);
-//     this->ThList.Suspend(thidx);   // moved to Report_EXCEPTION_DEBUG_INFO
-     Desc->pContext = NULL;             // Can someone remove this thread from list before resuming it?
-     DBGMSG("Resumed: %u",Desc->DbgCont);
-    }
-    return Desc->DbgCont;        // Continued by debugger
+   case EXCEPTION_SINGLE_STEP:   // TF/DRx       
+    this->ThList.Lock();
+    TIdx = this->ThList.FindThreadIdxInList(&Desc, ThreadID);  
+    if(TIdx < 0)
+     {
+      DBGMSG("Failed to find thread %u!", ThreadID);
+      TIdx = this->Report_CREATE_THREAD_DEBUG_EVENT(NtCurrentTeb(), true);  // This thread assumed  // Reuses the lock and unlocks
+      if(TIdx < 0){DBGMSG("Failed to add the thread %u", ThreadID); break;}
+      this->ThList.Lock();
+     }
+    if(EXCEPTION_SINGLE_STEP == ExceptionRecord->ExceptionCode)    
+     { 
+      bool TFFail = (this->OnlyOwnTF   && !this->ThList.IsSingleStepping(TIdx));
+      bool HwFail = (this->OnlyOwnHwBP && !this->ThList.IsHardwareBpHit(TIdx, ExceptionRecord->ExceptionAddress));
+      if(HwFail && TFFail){this->ThList.UnLock(); DBGMSG("SkipHwBP: Addr=%p, TFFail=%u, HwFail=%u",ExceptionRecord->ExceptionAddress,TFFail,HwFail); return false;}     // Not an own TF and not an own HwBp
+     }
+    Desc->pContext = Context;         // GetThreadContext/SetThreadContext will access this context instead of latest which is in this ExceptionHandler now
+    this->Report_EXCEPTION_DEBUG_INFO(TIdx, ThreadID, ExceptionRecord);     // Unlocks and suspends self
+    Res = Desc->SyncGetFlags(CThreadList::SThDesc::tfDbgCont);       //DbgCont;              // Continued by a debugger
+    Desc->pContext = NULL;            // Is Desc will be valid? Can someone remove this thread from list before resuming it?
+    DBGMSG("Resumed: ID=%u, Cont=%u, Addr=%p, TF=%u", ThreadID, (int)Res, GetInstrPtr(Context), bool(Context->EFlags&0x0100));     // Logging can deadlock if this thead is suspended while holding a logging Critical Section
+    return Res;
   }
  return false;
 } 
 //------------------------------------------------------------------------------------
 bool TryAddCurrThread(void)
 {
+ DBGMSG("Enter");
  TEB* CurTeb = NtCurrentTeb();
- if(this->ThList.FindThreadIdxInList(NULL, (UINT)CurTeb->ClientId.UniqueThread) >= 0)return false;  // Already in list
- this->Report_CREATE_THREAD_DEBUG_EVENT(CurTeb, true); 
- DBGMSG("Added: ThreadId=%u",(UINT)CurTeb->ClientId.UniqueThread);
- return true;
-}
-//------------------------------------------------------------------------------------
-int GetThread(DWORD ThID, CThreadList::SThDesc** Desc=NULL)
-{
- return this->ThList.FindThreadIdxInList(Desc, ThID);
+// if((UINT)CurTeb->ClientId.UniqueThread == this->DbgBrkThID){DBGMSG("Skipping DbgBrk thread"); return false;}
+ this->ThList.Lock();
+ if(this->ThList.FindThreadIdxInList(NULL, (UINT)CurTeb->ClientId.UniqueThread) < 0)  
+  {
+   int ThIdx = this->Report_CREATE_THREAD_DEBUG_EVENT(CurTeb, true);     // Reuses the lock
+   DBGMSG("Added: ThreadId=%u as %u",(UINT)CurTeb->ClientId.UniqueThread, ThIdx);
+   return true;
+  }
+ this->ThList.UnLock();
+ return false;  // Already in list
 }
 //------------------------------------------------------------------------------------
 int DebugThreadLoad(DWORD ThID, PCONTEXT Context) 
 {
  if(!this->IsActive() || !this->HideDbgState)return -1;
- int thidx = this->GetThread(ThID);
- if(thidx < 0)return -2;
+ this->ThList.Lock();
+ int thidx = this->ThList.FindThreadIdxInList(NULL,ThID);
+ if(thidx < 0){this->ThList.UnLock(); return -2;}
  this->ThList.WriteDbgContext(thidx, Context);    // Restore fake DRx from our buffer to Context   // What about TF?
+ this->ThList.UnLock();
  return thidx;
 }
 //------------------------------------------------------------------------------------
 int DebugThreadSave(DWORD ThID, PCONTEXT Context)    // Call this after an application has modified the CONTEXT
 {
  if(!this->IsActive() || !this->HideDbgState)return -1;
- int thidx = this->GetThread(ThID);
- if(thidx < 0)return -2;
+ this->ThList.Lock();
+ int thidx = this->ThList.FindThreadIdxInList(NULL,ThID);
+ if(thidx < 0){this->ThList.UnLock(); return -2;}
  this->ThList.ReadDbgContext(thidx, Context);   // Save (Possibly modified) DRx into our internal buffer
+ this->ThList.UnLock();
  return thidx;
-}
+} 
 //------------------------------------------------------------------------------------
-void DebugRstExcContext(PCONTEXT ExcCont, PCONTEXT HandledCtx)
+static void DebugRstExcContext(PCONTEXT ExcCont, PCONTEXT HandledCtx)
 {
  if(ExcCont->ContextFlags & CONTEXT_DEBUG_REGISTERS)
   {
@@ -1622,206 +1700,206 @@ SIZE_T IsMemAvailable(PVOID Addr)      // Helps to skip a Reserved mapping rgion
 {
  SIZE_T RetLen = 0; 
  MEMORY_BASIC_INFORMATION minf;                                                                            
- NTSTATUS Status = this->NtDll.NtQueryVirtualMemory(NtCurrentProcess,Addr,MemoryBasicInformation,&minf,sizeof(MEMORY_BASIC_INFORMATION),&RetLen);
+ NTSTATUS Status = NtQueryVirtualMemory(NtCurrentProcess,Addr,MemoryBasicInformation,&minf,sizeof(MEMORY_BASIC_INFORMATION),&RetLen);
  if(Status || !(minf.State & MEM_COMMIT))return 0;
  return minf.RegionSize;
 }
 //------------------------------------------------------------------------------------
 //
 //------------------------------------------------------------------------------------
-int Report_CREATE_PROCESS_DEBUG_EVENT(TEB* pMainThTeb, bool Suspend=true)    // NOTE: Opening a process is more suspicious than opening a thread
+// Suspends the specified main thread
+int Report_CREATE_PROCESS_DEBUG_EVENT(TEB* pMainThTeb)    // NOTE: Opening a process is more suspicious than opening a thread
 {
- if(!this->IsActive())return -9;                // <<<<<<<<<<<<<<<<<<<<<<<< Threads identified by Index ????????????????????????????????????????
- DbgEvtEx evt; 
- wchar_t PathBuf[MAX_PATH]; 
- evt.dwDebugEventCode = CREATE_PROCESS_DEBUG_EVENT;
- evt.dwProcessId = (UINT)pMainThTeb->ClientId.UniqueProcess;  // this->CurProcID;
- evt.dwThreadId  = (UINT)pMainThTeb->ClientId.UniqueThread;   // this->MainThID;   // This ID is not used by TitanEngine(Set to NULL)            // GetCurrentThreadId();  
-   
- int TIdx = this->ThList.AddThreadToList(pMainThTeb);
- if(TIdx < 0){DBGMSG("Failed to add the thread %u", evt.dwThreadId); }
+ if(!this->IsActive())return -9;  
+ wchar_t Path[600];
+ HMODULE  hMod = (HMODULE)NtCurrentTeb()->ProcessEnvironmentBlock->ImageBaseAddress;        // NNTDLL::GetModuleBaseLdr(NULL);  
+ UINT PathSize = NNTDLL::GetMappedFilePath(NtCurrentProcess, hMod, Path, sizeof(Path));     // Get from mapping, avoid accessing an unlocked loader    
+ if(!PathSize){DBGMSG("No name for mapped %p, continuing!", hMod); return -8;}
 
- *evt.FilePath                                 = 0;   
- evt.u.CreateProcessInfo.hFile                 = NULL;              // Cannot allow an another process to have one of DLLs handle opened because some protection driver may track it
- evt.u.CreateProcessInfo.hProcess              = UintToFakeHandle(evt.dwProcessId);  // HANDLE(0 - evt.dwProcessId);    // x64Dbg uses this handles directly and will stop working without them
- evt.u.CreateProcessInfo.hThread               = UintToFakeHandle(TIdx);  // HANDLE(0 - this->ThList.AddThreadToList(evt.dwThreadId) - 1);
- evt.u.CreateProcessInfo.lpBaseOfImage         = GetModuleHandleA(NULL);      // HANDLE is not always a Base?
- evt.u.CreateProcessInfo.dwDebugInfoFileOffset = 0;
- evt.u.CreateProcessInfo.nDebugInfoSize        = 0;
- evt.u.CreateProcessInfo.lpThreadLocalBase     = pMainThTeb;  
- evt.u.CreateProcessInfo.lpStartAddress        = NULL;   // May be required!
- evt.u.CreateProcessInfo.lpImageName           = NULL;
- evt.u.CreateProcessInfo.fUnicode              = 0;
- evt.PathSize = GetModuleFileNameW(GetModuleHandleW(NULL),(PWSTR)&evt.FilePath,MAX_PATH); 
- UINT MemSize = sizeof(evt)+(evt.PathSize * sizeof(wchar_t));
- DBGMSG("PutMsg: CurProcID=%u, MainThID=%u, Size=%u",evt.dwProcessId,evt.dwThreadId,MemSize);
- PVOID MsgPtr = NULL;
- this->DoSuspendThreads(evt.dwThreadId, -1, false, true);     //     if(Suspend)this->ThList.Suspend(TIdx);   // Suspend the specified thread (Never a current one)
- if(this->BeginMsg(&MsgPtr, mtDbgRsp, miWaitForDebugEvent, 0, MemSize, 0) < 0)return -5;
- DbgEvtEx* DstEvt = (DbgEvtEx*)MsgPtr;
- memcpy(DstEvt,&evt,sizeof(evt));
- memcpy(&DstEvt->FilePath, &PathBuf, (evt.PathSize+1) * sizeof(wchar_t));   // Including 0
- return this->DoneMsg(NULL);   // this->PutMsg(mtDbgRsp, miWaitForDebugEvent, 0, &evt, sizeof(evt)); 
+ this->ThList.Lock();
+ UINT ThreadID = (UINT)pMainThTeb->ClientId.UniqueThread;
+ int TIdx = this->ThList.AddThreadToList(pMainThTeb);
+ if(TIdx < 0){DBGMSG("Failed to add the thread %u", ThreadID);}
+ DbgEvtEx* evt = this->BegDbgEvent(ThreadID, PathSize * sizeof(wchar_t));
+ evt->dwDebugEventCode = CREATE_PROCESS_DEBUG_EVENT;
+ evt->dwProcessId = (UINT)pMainThTeb->ClientId.UniqueProcess;  // this->CurProcID;
+ evt->dwThreadId  = (UINT)pMainThTeb->ClientId.UniqueThread;   // this->MainThID;   // This ID is not used by TitanEngine(Set to NULL)           
+ *evt->FilePath                                 = 0;   
+ evt->u.CreateProcessInfo.hFile                 = NULL;              // Cannot allow an another process to have one of DLLs handle opened because some protection driver may track it
+ evt->u.CreateProcessInfo.hProcess              = UintToFakeHandle(evt->dwProcessId);    // HANDLE(0 - evt.dwProcessId);    // x64Dbg uses this handles directly and will stop working without them
+ evt->u.CreateProcessInfo.hThread               = UintToFakeHandle(TIdx);     // HANDLE(0 - this->ThList.AddThreadToList(evt.dwThreadId) - 1);
+ evt->u.CreateProcessInfo.lpBaseOfImage         = hMod;      // HANDLE is not always a Base?
+ evt->u.CreateProcessInfo.dwDebugInfoFileOffset = 0;
+ evt->u.CreateProcessInfo.nDebugInfoSize        = 0;
+ evt->u.CreateProcessInfo.lpThreadLocalBase     = pMainThTeb;  
+ evt->u.CreateProcessInfo.lpStartAddress        = NULL;   // May be required!
+ evt->u.CreateProcessInfo.lpImageName           = NULL;
+ evt->u.CreateProcessInfo.fUnicode              = 0;
+ evt->PathSize = PathSize; 
+ if(PathSize)memcpy(&evt->FilePath, &Path, (PathSize+1)*sizeof(wchar_t));
+ DBGMSG("PushDbgEvt: CurProcID=%u, MainThID=%u, ExePath(%u)=%ls",evt->dwProcessId,evt->dwThreadId,PathSize,&Path);
+ this->EndDbgEvent(evt, TIdx);
+ if((pMainThTeb == NtCurrentTeb())&&(TIdx >= 0))this->ThList.Suspend(TIdx,NULL,false,true);   // Unlock and suspend itself (If reporting itself)
+   else this->ThList.UnLock();
+ return TIdx; 
 }
 //------------------------------------------------------------------------------------
-int Report_EXIT_PROCESS_DEBUG_EVENT(DWORD ExitCode)      // Unused and unreliable  // A process lives until any of its threads alive
+int Report_EXIT_PROCESS_DEBUG_EVENT(TEB* pThTeb, DWORD ExitCode)      // Unused and unreliable  // A process lives until any of its threads alive
 {
  if(!this->IsActive())return -9;
- DbgEvtEx evt;
- evt.dwDebugEventCode = EXIT_PROCESS_DEBUG_EVENT;
- evt.dwProcessId = this->CurProcID;
- evt.dwThreadId  = this->MainThID;   // May be incorrect(Terminated)
- 
- evt.u.ExitProcess.dwExitCode = ExitCode;
- DBGMSG("PutMsg: ExitCode=%08X, Size=%08X",ExitCode,sizeof(evt));        
- int res = this->PutMsg(mtDbgRsp, miWaitForDebugEvent, 0, &evt, sizeof(evt));  
- this->DoSuspendThreads(evt.dwThreadId, -1, true);
- return res;
+ this->ThList.Lock();
+ UINT ThreadID = (UINT)pThTeb->ClientId.UniqueThread;
+ int TIdx = this->ThList.FindThreadIdxInList(NULL,ThreadID); 
+ if(TIdx < 0)
+  {
+   DBGMSG("Failed to find thread %u!", ThreadID);
+   TIdx = this->Report_CREATE_THREAD_DEBUG_EVENT(pThTeb, true);
+   if(TIdx < 0){DBGMSG("Failed to add the thread %u", ThreadID);}
+   this->ThList.Lock();
+  } 
+ DbgEvtEx* evt = this->BegDbgEvent(ThreadID);
+ evt->dwDebugEventCode = EXIT_PROCESS_DEBUG_EVENT;
+ evt->dwProcessId = this->CurProcID;
+ evt->dwThreadId  = this->MainThID;   // May be incorrect(Terminated)
+ evt->PathSize    = 0;
+ evt->u.ExitProcess.dwExitCode = ExitCode;
+ DBGMSG("PushDbgEvt: ExitCode=%08X, Size=%08X",ExitCode,sizeof(evt)); 
+ this->EndDbgEvent(evt, TIdx);
+ if((pThTeb == NtCurrentTeb())&&(TIdx >= 0))this->ThList.Suspend(TIdx,NULL,false,true);   // Unlock and suspend itself (If reporting itself)
+   else this->ThList.UnLock();
+ return 0; 
 }
 //------------------------------------------------------------------------------------
-int Report_CREATE_THREAD_DEBUG_EVENT(TEB* pThTeb, bool SingleThSusp=false)
+int Report_CREATE_THREAD_DEBUG_EVENT(TEB* pThTeb, bool ReuseLock=false)
 {
  if(!this->IsActive())return -9;
- DbgEvtEx evt;
- evt.dwDebugEventCode = CREATE_THREAD_DEBUG_EVENT;
- evt.dwProcessId = this->CurProcID;
- evt.dwThreadId  = (UINT)pThTeb->ClientId.UniqueThread;
+ if(!ReuseLock)this->ThList.Lock();
+ UINT ThreadID = (UINT)pThTeb->ClientId.UniqueThread;
  int TIdx = this->ThList.AddThreadToList(pThTeb);
- if(TIdx < 0){DBGMSG("Failed to add the thread %u", evt.dwThreadId); return -8;}
- 
- evt.u.CreateThread.hThread           = UintToFakeHandle(TIdx);   // HANDLE(0 - this->ThList.AddThreadToList(ThreadID) - 1);   // Not a real handle but easy to identify
- evt.u.CreateThread.lpStartAddress    = NULL;   // May be required!
- evt.u.CreateThread.lpThreadLocalBase = pThTeb;   
- DBGMSG("PutMsg: ThreadID=%08X(%u), Size=%08X",evt.dwThreadId,evt.dwThreadId,sizeof(evt));
- int res = this->PutMsg(mtDbgRsp, miWaitForDebugEvent, 0, &evt, sizeof(evt));  
- this->DoSuspendThreads(evt.dwThreadId, -1, false, SingleThSusp);  // if(Suspend)this->ThList.Suspend(TIdx);   // Suspends the specified thread
- return res;
+ if(TIdx < 0){DBGMSG("Failed to add the thread %u", ThreadID);}
+ DbgEvtEx* evt = this->BegDbgEvent(ThreadID);
+ evt->dwDebugEventCode = CREATE_THREAD_DEBUG_EVENT;
+ evt->dwProcessId = (UINT)pThTeb->ClientId.UniqueProcess;   // this->CurProcID;
+ evt->dwThreadId  = (UINT)pThTeb->ClientId.UniqueThread;    // NOTE: May crash if pThTeb become invalid!!!
+ evt->PathSize    = 0;
+ evt->u.CreateThread.hThread           = UintToFakeHandle(TIdx);    // Not a real handle but easy to identify
+ evt->u.CreateThread.lpStartAddress    = NULL;   // May be required!
+ evt->u.CreateThread.lpThreadLocalBase = pThTeb;   
+ DBGMSG("PushDbgEvt: ThreadID=%08X(%u)",evt->dwThreadId,evt->dwThreadId);
+ this->EndDbgEvent(evt, TIdx);
+ if((pThTeb == NtCurrentTeb())&&(TIdx >= 0))this->ThList.Suspend(TIdx,NULL,false,true);   // Unlock and suspend itself (If reporting itself)
+   else this->ThList.UnLock();
+ return TIdx; 
 }
 //------------------------------------------------------------------------------------
-int Report_EXIT_THREAD_DEBUG_EVENT(DWORD ThreadID, DWORD ExitCode)
+int Report_EXIT_THREAD_DEBUG_EVENT(TEB* pThTeb, DWORD ExitCode, bool ReuseLock=false)
 {
  if(!this->IsActive())return -9;
- DbgEvtEx evt;
- evt.dwDebugEventCode = EXIT_THREAD_DEBUG_EVENT;
- evt.dwProcessId = this->CurProcID;
- evt.dwThreadId  = ThreadID;    
- 
- evt.u.ExitThread.dwExitCode = ExitCode;
- if(!this->ThList.RemoveThreadFromList(ThreadID)){DBGMSG("Unregistered thread: ThreadID=%08X(%u)",ThreadID,ThreadID); return -3;};
- DBGMSG("PutMsg: ThreadID=%08X(%u), ExitCode=%08X, Size=%08X",ThreadID,ThreadID,ExitCode,sizeof(evt));
- int res = this->PutMsg(mtDbgRsp, miWaitForDebugEvent, 0, &evt, sizeof(evt));     
- this->DoSuspendThreads(evt.dwThreadId, -1, true);  //if(Suspend)this->ThList.Suspend(this->ThList.FindThreadIdxInList(nullptr, evt.dwThreadId), true);  // Suspends this thread. It will be removed after next Resume call  // Lets hope that it will be executed before miContinueDebugEvent
- return res; 
+ if(!ReuseLock)this->ThList.Lock();
+ UINT ThreadID = (UINT)pThTeb->ClientId.UniqueThread;
+ int TIdx = this->ThList.FindThreadIdxInList(NULL,ThreadID);  
+ if(TIdx < 0)
+  {
+   DBGMSG("Failed to find thread %u!", ThreadID);
+   TIdx = this->Report_CREATE_THREAD_DEBUG_EVENT(pThTeb, true);
+   if(TIdx < 0){DBGMSG("Failed to add the thread %u", ThreadID);}
+   this->ThList.Lock();
+  }
+ DbgEvtEx* evt = this->BegDbgEvent(ThreadID);
+ evt->dwDebugEventCode = EXIT_THREAD_DEBUG_EVENT;
+ evt->dwProcessId = this->CurProcID;   
+ evt->dwThreadId  = ThreadID;       // Do not access its TEB in case it is already deallocated
+ evt->PathSize    = 0;
+ evt->u.ExitThread.dwExitCode = ExitCode;
+ DBGMSG("PushDbgEvt: ThreadID=%08X(%u), ExitCode=%08X",ThreadID,ThreadID,ExitCode);
+ this->EndDbgEvent(evt, TIdx);
+ if((pThTeb == NtCurrentTeb())&&(TIdx >= 0))this->ThList.Suspend(TIdx,NULL,true,true);   // Unlock and suspend itself (If reporting itself)
+   else this->ThList.UnLock();
+ return 0; 
 }
 //------------------------------------------------------------------------------------
 // TODO: Accept not only mapped PE images?
-int Report_LOAD_DLL_DEBUG_INFO(PVOID DllBase, bool DoSuspend=true)    // <<<<<<<<<<<<<<< TODO: Name resolving   // TODO: More checks that PE module is valid
+int Report_LOAD_DLL_DEBUG_INFO(TEB* pThTeb, PVOID DllBase)   
 {
  if(!this->IsActive())return -9;
- DbgEvtEx evt;
- wchar_t PathBuf[MAX_PATH];
- evt.dwDebugEventCode = LOAD_DLL_DEBUG_EVENT;
- evt.dwProcessId = this->CurProcID;
- evt.dwThreadId  = NtCurrentThreadId();    // Always acceptable?
- if(evt.dwThreadId == this->ClientThID)evt.dwThreadId = this->MainThID;    // Hide Client thread from debugger
- 
- *evt.FilePath                       = 0;
- evt.u.LoadDll.hFile                 = NULL;        // NOTE: TitanEngine will try to call CreateFileMappingA on it
- evt.u.LoadDll.lpBaseOfDll           = DllBase;
- evt.u.LoadDll.dwDebugInfoFileOffset = 0;
- evt.u.LoadDll.nDebugInfoSize        = 0;
- evt.u.LoadDll.lpImageName           = NULL;   // Find it in DLL or in PEB
- evt.u.LoadDll.fUnicode              = 0;
- evt.PathSize = GetModuleFileNameW((HMODULE)DllBase,PathBuf,sizeof(PathBuf)/sizeof(wchar_t)); // TODO: Take it From mapping  // Base is always same as HMODULE?
- UINT MemSize = sizeof(evt)+(evt.PathSize * sizeof(wchar_t));
- DBGMSG("PutMsg: DllBase=%p, Size=%u, DllPath='%ls'",DllBase,MemSize,&PathBuf);
-
- PVOID MsgPtr = NULL;
- if(this->BeginMsg(&MsgPtr, mtDbgRsp, miWaitForDebugEvent, 0, MemSize, 0) < 0)return -5;
- DbgEvtEx* DstEvt = (DbgEvtEx*)MsgPtr;
- memcpy(DstEvt,&evt,sizeof(evt));
- memcpy(&DstEvt->FilePath, &PathBuf, (evt.PathSize+1) * sizeof(wchar_t));   // Including 0
- int res = this->DoneMsg(NULL);   // this->PutMsg(mtDbgRsp, miWaitForDebugEvent, 0, &evt, sizeof(evt));  
- if(DoSuspend)this->DoSuspendThreads(evt.dwThreadId);    //  if(Suspend)this->DoSuspendThreads(evt.dwThreadId);  //  this->ThList.Suspend(this->ThList.FindThreadIdxInList(nullptr, evt.dwThreadId));  // Suspends this thread
- return res;
+ wchar_t Path[600];
+ UINT PathSize = NNTDLL::GetMappedFilePath(NtCurrentProcess, DllBase, Path, sizeof(Path)); // Get from mapping, avoid accessing an unlocked loader   
+ if(!PathSize){DBGMSG("No name for mapped %p, skipping!", DllBase); return -8;}
+              
+ this->ThList.Lock();
+ UINT ThreadID = (UINT)pThTeb->ClientId.UniqueThread;
+ int TIdx = this->ThList.FindThreadIdxInList(NULL,ThreadID);  
+ if(TIdx < 0)
+  {
+   DBGMSG("Failed to find thread %u!", ThreadID);
+   TIdx = this->Report_CREATE_THREAD_DEBUG_EVENT(pThTeb, true);
+   if(TIdx < 0){DBGMSG("Failed to add the thread %u", ThreadID);}
+   this->ThList.Lock();
+  }
+ DbgEvtEx* evt = this->BegDbgEvent(ThreadID, PathSize * sizeof(wchar_t));
+ evt->dwDebugEventCode = LOAD_DLL_DEBUG_EVENT;
+ evt->dwProcessId = this->CurProcID;
+ evt->dwThreadId  = ThreadID;   // Hide Client thread from debugger    // Always acceptable?
+ *evt->FilePath                       = 0;
+ evt->u.LoadDll.hFile                 = NULL;        // NOTE: TitanEngine will try to call CreateFileMappingA on it
+ evt->u.LoadDll.lpBaseOfDll           = DllBase;
+ evt->u.LoadDll.dwDebugInfoFileOffset = 0;
+ evt->u.LoadDll.nDebugInfoSize        = 0;
+ evt->u.LoadDll.lpImageName           = NULL;   // Find it in DLL or in PEB
+ evt->u.LoadDll.fUnicode              = 0;
+ evt->PathSize = PathSize; 
+ if(PathSize)memcpy(&evt->FilePath, &Path, (PathSize+1)*sizeof(wchar_t));
+ DBGMSG("PushDbgEvt: DllBase=%p, DllPath(%u)=%ls",DllBase,PathSize,&Path);
+ this->EndDbgEvent(evt, TIdx);
+ if((pThTeb == NtCurrentTeb())&&(TIdx >= 0))this->ThList.Suspend(TIdx,NULL,false,true);   // Unlock and suspend itself (If reporting itself)
+   else this->ThList.UnLock();
+ return 0; 
 }
 //------------------------------------------------------------------------------------
-int Report_UNLOAD_DLL_DEBUG_EVENT(PVOID DllBase)
+// Suspends a caller thread
+int Report_UNLOAD_DLL_DEBUG_EVENT(TEB* pThTeb, PVOID DllBase)
 {
  if(!this->IsActive())return -9;
- DbgEvtEx evt;
- evt.dwDebugEventCode = UNLOAD_DLL_DEBUG_EVENT;
- evt.dwProcessId = this->CurProcID;
- evt.dwThreadId  = NtCurrentThreadId();    // Always acceptable?   
- 
- evt.u.UnloadDll.lpBaseOfDll = DllBase;
- DBGMSG("PutMsg: DllBase=%p, Size=%08X",DllBase,sizeof(evt));
- int res = this->PutMsg(mtDbgRsp, miWaitForDebugEvent, 0, &evt, sizeof(evt)); 
- this->DoSuspendThreads(evt.dwThreadId);  // this->ThList.Suspend(this->ThList.FindThreadIdxInList(nullptr, evt.dwThreadId));  // Suspends this thread
- return res;
+ this->ThList.Lock();
+ UINT ThreadID = (UINT)pThTeb->ClientId.UniqueThread;
+ int TIdx = this->ThList.FindThreadIdxInList(NULL,ThreadID);  
+ if(TIdx < 0)
+  {
+   DBGMSG("Failed to find thread %u!", ThreadID);
+   TIdx = this->Report_CREATE_THREAD_DEBUG_EVENT(pThTeb, true);
+   if(TIdx < 0){DBGMSG("Failed to add the thread %u", ThreadID);}
+   this->ThList.Lock();
+  }
+ DbgEvtEx* evt = this->BegDbgEvent(ThreadID);
+ evt->dwDebugEventCode = UNLOAD_DLL_DEBUG_EVENT;
+ evt->dwProcessId = this->CurProcID;
+ evt->dwThreadId  = ThreadID;    // Always acceptable?   
+ evt->PathSize    = 0;
+ evt->u.UnloadDll.lpBaseOfDll = DllBase;
+ DBGMSG("PushDbgEvt: DllBase=%p",DllBase);
+ this->EndDbgEvent(evt, TIdx);
+ if((pThTeb == NtCurrentTeb())&&(TIdx >= 0))this->ThList.Suspend(TIdx,NULL,false,true);   // Unlock and suspend itself (If reporting itself)
+   else this->ThList.UnLock();
+ return 0; 
 }
 //------------------------------------------------------------------------------------
-int Report_EXCEPTION_DEBUG_INFO(int ThreadIdx, PEXCEPTION_RECORD ExceptionRecord, BOOL FirstChance=1)   // No suspending here, do it in HandleException where the thread index is already found
+// Suspends a caller thread
+int Report_EXCEPTION_DEBUG_INFO(int ThIdx, DWORD ThreadID, PEXCEPTION_RECORD ExceptionRecord, BOOL FirstChance=1)   // No suspending here, do it in HandleException where the thread index is already found
 {
- if(!this->IsActive())return -9;
- DbgEvtEx evt;           
- evt.dwDebugEventCode = EXCEPTION_DEBUG_EVENT;
- evt.dwProcessId = this->CurProcID;
- evt.dwThreadId  = (ThreadIdx >= 0)?(this->ThList.GetThreadDesc(ThreadIdx)->ThreadID):(0);
- 
- evt.u.Exception.dwFirstChance = FirstChance;
- memcpy(&evt.u.Exception.ExceptionRecord,ExceptionRecord,sizeof(EXCEPTION_RECORD));
- DBGMSG("PutMsg: ThID=%08X(%u), Code=%08X, Addr=%p, Size=%08X",evt.dwThreadId,evt.dwThreadId,ExceptionRecord->ExceptionCode,ExceptionRecord->ExceptionAddress,sizeof(evt));
- int res = this->PutMsg(mtDbgRsp, miWaitForDebugEvent, 0, &evt, sizeof(evt));  
- this->DoSuspendThreads(evt.dwThreadId, ThreadIdx);
- return res;
+ DbgEvtEx* evt = this->BegDbgEvent(ThreadID);
+ evt->dwDebugEventCode = EXCEPTION_DEBUG_EVENT;
+ evt->dwProcessId = this->CurProcID;
+ evt->dwThreadId  = ThreadID;       // GetThreadDesc is UNSAFE! 
+ evt->PathSize    = 0;
+ evt->u.Exception.dwFirstChance = FirstChance;
+ memcpy(&evt->u.Exception.ExceptionRecord,ExceptionRecord,sizeof(EXCEPTION_RECORD));
+ DBGMSG("PushDbgEvt: ThID=%08X(%u), Code=%08X, Addr=%p",evt->dwThreadId,evt->dwThreadId,ExceptionRecord->ExceptionCode,ExceptionRecord->ExceptionAddress);
+ this->EndDbgEvent(evt, ThIdx);
+ this->ThList.Suspend(ThIdx,NULL,false,true);       // Unlock and Suspend itself
+ return 0; 
 }
 //------------------------------------------------------------------------------------
 
 };
-//====================================================================================
-static ULONG GetProcessID(HANDLE hProcess)
-{
- if(!hProcess || (hProcess == NtCurrentProcess))return NtCurrentProcessId();     
- THREAD_BASIC_INFORMATION tinf;
- ULONG RetLen = 0;
- HRESULT res  = NtQueryInformationThread(NtCurrentThread,ThreadBasicInformation,&tinf,sizeof(THREAD_BASIC_INFORMATION),&RetLen);
- if(res){DBGMSG("Failed to get process ID: %08X", res); return 0;}   // 0 id belongs to the system 
- return (ULONG)tinf.ClientId.UniqueProcess;
-}
-//------------------------------------------------------------------------------------
-static ULONG GetThreadID(HANDLE hThread, ULONG* ProcessID=NULL)
-{
- if(!hThread || (hThread == NtCurrentThread))return NtCurrentThreadId();     
- THREAD_BASIC_INFORMATION tinf;
- ULONG RetLen = 0;
- HRESULT res  = NtQueryInformationThread(hThread,ThreadBasicInformation,&tinf,sizeof(THREAD_BASIC_INFORMATION),&RetLen);
- if(res){DBGMSG("Failed to get thread ID: %08X", res); return 0;}   // 0 id belongs to the system 
- if(ProcessID)*ProcessID = (ULONG)tinf.ClientId.UniqueProcess;
- return (ULONG)tinf.ClientId.UniqueThread;
-}
-//------------------------------------------------------------------------------------
-static ULONG GetCurrProcessThreadID(HANDLE hThread)
-{
- ULONG PrID = 0;
- ULONG ThID = GetThreadID(hThread, &PrID);
- if(!ThID || (PrID != NtCurrentProcessId()))return 0;
- return ThID;
-}
-//------------------------------------------------------------------------------------
-static bool IsCurrentProcess(HANDLE hProcess)
-{
- return GetProcessID(hProcess) == NtCurrentProcessId();
-}
-//------------------------------------------------------------------------------------
-static bool IsCurrentThread(HANDLE hThread)
-{
- return GetThreadID(hThread) == NtCurrentThreadId();
-}
-//------------------------------------------------------------------------------------
-static bool IsCurrentProcessThread(HANDLE hThread)
-{
- return GetCurrProcessThreadID(hThread);
-}
 //====================================================================================
 };

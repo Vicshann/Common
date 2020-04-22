@@ -25,6 +25,7 @@
 
 #include <Windows.h>
 #include <tlhelp32.h>   // Required for tool help declarations
+//#include "ThirdParty\printf.h"
 
 //#include "BLOWFISH.h"
 //#include "MiniString.h"
@@ -32,20 +33,25 @@
 //#include "crc32.h"
 //#include "sha256.h"
 #include "StrUtils.hpp"
+#include "UTF.hpp"
 
+// Global disable
+#pragma warning(disable:4244)    // conversion from '__int64' to 'int', possible loss of data
+#pragma warning(disable:4267)    // 'argument': conversion from 'size_t' to 'DWORD', possible loss of data
+#pragma warning(disable:4302)    // 'type cast': truncation from 'HANDLE' to 'UINT'
+#pragma warning(disable:4311)    // 'type cast': pointer truncation from 'HANDLE' to 'UINT'
+#pragma warning(disable:4200)    // nonstandard extension used: zero-sized array in struct/union
+#pragma warning(disable:4996)    // 'gcvt': The POSIX name for this item is deprecated
+#pragma warning(disable:4146)    // unary minus operator applied to unsigned type, result still unsigned  (DecStrToNum)
 
 #pragma warning(push)
 #pragma warning(disable:4244)     // Type cast (WinAPI compatibility)
 
+//#define NOLOG
 //---------------------------------------------------------------------------
 #define PATHDLMR 0x2F    //  '/'
 #define PATHDLML 0x5C    //  '\'
 
-#define LOGTHID       // ???????????
-#define LOGTICK
-
-#define OUTMSG(msg,...) LogProc(NULL,msg,__VA_ARGS__)
-#define OUTHEX(buf,len) OUTMSG(NULL,len,buf)  
 #ifdef NOLOG
 #define LOGMSG(msg,...)
 #define LOGTXT(txt,len)
@@ -54,21 +60,26 @@
 #define DBGTXT LOGTXT
 #define DBGHEX LOGHEX
 #else   
-#define LOGMSG(msg,...) LogProc(_PRNM_,msg,__VA_ARGS__)
-#define LOGTXT(txt,len) LogProc((char*)1,txt,len);
-#define LOGHEX(buf,len) LOGMSG(NULL,len,buf)          // TODO: Optionally attach HEX buffer to a message that it and dump go in one sync logging  
+#define LOGMSG(msg,...) LogProc(lfLineBreak|lfLogName|lfLogTime|lfLogThID,_PRNM_,msg,__VA_ARGS__)
+#define LOGTXT(txt,len) LogProc(lfRawTextMsg,(char*)len,txt); 
 #ifdef _DEBUG
 #define DBGMSG LOGMSG
 #define DBGTXT LOGTXT
-#define DBGHEX LOGHEX
 #else
 #define DBGMSG(msg,...)
 #define DBGTXT(txt,len)
-#define DBGHEX(buf,len)
 #endif     
 #endif    
 
 #define FOREGROUND_YELLOW (FOREGROUND_RED|FOREGROUND_GREEN)
+
+
+enum ELogModes {lmNone=0,lmFile=0x01,lmCons=0x02,lmProc=0x04,lmFileUpd=0x08};
+enum ELogFlags {lfNone=0,lfLineBreak=0x01,lfLogName=0x02,lfLogTime=0x04,lfLogThID=0x08,lfLogMsgIdx=0x10,lfRawTextMsg=0x20};
+void   _cdecl LogProc(int Flags, char* ProcName, char* Message, ...);
+extern void (_cdecl *pLogProc)(LPSTR, UINT);
+extern int  LogMode;
+extern wchar_t LogFilePath[MAX_PATH];
 
 #ifdef __BORLANDC__
 #define _PRNM_ __FUNC__
@@ -142,11 +153,6 @@ public:
 //---------------------------------------------------------------------------------
 
 
-enum ELogModes {lmNone=0,lmFile=0x01,lmCons=0x02,lmSErr=0x04,lmProc=0x08,lmFileUpd=0x10};
-void   _cdecl LogProc(char* ProcName, char* Message, ...);
-extern void (_cdecl *pLogProc)(LPSTR, UINT);
-extern int  LogMode;
-extern wchar_t LogFilePath[MAX_PATH];
 
 
 #if !defined NTSTATUS
@@ -171,6 +177,7 @@ typedef LONG NTSTATUS;
 //====================================================================================
 // RandomInRange function is missing?
 
+int _stdcall FormatToBuffer(char* Format, char* DstBuf, UINT BufSize, va_list arglist);
 bool _stdcall DeleteFolder(LPSTR FolderPath);
 bool _stdcall DeleteFolderW(PWSTR FolderPath);
 bool _stdcall IsAddrInModule(PVOID Addr, PVOID ModBase, UINT ModSize);
@@ -226,8 +233,22 @@ UINT _stdcall NextItemASN1(PBYTE DataPtr, PBYTE* Body, PBYTE Type, UINT* Size);
 int _stdcall FormatDateForHttp(SYSTEMTIME* st, LPSTR DateStr);
 bool _stdcall IsWow64(void);
 int __stdcall SetProcessPrivilegeState(bool bEnable, LPSTR PrName, HANDLE hProcess=GetCurrentProcess());
-DWORD _fastcall GetRealVersionInfo(PDWORD dwMajor=NULL, PDWORD dwMinor=NULL, PDWORD dwBuild=NULL, PDWORD dwPlatf=NULL);
-int _stdcall GetMappedFilePath(PVOID DllBase, PWSTR PathBuf, UINT BufChrLen);
+char* ftoa_simple(double num, size_t afterpoint, char *buf, size_t len, size_t* size);
+int _stdcall FormatToBuffer(char* format, char* buffer, UINT maxlen, va_list va);
+//---------------------------------------------------------------------------
+inline int _cdecl PrintFToBuf(char* format, char* buffer, UINT maxlen, ...)
+{
+ va_list args;
+ va_start(args,maxlen);
+ int res = FormatToBuffer(format, buffer, maxlen, args);
+ va_end(args);
+ return res;
+}
+//---------------------------------------------------------------------------
+inline void* operator new(size_t Size, void* Obj)
+{
+ return Obj;
+}
 //---------------------------------------------------------------------------
 struct SAppFile
 {
@@ -407,6 +428,16 @@ INLINE bool IsAligned(T ptr)
 
 */
 
+static inline __int64  _fastcall SysTimeToTime64(UINT64 SysTime)   // C++Builder fails 64bit consts!!!
+{
+ __int64 MAXTIME64  = 0x793406fffi64;        // number of seconds from 00:00:00, 01/01/1970 UTC to 23:59:59. 12/31/3000 UTC
+ UINT64  EPOCH_BIAS = 116444736000000000i64; // Number of 100 nanosecond units from 1/1/1601 to 1/1/1970
+ __int64 tim = (__int64)((SysTime - EPOCH_BIAS) / 10000000i64);
+ if(tim > MAXTIME64)tim = (__int64)(-1);
+ return tim;
+}
+//--------------------------------------------------------------------------- 
+
 template<typename T> constexpr size_t countof(T& a){return (sizeof(T) / sizeof(*a));}         // Not for array classes or pointers!
 
 template<class R, class T> __inline R GetAddress(T Src){return reinterpret_cast<R>(reinterpret_cast<void* &>(Src));}
@@ -517,13 +548,7 @@ template<typename T> bool _stdcall IsPathLink(T Name)
 // No Streams support!
 template<typename T, typename O> O _fastcall DecNumToStrU(T Val, O buf, int* Len)     // A/W char string and Signed/Unsigned output by constexpr
 {
- if(Val == 0)
- {
-  if(Len)*Len = 1; 
-  *buf = '0';
-  buf[1] = 0;
-  return buf;
- }
+ if(Val == 0){if(Len)*Len = 1; *buf = '0'; buf[1] = 0; return buf;}
  buf  = &buf[20];
  *buf = 0;
  O end = buf;
@@ -544,7 +569,7 @@ template<typename O, typename T> O _fastcall DecStrToNum(T Str, long* Size=nullp
  T Old = Str;
  bool neg = false;
  if (*Str == '-'){neg = true; ++Str;}
- for(unsigned char ch;(ch=*Str++ - '0') <= 9;)x = (x*10) + ch;
+ for(unsigned char ch;(ch=*Str++ - '0') <= 9;)x = (x*10) + ch;        // Can use a different base?
  if(Size)*Size = (char*)Str - (char*)Old - 1;               // Constexpr?
  if(neg)x = -x;
  return x;
