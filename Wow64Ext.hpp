@@ -20,38 +20,8 @@
  *
  */
 
-#include <Windows.h>
-
-class SWOW64Ext    
+class NWOW64E    
 {
-//------------------------------------------------------------------------------------------------------------
-class CMemPtr
-{
-private:
-    void** m_ptr;
-    bool watchActive;
-
-public:
-    CMemPtr(void** ptr) : m_ptr(ptr), watchActive(true) {}
-
-    ~CMemPtr()
-    {
-        if (*m_ptr && watchActive)
-        { 
-            SWOW64Ext::free(*m_ptr); 
-            *m_ptr = 0; 
-        } 
-    }
-
-    void disableWatch() { watchActive = false; }
-};
-
-#define WATCH(ptr) \
-    CMemPtr watch_##ptr((void**)&ptr)
-
-#define DISABLE_WATCH(ptr) \
-    watch_##ptr.disableWatch()
-
 //------------------------------------------------------------------------------------------------------------
 #define EMIT(a) __asm __emit (a)
 
@@ -100,53 +70,19 @@ public:
 //use of DWORD64 will generate wrong 'pop word ptr[]' and it will break stack
 union reg64
 {
-    DWORD64 v;
-    DWORD dw[2];
+ DWORD64 v;
+ DWORD dw[2];
 };
 //------------------------------------------------------------------------------------------------------------
 
 public:
-#include "NtDefs.h"
+#include "NtDefs.hpp"
 
-//------------------------------------------------------------------------------------------------------------
-static void* malloc(size_t size)
-{
-	return HeapAlloc(GetProcessHeap(), 0, size);
-}
-//------------------------------------------------------------------------------------------------------------
-static void free(void* ptr)
-{
-	if (nullptr != ptr)
-		HeapFree(GetProcessHeap(), 0, ptr);
-}
-//------------------------------------------------------------------------------------------------------------
-static int _wcsicmp(const wchar_t *string1, const wchar_t *string2)
-{
-	wchar_t c1;
-	wchar_t c2;
-	int i = 0;
-	do
-	{
-		c1 = string1[i];
-		if (c1 >= 'A' && c1 <= 'Z')
-			c1 += 0x20;
-
-		c2 = string2[i];
-		if (c2 >= 'A' && c2 <= 'Z')
-			c2 += 0x20;
-
-		i++;
-	} while (c1 && c1 == c2);
-	return c1 - c2;
-}
 //------------------------------------------------------------------------------------------------------------
 #pragma warning(push)
 #pragma warning(disable : 4409)
 static DWORD64 __cdecl X64Call(DWORD64 func, int argC, ...)
 {
-//	if (!g_isWow64)
-//		return 0;
-
     va_list args;
     va_start(args, argC);
     reg64 _rcx = { (argC > 0) ? argC--, va_arg(args, DWORD64) : 0 };
@@ -247,10 +183,9 @@ _ls_e:                                                  ;//
 }
 #pragma warning(pop)
 //------------------------------------------------------------------------------------------------------------
-static void getMem64(void* dstMem, DWORD64 srcMem, size_t sz)
+static void _stdcall getMem64(void* dstMem, DWORD64 srcMem, size_t sz)  
 {
-    if ((nullptr == dstMem) || (0 == srcMem) || (0 == sz))
-        return;
+    if (!dstMem || !srcMem || !sz)return;
 
     reg64 _src = { srcMem };
 #ifndef _AMD64_
@@ -296,10 +231,57 @@ _move_0:                            ;//
 #endif
 }
 //------------------------------------------------------------------------------------------------------------
-static bool cmpMem64(void* dstMem, DWORD64 srcMem, size_t sz)
+static void _stdcall setMem64(DWORD64 dstMem, void* srcMem, size_t sz)  
 {
-    if ((nullptr == dstMem) || (0 == srcMem) || (0 == sz))
-        return false;
+    if (!dstMem || !srcMem || !sz)return;
+
+    reg64 _dst = { dstMem };
+#ifndef _AMD64_
+    __asm
+    {
+        X64_Start();
+
+        ;// below code is compiled as x86 inline asm, but it is executed as x64 code
+        ;// that's why it need sometimes REX_W() macro, right column contains detailed
+        ;// transcription how it will be interpreted by CPU
+
+        push   edi                  ;// push     rdi
+        push   esi                  ;// push     rsi
+                                    ;//
+        mov    esi, srcMem          ;// mov      esi, dword ptr [srcMem]        ; high part of RSI is zeroed
+  REX_W mov    edi, _dst.dw[0]      ;// mov      rdi, qword ptr [_dst]
+        mov    ecx, sz              ;// mov      ecx, dword ptr [sz]            ; high part of RCX is zeroed
+                                    ;//
+        mov    eax, ecx             ;// mov      eax, ecx
+        and    eax, 3               ;// and      eax, 3
+        shr    ecx, 2               ;// shr      ecx, 2
+                                    ;//
+        rep    movsd                ;// rep movs dword ptr [rdi], dword ptr [rsi]
+                                    ;//
+        test   eax, eax             ;// test     eax, eax
+        je     _move_0              ;// je       _move_0
+        cmp    eax, 1               ;// cmp      eax, 1
+        je     _move_1              ;// je       _move_1
+                                    ;//
+        movsw                       ;// movs     word ptr [rdi], word ptr [rsi]
+        cmp    eax, 2               ;// cmp      eax, 2
+        je     _move_0              ;// je       _move_0
+                                    ;//
+_move_1:                            ;//
+        movsb                       ;// movs     byte ptr [rdi], byte ptr [rsi]
+                                    ;//
+_move_0:                            ;//
+        pop    esi                  ;// pop      rsi
+        pop    edi                  ;// pop      rdi
+
+        X64_End();
+    }
+#endif
+}
+//------------------------------------------------------------------------------------------------------------
+static bool _stdcall cmpMem64(void* dstMem, DWORD64 srcMem, size_t sz)
+{
+    if (!dstMem || !srcMem || !sz)return false;
 
     bool result = false;
     reg64 _src = { srcMem };
@@ -351,9 +333,9 @@ _ret_false:                         ;//
     }
 #endif
     return result;
-}
+} 
 //------------------------------------------------------------------------------------------------------------
-static DWORD64 getTEB64()                   // TODO: NTDLL::NtCurrentTeb (Optional)
+static DWORD64 _fastcall getTEB64(void)                   // TODO: NTDLL::NtCurrentTeb (Optional)
 {
     reg64 reg;
     reg.v = 0;
@@ -368,97 +350,100 @@ static DWORD64 getTEB64()                   // TODO: NTDLL::NtCurrentTeb (Option
     return reg.v;
 }
 //------------------------------------------------------------------------------------------------------------
-static DWORD64 __cdecl GetModuleHandle64(wchar_t* lpModuleName)   // TODO: ntdll::LdrGetDllHandleEx
+static int _fastcall _wcsicmp(const wchar_t *string1, const wchar_t *string2)
 {
-//	if (!g_isWow64)
-//		return 0;
-
-    TEB64 teb64;
-    getMem64(&teb64, getTEB64(), sizeof(TEB64));
-    
-    PEB64 peb64;
-    getMem64(&peb64, teb64.ProcessEnvironmentBlock, sizeof(PEB64));
-    PEB_LDR_DATA64 ldr;
-    getMem64(&ldr, peb64.Ldr, sizeof(PEB_LDR_DATA64));
-
-    DWORD64 LastEntry =0;// peb64.Ldr + offsetof(PEB_LDR_DATA64, InLoadOrderModuleList);
-    LDR_DATA_TABLE_ENTRY64 head;
-    head.InLoadOrderLinks.Flink = ldr.InLoadOrderModuleList.Flink;
-    do
-    {
-        getMem64(&head, head.InLoadOrderLinks.Flink, sizeof(LDR_DATA_TABLE_ENTRY64));
-
-        wchar_t* tempBuf = (wchar_t*)malloc(head.BaseDllName.MaximumLength);
-        if (nullptr == tempBuf)
-            return 0;
-        WATCH(tempBuf);
-        getMem64(tempBuf, head.BaseDllName.Buffer, head.BaseDllName.MaximumLength);
-
-        if (0 == _wcsicmp(lpModuleName, tempBuf))
-            return head.DllBase;
-    }
-    while (head.InLoadOrderLinks.Flink != LastEntry);
-
-    return 0;
+ wchar_t c1;
+ wchar_t c2;
+ int i = 0;
+ do
+  {
+   c1 = string1[i];
+   if (c1 >= 'A' && c1 <= 'Z')c1 += 0x20;
+   c2 = string2[i];
+   if (c2 >= 'A' && c2 <= 'Z')c2 += 0x20;
+   i++;
+  } 
+   while (c1 && c1 == c2);
+ return c1 - c2;
 }
 //------------------------------------------------------------------------------------------------------------
-static DWORD64 getNTDLL64()
-{
-    static DWORD64 ntdll64 = 0;
-    if (0 != ntdll64)
-        return ntdll64;
+static DWORD64 _stdcall GetModuleHandle64(wchar_t* lpModuleName, DWORD* DllSize=NULL)   // TODO: ntdll::LdrGetDllHandleEx
+{		
+ TEB64 teb64;
+ PEB64 peb64;
+ PEB_LDR_DATA64 ldr;
+ LDR_DATA_TABLE_ENTRY64 head;
 
-    ntdll64 = GetModuleHandle64(L"ntdll.dll");
-    return ntdll64;
+ DWORD64 LastEntry = 0;              // peb64.Ldr + offsetof(PEB_LDR_DATA64, InLoadOrderModuleList);
+ getMem64(&teb64, getTEB64(), sizeof(TEB64));   
+ getMem64(&peb64, teb64.ProcessEnvironmentBlock, sizeof(PEB64));
+ getMem64(&ldr, peb64.Ldr, sizeof(PEB_LDR_DATA64));
+
+ head.InLoadOrderLinks.Flink = ldr.InLoadOrderModuleList.Flink;
+ wchar_t tempBuf[1028];   // ~2K    // No full module path expected
+ do
+  {
+   getMem64(&head, head.InLoadOrderLinks.Flink, sizeof(LDR_DATA_TABLE_ENTRY64));
+   getMem64(tempBuf, head.BaseDllName.Buffer, head.BaseDllName.MaximumLength);
+   if(0 == _wcsicmp(lpModuleName, tempBuf))
+    {
+     if(DllSize)*DllSize = head.SizeOfImage;
+     return head.DllBase;
+    }
+  }
+   while(head.InLoadOrderLinks.Flink != LastEntry);
+ return 0;
 }
 //------------------------------------------------------------------------------------------------------------
-static DWORD64 getLdrGetProcedureAddress()             // TODO: NTDLL::LdrGetProcedureAddress
+static DWORD64 _stdcall getNTDLL64(void)
 {
-    DWORD64 modBase = getNTDLL64();
-	if (0 == modBase)
-		return 0;
-    
-    IMAGE_DOS_HEADER idh;
-    getMem64(&idh, modBase, sizeof(idh));
-
-    IMAGE_NT_HEADERS64 inh;
-    getMem64(&inh, modBase + idh.e_lfanew, sizeof(IMAGE_NT_HEADERS64));
-    
-    IMAGE_DATA_DIRECTORY& idd = inh.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
-    
-    if (0 == idd.VirtualAddress)
-        return 0;
-
-    IMAGE_EXPORT_DIRECTORY ied;
-    getMem64(&ied, modBase + idd.VirtualAddress, sizeof(ied));
-
-    DWORD* rvaTable = (DWORD*)malloc(sizeof(DWORD)*ied.NumberOfFunctions);
-    if (nullptr == rvaTable)
-        return 0;
-    WATCH(rvaTable);
-    getMem64(rvaTable, modBase + ied.AddressOfFunctions, sizeof(DWORD)*ied.NumberOfFunctions);
-    
-    WORD* ordTable = (WORD*)malloc(sizeof(WORD)*ied.NumberOfFunctions);
-    if (nullptr == ordTable)
-        return 0;
-    WATCH(ordTable);
-    getMem64(ordTable, modBase + ied.AddressOfNameOrdinals, sizeof(WORD)*ied.NumberOfFunctions);
-
-    DWORD* nameTable = (DWORD*)malloc(sizeof(DWORD)*ied.NumberOfNames);
-    if (nullptr == nameTable)
-        return 0;
-    WATCH(nameTable);
-    getMem64(nameTable, modBase + ied.AddressOfNames, sizeof(DWORD)*ied.NumberOfNames);
-
-    // lazy search, there is no need to use binsearch for just one function
-    for (DWORD i = 0; i < ied.NumberOfFunctions; i++)
+ static DWORD64 ntdll64 = 0;
+ if(0 != ntdll64)return ntdll64;
+ ntdll64 = GetModuleHandle64(L"ntdll.dll");
+ return ntdll64;
+}
+//------------------------------------------------------------------------------------------------------------
+static DWORD64 _stdcall GetProcAddressSimpleX64(DWORD64 modBase, char* ProcName)             // TODO: NTDLL::LdrGetProcedureAddress
+{
+ if(!modBase || !ProcName || !*ProcName)return 0;   
+ IMAGE_DOS_HEADER idh;
+ IMAGE_NT_HEADERS64 inh;
+ IMAGE_EXPORT_DIRECTORY ied;
+ char  PNameBuf[128];     // Enough for ntdll.dll
+ DWORD NameTable[512];    // NOTE: Disable chkstk 
+                      
+ getMem64(&idh, modBase, sizeof(idh));
+ getMem64(&inh, modBase + idh.e_lfanew, sizeof(inh));  
+ IMAGE_DATA_DIRECTORY& idd = inh.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+ if(!idd.VirtualAddress)return 0;
+ getMem64(&ied, modBase + idd.VirtualAddress, sizeof(ied));
+ LOGMSG("ModBase=%016llX, AddressOfNames=%08X",modBase, ied.AddressOfNames); 
+  
+ int PNameLen = 0;
+ while(ProcName[PNameLen])PNameLen++;
+ DWORD MaxNamesInBuf = sizeof(NameTable) / sizeof(DWORD);  
+ for(UINT i=0,ctr=MaxNamesInBuf; i < ied.NumberOfFunctions; i++, ctr++)   // lazy search, there is no need to use binsearch for just one function
+  {
+   if(ctr >= MaxNamesInBuf)
     {
-        if (!cmpMem64("LdrGetProcedureAddress", modBase + nameTable[i], sizeof("LdrGetProcedureAddress")))
-            continue;
-        else
-            return modBase + rvaTable[ordTable[i]];
+     UINT RecsLeft = ied.NumberOfNames - i;
+     if(RecsLeft > MaxNamesInBuf)RecsLeft = MaxNamesInBuf;
+     getMem64(&NameTable, modBase + ied.AddressOfNames + (i * sizeof(DWORD)), sizeof(DWORD)*RecsLeft);
+     ctr = 0;
     }
-    return 0;
+//   LOGMSG("NameTable %p: %08X",&NameTable, NameTable[ctr]); 
+   getMem64(PNameBuf, modBase + NameTable[ctr], PNameLen + 1);  // Including 0    
+   int NLen = 0;
+   while((PNameBuf[NLen] == ProcName[NLen]) && PNameBuf[NLen])NLen++;
+   if(NLen != PNameLen)continue;        // Not match
+   WORD  OrdTblVal; 
+   DWORD RvaTblVal;
+   getMem64(&OrdTblVal, modBase + ied.AddressOfNameOrdinals + (sizeof(WORD) * i), sizeof(WORD)); 
+   getMem64(&RvaTblVal, modBase + ied.AddressOfFunctions + (sizeof(DWORD) * OrdTblVal), sizeof(DWORD)); 
+   LOGMSG("Found: %016llX",(modBase + RvaTblVal)); 
+   return modBase + RvaTblVal; 
+  } 
+ return 0;
 }
 //------------------------------------------------------------------------------------------------------------
 /*static VOID __cdecl SetLastErrorFromX64Call(DWORD64 status)
@@ -482,23 +467,21 @@ static DWORD64 getLdrGetProcedureAddress()             // TODO: NTDLL::LdrGetPro
 	}
 } */
 //------------------------------------------------------------------------------------------------------------
-static DWORD64 __cdecl GetProcAddress64(DWORD64 hModule, char* funcName)
+static DWORD64 _stdcall GetProcAddress64(DWORD64 hModule, char* funcName)
 {
-    static DWORD64 _LdrGetProcedureAddress = 0;
-    if (0 == _LdrGetProcedureAddress)
-    {
-        _LdrGetProcedureAddress = getLdrGetProcedureAddress();
-        if (0 == _LdrGetProcedureAddress)
-            return 0;
-    }
-
-    _UNICODE_STRING_T<DWORD64> fName = { 0 };
-    fName.Buffer = (DWORD64)funcName;
-    fName.Length = (WORD)strlen(funcName);
-    fName.MaximumLength = fName.Length + 1;
-    DWORD64 funcRet = 0;
-    X64Call(_LdrGetProcedureAddress, 4, (DWORD64)hModule, (DWORD64)&fName, (DWORD64)0, (DWORD64)&funcRet);
-    return funcRet;
+ static DWORD64 _LdrGetProcedureAddress = 0;
+ if(0 == _LdrGetProcedureAddress)
+  {
+   _LdrGetProcedureAddress = GetProcAddressSimpleX64(getNTDLL64(), "LdrGetProcedureAddress");
+   if(0 == _LdrGetProcedureAddress)return 0;
+  }
+ _UNICODE_STRING_T<DWORD64> fName = { 0 };
+ fName.Buffer = (DWORD64)funcName;
+ fName.Length = (WORD)strlen(funcName);
+ fName.MaximumLength = fName.Length + 1;
+ DWORD64 funcRet = 0;
+ X64Call(_LdrGetProcedureAddress, 4, (DWORD64)hModule, (DWORD64)&fName, (DWORD64)0, (DWORD64)&funcRet);
+ return funcRet;
 }
 //------------------------------------------------------------------------------------------------------------
 static NTSTATUS _stdcall QuerySystemInformation(SYSTEM_INFORMATION_CLASS SystemInformationClass, PVOID SystemInformation, ULONG SystemInformationLength, PULONG ReturnLength)

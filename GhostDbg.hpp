@@ -14,17 +14,9 @@
   WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. 
 */
 
-#include "ntdll.h"
-#include "FormatPE.h"
-#include "ShMemIPC.hpp"
-
-#ifndef ctENCSA
-#define ctENCSA(val) val
-#endif
-
-struct GhDbg
+struct NGhDbg
 {
-typedef ShMem SHM;     // Shorter and helps in case of renaming
+typedef NShMem SHM;     // Shorter and helps in case of renaming
 
 //====================================================================================
 enum EDatType {dtNone,dtNull=0x01,dtBool=0x02,dtBYTE=0x04,dtWORD=0x08,dtDWORD=0x10,dtQWORD=0x20,dtSigned=0x40,dtReal=0x80};
@@ -72,7 +64,7 @@ public:
 struct SThDesc
 {
  enum ThFlags {tfNone=0,tfTraceFlg=0x01,tfDbgCont=0x02,tfOpenedHnd=0x04,tfMarkedForRemove=0x08,tfSuspendedForAll=0x10,  tfTraceFlagMsk=0x0100};
- volatile ULONG  Flags;
+ volatile DWORD  Flags;
  volatile DWORD  Index;  
  volatile DWORD  ThreadID;  // Not WORD
  volatile HANDLE hThread;
@@ -81,7 +73,7 @@ struct SThDesc
  struct SHwBp
   {
    PBYTE Addr;
-   ULONG Size;
+   DWORD Size;
   } volatile HwBpLst[4]; 
  struct SDbgCtx
   {
@@ -94,9 +86,9 @@ struct SThDesc
    bool   TrFlg;    // Unreliable, because this flag can be accessed with pushf/popf
   } volatile DbgCtx;  
 //------------------------------------------------------------------------------------  
-inline void  SyncResFlags(ULONG Flg){_InterlockedAnd((long*)&this->Flags,~Flg);}
-inline void  SyncSetFlags(ULONG Flg){_InterlockedOr((long*)&this->Flags,Flg);}
-inline ULONG SyncGetFlags(ULONG Flg){return this->Flags & Flg;}
+inline void  SyncResFlags(DWORD Flg){_InterlockedAnd((long*)&this->Flags,~Flg);}
+inline void  SyncSetFlags(DWORD Flg){_InterlockedOr((long*)&this->Flags,Flg);}
+inline DWORD SyncGetFlags(DWORD Flg){return this->Flags & Flg;}
 inline void  SetTraceFlagState(bool State)
 {
  if(State)this->SyncSetFlags(tfTraceFlg); 
@@ -180,6 +172,12 @@ DbgEvtEx* PopDbgEvent(UINT* Size=NULL)    // Requires ThreadList lock
  return (DbgEvtEx*)this->EvtStk.PopBlkEx(Size);
 }
 //------------------------------------------------------------------------------------
+DbgEvtEx* GetDbgEventAt(UINT& Offset)
+{
+ return (DbgEvtEx*)this->EvtStk.GetBlkAt(Offset);
+}
+//------------------------------------------------------------------------------------
+
 // Windows Server 2003 and Windows XP: The value of the THREAD_ALL_ACCESS flag increased on Windows Server 2008 and Windows Vista. If an application compiled for Windows Server 2008 and 
 // Windows Vista is run on Windows Server 2003 or Windows XP, the THREAD_ALL_ACCESS flag contains access bits that are not supported and the function specifying this flag fails with ERROR_ACCESS_DENIED. 
 //
@@ -817,6 +815,7 @@ class CDbgClient: public SHM::CMessageIPC
 {
  bool    BreakWrk;
  bool    InDbgEvent;
+ bool    DbgAttached;
  DWORD   ExcludedThID;
  DWORD   DbgBrkThID;
  DWORD   ClientThID;
@@ -860,7 +859,7 @@ PTEB FindModulesAndTEBs(TEB* CurTeb, SHM::CGrowArrImpl<PBYTE>* ModArr, SHM::CGro
     {
      if(LastABase == meminfo.AllocationBase)continue;
      LastABase = meminfo.AllocationBase; 
-     if(IsValidPEHeader(BaseAddress))
+     if(NPEFMT::IsValidPEHeader(BaseAddress))
       {
        DBGMSG("Found PE image at %p",BaseAddress);
        *ModArr->Add(NULL) = BaseAddress;
@@ -984,6 +983,7 @@ int ProcessRequestDbg(SMsgHdr* Req)
      api.Assign((PBYTE)&Req->Data,Req->DataSize);
      api.PopArg(dwProcessId);
      if(dwProcessId != this->CurProcID){DBGMSG("Process ID mismatch: %08X:%08X",dwProcessId,this->CurProcID); return -1;}  // Allow to fail here?
+     this->DbgAttached = true;
 
      SHM::CGrowArr<PTEB,  128> TebArr;    // NOTE: Stack arrays reserved on stack forever
      SHM::CGrowArr<PBYTE, 128> ModArr;    // 2048
@@ -1008,13 +1008,13 @@ int ProcessRequestDbg(SMsgHdr* Req)
        TEB* pTeb = TebArr[Ctr];
        UINT ThID = (UINT)pTeb->ClientId.UniqueThread;
        if((ThID == this->ClientThID)||(ThID == this->MainThID)||(ThID == this->ExcludedThID))continue;   // Do not report Client, Caller thread and Main thread(again)   // Man thread must be reported only in CREATE_PROCESS_DEBUG_EVENT
-       this->Report_CREATE_THREAD_DEBUG_EVENT(pTeb);   // Open a thread`s handle, report it and suspend
+       this->Report_CREATE_THREAD_DEBUG_EVENT(pTeb, false, true);   // Open a thread`s handle, report it and suspend
       }
-     for(int Ctr=ModArr.Count()-1;Ctr >= 0;Ctr--)  // TODO: Report ntdll.dll first as it is done originally?
+     for(int Ctr=ModArr.Count()-1;Ctr >= 0;Ctr--)  // Must be AFTER reporting and supending of all threads
       {
        PVOID hModule = ModArr[Ctr];
        if((hModule == this->hClientDll)||(hModule == CurTeb->ProcessEnvironmentBlock->ImageBaseAddress))continue;                  // Do not report Client DLL and main module
-       this->Report_LOAD_DLL_DEBUG_INFO(MainThTeb, hModule);     // No suspending here (Only a main thread is registered anyway)
+       this->Report_LOAD_DLL_DEBUG_INFO(MainThTeb, hModule, true);     // No suspending here (Only a main thread is registered anyway)
       }
      this->Report_CREATE_PROCESS_DEBUG_EVENT(MainThTeb);   // Report process creation    // Suspend Main Thread
      this->DispatchDebugEvents(true);    // Dispatch initial events backwards
@@ -1023,6 +1023,7 @@ int ProcessRequestDbg(SMsgHdr* Req)
    case miDebugActiveProcessStop:
     {
      DBGMSG("miDebugActiveProcessStop");
+     this->DbgAttached = false;
     }
    break;
    case miContinueDebugEvent:
@@ -1079,7 +1080,7 @@ int ProcessRequestDbg(SMsgHdr* Req)
      PVOID  StackBase = NULL; 
      SIZE_T StackSize = 0x10000;
      NtAllocateVirtualMemory(NtCurrentProcess, &StackBase, 0, &StackSize, MEM_COMMIT, PAGE_READWRITE);
-     NTSTATUS stat = NNTDLL::NativeCreateThread(&CDbgClient::DbgBreakThread, this, NtCurrentProcess, TRUE, &StackBase, &StackSize, &ThreadHandle, NULL);  // HANDLE ThreadHandle = CreateThread(NULL,0,&CDbgClient::DbgBreakThread,this,CREATE_SUSPENDED,&this->DbgBrkThID);  // Just to do int3
+     NTSTATUS stat = NNTDLL::NativeCreateThread(&CDbgClient::DbgBreakThread, this, this, NtCurrentProcess, TRUE, &StackBase, &StackSize, &ThreadHandle, NULL);  // HANDLE ThreadHandle = CreateThread(NULL,0,&CDbgClient::DbgBreakThread,this,CREATE_SUSPENDED,&this->DbgBrkThID);  // Just to do int3
      DBGMSG("DebugBreakThread: Addr=%p, StackBase=%p, StackSize=%08X",&CDbgClient::DbgBreakThread,StackBase,StackSize);
 	 if(ThreadHandle)
       {
@@ -1437,6 +1438,20 @@ void EndDbgEvent(DbgEvtEx* Evt, int ThIdx)
  DBGMSG("Leave");
 }
 //------------------------------------------------------------------------------------
+bool IsExistDbgEvent(UINT DbgEvtCode, DWORD ThreadID, PVOID BaseAddr)
+{
+ UINT Offset = -1;
+ for(;;)
+  {
+   DbgEvtEx* Evt = this->ThList.GetDbgEventAt(Offset);
+   if(!Evt)break;
+   if(Evt->dwDebugEventCode != DbgEvtCode)continue;
+   if((LOAD_DLL_DEBUG_EVENT == DbgEvtCode) && (Evt->u.LoadDll.lpBaseOfDll == BaseAddr))return true;
+   if((CREATE_THREAD_DEBUG_EVENT == DbgEvtCode) && (Evt->u.CreateThread.lpThreadLocalBase == BaseAddr) && (Evt->dwThreadId == ThreadID))return true;                  
+  }
+ return false;
+}
+//------------------------------------------------------------------------------------
 
 public:
  int (_fastcall* UsrReqCallback)(SMsgHdr* Req, PVOID ArgA, UINT ArgB);
@@ -1456,6 +1471,7 @@ static UINT   FakeHandleToUint(HANDLE hTh){return (~(UINT)hTh >> 5);}
 static bool   IsFakeHandle(HANDLE hTh){return !((UINT)hTh & 0x1F) && ((UINT)hTh & 0xF0000000);}      // Pointer Type?
 bool IsDbgThreadID(DWORD ThID){return (ThID == this->ClientThID);}
 bool IsActive(void){return ((bool)this->hIPCThread && !this->BreakWrk);}
+bool IsDbgAttached(void){return this->DbgAttached;}
 //------------------------------------------------------------------------------------
 static inline PVOID GetInstrPtr(CONTEXT* ctx)
 {
@@ -1468,9 +1484,9 @@ static inline PVOID GetInstrPtr(CONTEXT* ctx)
 //------------------------------------------------------------------------------------
 // Different threads of a debugger will direct their requests here
 //
-static void _fastcall IPCQueueThread(LPVOID lpThreadParameter)
+static void _stdcall IPCQueueThread(LPVOID lpThreadParameter)
 {    
- DBGMSG("Enter: ThreadId=%u", NtCurrentThreadId());
+ DBGMSG("Enter: ThreadId=%u, This=%p", NtCurrentThreadId(), lpThreadParameter);
  CDbgClient* DbgIPC = (CDbgClient*)lpThreadParameter;
  DbgIPC->ClientThID = NtCurrentThreadId();
  DbgIPC->Connect(NtCurrentProcessId(),DbgIPC->IPCSize);       // Create SharedBuffer name for current process, a debugger will connect to it
@@ -1497,8 +1513,8 @@ static NTSTATUS CreateIpcThread(PHANDLE pThHndl, PVOID Param, BOOL Suspended)
  PVOID  StackBase = NULL; 
  SIZE_T StackSize = 0x10000;    // Should be enough
  NtAllocateVirtualMemory(NtCurrentProcess, &StackBase, 0, &StackSize, MEM_COMMIT, PAGE_READWRITE);
- DBGMSG("Param=%p",Param);
- return NNTDLL::NativeCreateThread(&CDbgClient::IPCQueueThread, Param, NtCurrentProcess, Suspended, &StackBase, &StackSize, pThHndl, NULL);  
+ DBGMSG("Param=%p",Param);                                                                     
+ return NNTDLL::NativeCreateThread(&CDbgClient::IPCQueueThread, Param, Param, NtCurrentProcess, Suspended, &StackBase, &StackSize, pThHndl, NULL);   
 }
 //------------------------------------------------------------------------------------
 CDbgClient(PVOID pCallerMod=NULL)
@@ -1516,14 +1532,15 @@ CDbgClient(PVOID pCallerMod=NULL)
  this->UsrReqCallback = NULL;
  this->ExcludedThID   = 0;
  this->DbgBrkThID     = 0;
- this->ClientThID = 0;
- this->UrsOpts    = 0;
- this->IPCSize    = 0x100000;  // Smaller is faster   // More DLLs in a target application, more buffer size it will require on attach    // (1024*1024)*4;
- this->InDbgEvent = true;      // Until an Attach event
- this->BreakWrk   = true;
- this->hClientDll = pCallerMod;
- this->CurProcID  = NtCurrentProcessId(); 
- this->MainThID   = 0;
+ this->ClientThID  = 0;
+ this->UrsOpts     = 0;
+ this->IPCSize     = 0x100000;  // Smaller is faster   // More DLLs in a target application, more buffer size it will require on attach    // (1024*1024)*4;
+ this->DbgAttached = false;
+ this->InDbgEvent  = true;      // Until an Attach event
+ this->BreakWrk    = true;
+ this->hClientDll  = pCallerMod;
+ this->CurProcID   = NtCurrentProcessId(); 
+ this->MainThID    = 0;
 }
 //------------------------------------------------------------------------------------
 ~CDbgClient()
@@ -1537,6 +1554,7 @@ bool Start(UINT Size=0, HANDLE hThread=NULL, PVOID IPCThProc=NULL, UINT MainThre
  this->ExcludedThID = ExcludeThId;
  this->MainThID     = MainThreadId;
  this->InDbgEvent   = true; 
+ this->DbgAttached  = false;
  if(Size)this->IPCSize = Size;
  if(!hThread)
   {
@@ -1579,10 +1597,11 @@ bool Stop(void)
 {
  if(!this->IsActive()){DBGMSG("Not active!"); return false;}
  this->BreakWrk = true;
+ this->DbgAttached = false;
  if(this->ClientThID != NtCurrentThreadId())
   {
    DBGMSG("Waiting for ClientThread termination");
-   DWORD res = ShMem::WaitForSingle(this->hIPCThread, 1000);    // Not INFINITE, it will stuck on ExitProcess!
+   DWORD res = SHM::WaitForSingle(this->hIPCThread, 1000);    // Not INFINITE, it will stuck on ExitProcess!
    if(WAIT_OBJECT_0 != res)
     {
      this->ThList.Lock();
@@ -1770,11 +1789,12 @@ int Report_EXIT_PROCESS_DEBUG_EVENT(TEB* pThTeb, DWORD ExitCode)      // Unused 
  return 0; 
 }
 //------------------------------------------------------------------------------------
-int Report_CREATE_THREAD_DEBUG_EVENT(TEB* pThTeb, bool ReuseLock=false)
+int Report_CREATE_THREAD_DEBUG_EVENT(TEB* pThTeb, bool ReuseLock=false, bool CheckForDups=false)
 {
  if(!this->IsActive())return -9;
  if(!ReuseLock)this->ThList.Lock();
  UINT ThreadID = (UINT)pThTeb->ClientId.UniqueThread;
+ if(CheckForDups && this->IsExistDbgEvent(CREATE_THREAD_DEBUG_EVENT, ThreadID, pThTeb)){DBGMSG("Already reported!"); this->ThList.UnLock(); return -8;}   // If called from DebugerAttach afrer AddressSpace scan
  int TIdx = this->ThList.AddThreadToList(pThTeb);
  if(TIdx < 0){DBGMSG("Failed to add the thread %u", ThreadID);}
  DbgEvtEx* evt = this->BegDbgEvent(ThreadID);
@@ -1819,7 +1839,7 @@ int Report_EXIT_THREAD_DEBUG_EVENT(TEB* pThTeb, DWORD ExitCode, bool ReuseLock=f
 }
 //------------------------------------------------------------------------------------
 // TODO: Accept not only mapped PE images?
-int Report_LOAD_DLL_DEBUG_INFO(TEB* pThTeb, PVOID DllBase)   
+int Report_LOAD_DLL_DEBUG_INFO(TEB* pThTeb, PVOID DllBase, bool CheckForDups=false)   
 {
  if(!this->IsActive())return -9;
  wchar_t Path[600];
@@ -1828,6 +1848,7 @@ int Report_LOAD_DLL_DEBUG_INFO(TEB* pThTeb, PVOID DllBase)
               
  this->ThList.Lock();
  UINT ThreadID = (UINT)pThTeb->ClientId.UniqueThread;
+ if(CheckForDups && this->IsExistDbgEvent(LOAD_DLL_DEBUG_EVENT, ThreadID, DllBase)){DBGMSG("Already reported!"); this->ThList.UnLock(); return -8;}   // If called from DebugerAttach afrer AddressSpace scan
  int TIdx = this->ThList.FindThreadIdxInList(NULL,ThreadID);  
  if(TIdx < 0)
   {

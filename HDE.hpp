@@ -1,13 +1,10 @@
 
 #pragma once
 
-#ifndef HDEH
-#define HDEH
-
-
 //---------------------------------------------------------------------------
 #pragma pack(push,1)
-
+struct NHDE
+{
 // Tables
 struct SHDE32
 {
@@ -20,9 +17,7 @@ struct SHDE32
  static const UINT16 DELTA_OP_ONLY_MEM  = 0x1cb;
  static const UINT16 DELTA_OP2_ONLY_MEM = 0x1da;
 
-static inline UINT8* Table(void)
-{
- static UINT8 hdeTable[] = {
+ static inline UINT8 Table[] = {
   0xa3,0xa8,0xa3,0xa8,0xa3,0xa8,0xa3,0xa8,0xa3,0xa8,0xa3,0xa8,0xa3,0xa8,0xa3,
   0xa8,0xaa,0xaa,0xaa,0xaa,0xaa,0xaa,0xaa,0xaa,0xac,0xaa,0xb2,0xaa,0x9f,0x9f,
   0x9f,0x9f,0xb5,0xa3,0xa3,0xa4,0xaa,0xaa,0xba,0xaa,0x96,0xaa,0xa8,0xaa,0xc3,
@@ -58,8 +53,6 @@ static inline UINT8* Table(void)
   0x13,0x09,0x00,0x16,0x08,0x00,0x17,0x09,0x00,0x2b,0x09,0x00,0xae,0xff,0x07,
   0xb2,0xff,0x00,0xb4,0xff,0x00,0xb5,0xff,0x00,0xc3,0x01,0x00,0xc7,0xff,0xbf,
   0xe7,0x08,0x00,0xf0,0x02,0x00};
- return (UINT8*)&hdeTable;
-}
 };
 
 struct SHDE64
@@ -73,9 +66,7 @@ struct SHDE64
  static const UINT16 DELTA_OP_ONLY_MEM  = 0x1d8;
  static const UINT16 DELTA_OP2_ONLY_MEM = 0x1e7;
 
-static inline UINT8* Table(void)
-{
- static UINT8 hdeTable[] = {
+ static inline UINT8 Table[] = {
   0xa5,0xaa,0xa5,0xb8,0xa5,0xaa,0xa5,0xaa,0xa5,0xb8,0xa5,0xb8,0xa5,0xb8,0xa5,
   0xb8,0xc0,0xc0,0xc0,0xc0,0xc0,0xc0,0xc0,0xc0,0xac,0xc0,0xcc,0xc0,0xa1,0xa1,
   0xa1,0xa1,0xb1,0xa5,0xa5,0xa6,0xc0,0xc0,0xd7,0xda,0xe0,0xc0,0xe4,0xc0,0xea,
@@ -112,8 +103,7 @@ static inline UINT8* Table(void)
   0x00,0x16,0x08,0x00,0x17,0x09,0x00,0x2b,0x09,0x00,0xae,0xff,0x07,0xb2,0xff,
   0x00,0xb4,0xff,0x00,0xb5,0xff,0x00,0xc3,0x01,0x00,0xc7,0xff,0xbf,0xe7,0x08,
   0x00,0xf0,0x02,0x00};
- return (UINT8*)&hdeTable;
-}
+
 };
 
 template<typename THde> class CHDE
@@ -220,7 +210,7 @@ unsigned int Disasm(const void *code)
  const bool bHDEx64	= (THde::DELTA_PREFIXES == SHDE64::DELTA_PREFIXES);  // NOTE: The compiler must optimize out this along with every check of this flag because it is static!
 
     UINT8 x, c, *p = (UINT8 *)code, cflags, opcode, pref = 0;
-    UINT8 *ht  = THde::Table(), m_mod, m_reg, m_rm, disp_size = 0;
+    UINT8 *ht  = THde::Table, m_mod, m_reg, m_rm, disp_size = 0;
     UINT8 op64 = 0;
 
     memset(this,0,sizeof(CHDE));  // NOTE: Replace with 'for' if it causes some include requirements    // Skip this to gain more speed?
@@ -306,7 +296,7 @@ unsigned int Disasm(const void *code)
     }
 
     if (this->opcode2) {
-        ht = THde::Table() + THde::DELTA_PREFIXES;
+        ht = THde::Table + THde::DELTA_PREFIXES;
         if (ht[ht[opcode / 4] + (opcode % 4)] & pref)
             this->flags |= F_ERROR | F_ERROR_OPCODE;
     }
@@ -324,10 +314,10 @@ unsigned int Disasm(const void *code)
         if (!this->opcode2 && opcode >= 0xd9 && opcode <= 0xdf) {
             UINT8 t = opcode - 0xd9;
             if (m_mod == 3) {
-                ht = THde::Table() + THde::DELTA_FPU_MODRM + t*8;
+                ht = THde::Table + THde::DELTA_FPU_MODRM + t*8;
                 t = ht[m_reg] << m_rm;
             } else {
-                ht = THde::Table() + THde::DELTA_FPU_REG;
+                ht = THde::Table + THde::DELTA_FPU_REG;
                 t = ht[t] << m_reg;
             }
             if (t & 0x80)
@@ -340,10 +330,10 @@ unsigned int Disasm(const void *code)
             } else {
                 UINT8 *table_end, op = opcode;
                 if (this->opcode2) {
-                    ht = THde::Table() + THde::DELTA_OP2_LOCK_OK;
+                    ht = THde::Table + THde::DELTA_OP2_LOCK_OK;
                     table_end = ht + THde::DELTA_OP_ONLY_MEM - THde::DELTA_OP2_LOCK_OK;
                 } else {
-                    ht = THde::Table() + THde::DELTA_OP_LOCK_OK;
+                    ht = THde::Table + THde::DELTA_OP_LOCK_OK;
                     table_end = ht + THde::DELTA_OP2_LOCK_OK - THde::DELTA_OP_LOCK_OK;
                     op &= -2;
                 }
@@ -393,10 +383,10 @@ unsigned int Disasm(const void *code)
         if (m_mod == 3) {
             UINT8 *table_end;
             if (this->opcode2) {
-                ht = THde::Table() + THde::DELTA_OP2_ONLY_MEM;
-                table_end = ht + sizeof(THde::Table()) - THde::DELTA_OP2_ONLY_MEM;
+                ht = THde::Table + THde::DELTA_OP2_ONLY_MEM;
+                table_end = ht + sizeof(THde::Table) - THde::DELTA_OP2_ONLY_MEM;    
             } else {
-                ht = THde::Table() + THde::DELTA_OP_ONLY_MEM;
+                ht = THde::Table + THde::DELTA_OP_ONLY_MEM;
                 table_end = ht + THde::DELTA_OP2_ONLY_MEM - THde::DELTA_OP_ONLY_MEM;
             }
             for (; ht < table_end; ht += 2)     // Fix: 'ht != table_end' crash on '41 0F B6 C6  movzx eax, r14b'
@@ -574,5 +564,6 @@ unsigned int Disasm(const void *code)
 
 typedef CHDE<SHDE32> HDE32;
 typedef CHDE<SHDE64> HDE64;
+};
 //---------------------------------------------------------------------------
-#endif
+

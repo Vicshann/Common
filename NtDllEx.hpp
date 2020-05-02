@@ -15,7 +15,6 @@
 */
 
 // ToDo: Optionally export to self and resolve inports instead of ntdll.lib
-#include "ntdll.h"
 //---------------------------------------------------------------------------
 struct NNTDLL   // NT system service calls encapsulation
 {     // See KUSER_SHARED_DATA in ntddk.h
@@ -56,6 +55,19 @@ static inline UINT64 GetLocalTime(void)  // FILETIME
  return GetSystemTime() - TimeZoneBias; 
 }
 //----------------------------------------------------------------------------
+// _ReadBarrier       // Forces memory reads to complete
+// _WriteBarrier      // Forces memory writes to complete
+// _ReadWriteBarrier  // Block the optimization of reads and writes to global memory 
+//
+static inline volatile UINT64 GetAbstractTimeStamp(UINT64 volatile* PrevVal)
+{
+ volatile UINT64 cval = __rdtsc();
+ volatile UINT64 pval = *PrevVal;   // Interlocked.Read
+ if(cval <= pval)return pval;       // Sync to increment   
+ _InterlockedCompareExchange64((INT64*)PrevVal,cval, pval);  // Assign atomically if it is not changed yet  // This is the only one 64bit operand LOCK instruction available on x32 (cmpxchg8b)
+ return *PrevVal;   // Return a latest value
+}
+//----------------------------------------------------------------------------
 static NTSTATUS NTAPI NtSleep(DWORD dwMiliseconds, BOOL Alertable=FALSE)
 {
  struct
@@ -66,9 +78,35 @@ static NTSTATUS NTAPI NtSleep(DWORD dwMiliseconds, BOOL Alertable=FALSE)
  return NtDelayExecution(Alertable, (PLARGE_INTEGER)&MLI);
 }  
 //----------------------------------------------------------------------------
-static PVOID GetModuleBaseLdr(LPSTR ModName, long* BaseIdx=NULL)  // NOTE: No loader locking used!
+static inline UINT64 GetNativeWowTebAddr(void)
 {
- if(!ModName)return NtCurrentTeb()->ProcessEnvironmentBlock->ImageBaseAddress;
+ PTEB teb = NtCurrentTeb();
+ if(!teb->WowTebOffset)return 0;  // Not WOW or below Win 7
+ PBYTE TebX64 = (PBYTE)teb;
+ if(long(teb->WowTebOffset) < 0)
+  {
+   TebX64 = &TebX64[(long)teb->WowTebOffset];  // In WOW processes WowTebOffset is negative in x32 TEB and positive in x64 TEB
+   if(*(UINT64*)&TebX64[0x30] != (UINT64)TebX64)return 0;   // x64 Self
+  }
+   else if(*(PDWORD)&TebX64[0x18] != (DWORD)TebX64)return 0;   // x32 Self
+ return UINT64(TebX64);
+}
+//---------------------------------------------------------------------------
+static PVOID GetModuleBaseLdr(LPSTR ModName, ULONG* Size=NULL, long* BaseIdx=NULL)  // NOTE: No loader locking used!
+{
+ if(!ModName)
+  {
+   PVOID BaseAddr = NtCurrentTeb()->ProcessEnvironmentBlock->ImageBaseAddress;
+   if(Size)
+    {
+     PEB_LDR_DATA* ldr = NtCurrentTeb()->ProcessEnvironmentBlock->Ldr;
+     for(LDR_DATA_TABLE_ENTRY_MO* me = ldr->InMemoryOrderModuleList.Flink;me != (LDR_DATA_TABLE_ENTRY_MO*)&ldr->InMemoryOrderModuleList;me = me->InMemoryOrderLinks.Flink)     // Or just use LdrFindEntryForAddress?
+      {
+       if(BaseAddr == me->DllBase){*Size = me->SizeOfImage; break;}
+      }
+    }
+   return BaseAddr;
+  }
  PEB_LDR_DATA* ldr = NtCurrentTeb()->ProcessEnvironmentBlock->Ldr;
  DBGMSG("PEB_LDR_DATA: %p, %s",ldr,ModName);
  long StartIdx = (BaseIdx)?(*BaseIdx + 1):0;
@@ -87,6 +125,7 @@ static PVOID GetModuleBaseLdr(LPSTR ModName, long* BaseIdx=NULL)  // NOTE: No lo
    if(Match && !ModName[ctr])
     {
      if(BaseIdx)*BaseIdx = CurrIdx;
+     if(Size)*Size = me->SizeOfImage;
      return me->DllBase;
     }
   }
@@ -214,9 +253,10 @@ static void DoBeep(HANDLE hBeep)
  NtDeviceIoControlFile(hBeep, 0, 0, 0, &iost, 0x00010000, &param, sizeof(param), 0, 0);
 }
 //------------------------------------------------------------------------------------
-typedef void (_fastcall *PNT_THREAD_PROC)(LPVOID Param);
+typedef void (_stdcall *PNT_THREAD_PROC)(PVOID ParamA, PVOID ParamB);   // Param may be on stack in x32 vor not  // Exit with NtTerminateThread
 
-static NTSTATUS NTAPI NativeCreateThread(PVOID ThreadRoutine, PVOID Param, HANDLE ProcessHandle, BOOL CrtSusp, PVOID* StackBase, SIZE_T* StackSize, HANDLE* ThreadHandle, ULONG* ThreadID)
+// CreateRemoteThread requires PROCESS_VM_WRITE but that is too much to ask for a stealth thread injection
+static NTSTATUS NTAPI NativeCreateThread(PVOID ThreadRoutine, PVOID ParamA, PVOID ParamB, HANDLE ProcessHandle, BOOL CrtSusp, PVOID* StackBase, SIZE_T* StackSize, HANDLE* ThreadHandle, ULONG* ThreadID)
 {
  static const int PAGE_SIZE = 4096;
  NTSTATUS Status = 0;
@@ -226,6 +266,7 @@ static NTSTATUS NTAPI NativeCreateThread(PVOID ThreadRoutine, PVOID Param, HANDL
  PVOID  LocStackBase = NULL;
  SIZE_T LocStackSize = 0;
 
+ DBGMSG("ProcessHandle=%p, ThreadRoutine=%p, ParamA=%p, ParamB=%p",ProcessHandle,ThreadRoutine,ParamA,ParamB);
  UserStack.FixedStackBase  = NULL;
  UserStack.FixedStackLimit = NULL;
  if(!StackBase)StackBase = &LocStackBase;
@@ -262,12 +303,14 @@ static NTSTATUS NTAPI NativeCreateThread(PVOID ThreadRoutine, PVOID Param, HANDL
  Context.Rsp  = (SIZE_T)UserStack.ExpandableStackBase;
  Context.Rip  = (SIZE_T)ThreadRoutine;
  Context.Rsp -= sizeof(void*) * 5;  // For a reserved block of 4 Arguments (RCX, RDX, R8, R9) and a fake ret addr
- Context.Rcx  = (SIZE_T)Param;
-#else
+ Context.Rcx  = Context.Rax = (SIZE_T)ParamA;    // Match with fastcall
+ Context.Rdx  = Context.Rbx = (SIZE_T)ParamB;
+#else        // On WOW64 these are passed directly to new x64 thread context: EIP(RIP), ESP(R8), EBX(RDX), EAX(RCX)  // Later EAX and EBX will get to x32 entry point even without Wow64pCpuInitializeStartupContext  // On native x32/64 all registers are passed to thread`s entry point
  Context.Esp  = (SIZE_T)UserStack.ExpandableStackBase;
  Context.Eip  = (SIZE_T)ThreadRoutine;
  Context.Esp -= sizeof(void*) * 5;  // For a Return addr(fake, just to kepp frame right) and a possible Params for not fastcall ThreadProc if you prepared it in your stack
- Context.Ecx  = (SIZE_T)Param;
+ Context.Ecx  = Context.Eax = (SIZE_T)ParamA;    // Match with fastcall if Wow64pCpuInitializeStartupContext is used
+ Context.Edx  = Context.Ebx = (SIZE_T)ParamB;
 
  Context.ContextFlags |= CONTEXT_SEGMENTS;    // NOTE: Only Windows x32 requires segment registers to be set 
  Context.SegGs = 0x00;
@@ -276,25 +319,169 @@ static NTSTATUS NTAPI NativeCreateThread(PVOID ThreadRoutine, PVOID Param, HANDL
  Context.SegDs = 0x20;
  Context.SegSs = 0x20;
  Context.SegCs = 0x18;  
+
+ if(ProcessHandle == NtCurrentProcess)  
+  {
+   ((PVOID*)Context.Esp)[1] = ParamA;    // Win7 WOW64 pops ret addr from stack making this argument unavailable // Solution: Pass same value in ParamA and ParamB
+   ((PVOID*)Context.Esp)[2] = ParamB;
+  }
+   else
+    {
+     PVOID Arr[] = {ParamA,ParamB};
+     if(NTSTATUS stat = NtWriteVirtualMemory(ProcessHandle, &((PVOID*)Context.Esp)[1], &Arr, sizeof(Arr), 0)){DBGMSG("Write stack args failed with: %08X",stat);}   // It is OK to fail if no PROCESS_VM_WRITE
+    }
 #endif
 
- Status = NtCreateThread(ThreadHandle, SYNCHRONIZE|THREAD_GET_CONTEXT|THREAD_SET_CONTEXT|THREAD_QUERY_INFORMATION|THREAD_SET_INFORMATION|THREAD_SUSPEND_RESUME|THREAD_TERMINATE, NULL, ProcessHandle, &ClientId, &Context, (PINITIAL_TEB)&UserStack, CrtSusp);  // The thread starts at specified IP and with specified SP and no return address // End it with NtTerminateThread     
+ ULONG ThAcc = SYNCHRONIZE|THREAD_GET_CONTEXT|THREAD_SET_CONTEXT|THREAD_QUERY_INFORMATION|THREAD_SET_INFORMATION|THREAD_SUSPEND_RESUME|THREAD_TERMINATE;
+ Status = NtCreateThread(ThreadHandle, ThAcc, NULL, ProcessHandle, &ClientId, &Context, (PINITIAL_TEB)&UserStack, CrtSusp);  // The thread starts at specified IP and with specified SP and no return address // End it with NtTerminateThread     
+#ifndef _AMD64_ 
+ if((Status == STATUS_ACCESS_DENIED) && (FixWinTenWow64NtCreateThread() > 0))Status = NtCreateThread(ThreadHandle, ThAcc, NULL, ProcessHandle, &ClientId, &Context, (PINITIAL_TEB)&UserStack, CrtSusp);     // Try to fix Wow64NtCreateThread bug in latest versions of Windows 10   
+#endif
  if(!NT_SUCCESS(Status))return Status;	
  if(ThreadID)*ThreadID = ULONG(ClientId.UniqueThread);              
  return Status;
 }
+//------------------------------------------------------------------------------------
+#ifndef _AMD64_ 
+// 00:  00 10 00 00 01 00 00 00 00 00 00 00 00 00 00 00 
+// 10:  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  
+// 20:  64 86 4C 01 00 00 00 00 00 00 00 00 00 00 00 00 
+//
+static int FixWinTenWow64NtCreateThread(void)
+{
+ static int LastResult = 0;
+ if(LastResult != 0)return LastResult;
+ UINT64 NTeb = GetNativeWowTebAddr();
+ if(!NTeb){LastResult=-1; return LastResult;}    // Not under WOW or an older system
+ DBGMSG("Trying to fix Wow64: CurrTeb=%p, NTeb=%p",NtCurrentTeb(),(PVOID)NTeb);
+ UINT64 TlsSlot = NTeb + 0x1480 + (sizeof(UINT64) * 10);  // For now in slot 10    // 0x1480 is offset of TlsSlots in x64 TEB
+ UINT64 SubSysInfoAddr = *(UINT64*)TlsSlot;    // Lets hope that it will always be in low address space
+ if(!SubSysInfoAddr){LastResult=-2; return LastResult;}  // No address in the slot!
+ if(SubSysInfoAddr > 0xFFFFFFFFULL){LastResult=-3; return LastResult;}   // The Addr is unreachable from x32
+ PBYTE SubSysInfo = (PBYTE)SubSysInfoAddr;
+ DBGMSG("SubSysInfo block %p:",SubSysInfo);
+ DBGMSG("\r\n%048.16D",SubSysInfo,SubSysInfo);   // As a separate message in case of incorrect pointer
+ PDWORD pValue = (PDWORD)&SubSysInfo[0x20];
+ DWORD  OldVal = *pValue;       // No way to check this address :(  (No Kernel32, no ntdll, no ExceptionHandler)
+ if(OldVal != 0x014C8664){LastResult=-4; return LastResult;}   // Not a broken Windows 10    // 014C:IMAGE_FILE_MACHINE_I386 ;   8664:IMAGE_FILE_MACHINE_AMD64  // See IsWow64Process2   // Wow64NtCreateThread is broken since IsWow64Process2 has been added?
+ DWORD   DllSize = 0;
+// wchar_t DllName[] = {'w','o','w','6','4','.','d','l','l',0};
+ DWORD64 wowdll = NWOW64E::GetModuleHandle64(ctENCSW(L"wow64.dll"), &DllSize);
+ if(!wowdll || (DllSize < 4096)){LastResult=-5; return LastResult;} 
+ DBGMSG("Wow64DllBase=%016llX, Wow64DllSize=%08X",wowdll,DllSize);
+
+ DWORD64 WrMemProc = NWOW64E::GetProcAddressSimpleX64(NWOW64E::getNTDLL64(), ctENCSA("NtWriteVirtualMemory"));    
+ if(!WrMemProc){LastResult=-6; return LastResult;} 
+
+ PVOID  BlockBase = NULL;
+ SIZE_T BlockSize = DllSize;
+ if(NTSTATUS stat = NtAllocateVirtualMemory(NtCurrentProcess, &BlockBase, 0, &BlockSize, MEM_COMMIT, PAGE_READWRITE)){LastResult=-7; return LastResult;}
+ NWOW64E::getMem64(BlockBase, wowdll, DllSize);
+           
+ DWORD OffsSigA = 0;
+ DWORD OffsSigB = 0;
+ DWORD AOffset  = 1024;
+ DWORD RwImportRecRva = 0;
+ DllSize -= 1024;
+ struct SSigChk
+  {
+   static bool IsSigMatchForWow64NtCreateThread(PBYTE Addr)      // FF 15 ?? ?? ?? ?? 85 C0 0F 88 ?? ?? 00 00 66 44 39 6C 24 ?? 74 ?? B8 22 00 00 C0 E9 ?? ?? 00 00   
+    {
+     if(*(PWORD)&Addr[0] != 0x15FF)return false;
+     if(*(PDWORD)&Addr[6] != 0x880FC085)return false;
+     if(*(PDWORD)&Addr[12] != 0x44660000)return false;
+     if(*(PDWORD)&Addr[15] != 0x246C3944)return false;
+     if(Addr[20] != 0x74)return false;
+     if(*(PDWORD)&Addr[22] != 0x000022B8)return false;
+     if(*(PWORD)&Addr[26] != 0xE9C0)return false;
+     if(*(PWORD)&Addr[30] != 0x0000)return false;
+     return true;
+    }
+//----------------------------------------                                    
+   static bool IsSigMatchForWow64pCpuInitializeStartupContext(PBYTE Addr)     // 4C 8D 44 24 ?? 41 B9 CC 02 00 00 48 8D 57 04 48 8B CB FF 15   
+    {
+     if(*(PDWORD)&Addr[0]  != 0x24448D4C)return false;
+     if(*(PDWORD)&Addr[5]  != 0x02CCB941)return false;
+     if(*(PDWORD)&Addr[9]  != 0x8D480000)return false;
+     if(*(PDWORD)&Addr[13] != 0x8B480457)return false;
+     if(*(PDWORD)&Addr[16] != 0x15FFCB8B)return false;
+     return true;
+    }
+  };
+
+ for(;(AOffset < DllSize) && (!OffsSigA || !OffsSigB);AOffset++)    
+  {
+   PBYTE Addr = (PBYTE)BlockBase + AOffset;
+   if(!OffsSigA && SSigChk::IsSigMatchForWow64NtCreateThread(Addr))
+    {
+     OffsSigA = AOffset;
+     DBGMSG("SignatureA at: %08X",AOffset);
+    }
+ /*  if(!OffsSigB && SSigChk::IsSigMatchForWow64pCpuInitializeStartupContext(Addr))
+    {
+     OffsSigB = AOffset;
+     DBGMSG("SignatureB at: %08X",AOffset);
+    }  */
+  }
+
+/* if(OffsSigB)        // Wow64pCpuInitializeStartupContext is broken too (NtReadVirtualMemory instead of final NtWriteVirtualMemory)
+  {
+   NPEFMT::SImportThunk<DWORD64>* ImportRec = NULL;
+   if(NPEFMT::TFindImportRecord<DWORD64>((PBYTE)BlockBase, "ntdll.dll", "NtWriteVirtualMemory", NULL, &ImportRec, false))RwImportRecRva = (PBYTE)ImportRec - (PBYTE)BlockBase;   // if(TFindImportTable<DWORD64>((PBYTE)BlockBase, "ntdll.dll", NULL, &ImportTbl, false))  
+     else {DBGMSG("Failed to find NtWriteVirtualMemory!");}
+  } */
+ DBGMSG("RwImportRecRva=%08X, OffsSigA=%08X, OffsSigB=%08X",RwImportRecRva,OffsSigA,OffsSigB);
+ if(!OffsSigA /*|| !OffsSigB || !RwImportRecRva*/){LastResult=-8; return LastResult;} 
+ NtFreeVirtualMemory(NULL,&BlockBase,&BlockSize,MEM_RELEASE); 
+ 
+ {
+  BYTE    Patch[]    = {0x75};   // Write JNZ instead of JZ
+  DWORD64 PatchAddr  = wowdll + OffsSigA + 20;
+  DWORD64 RegionBase = PatchAddr;
+  DWORD64 RegionSize = sizeof(Patch) + 4;
+  ULONG   OldProtect = 0;
+  NWOW64E::ProtectVirtualMemory(NtCurrentProcess, &RegionBase, &RegionSize, PAGE_EXECUTE_READWRITE, &OldProtect);
+  NWOW64E::setMem64(PatchAddr, &Patch, sizeof(Patch));   // Patch it or crash :)
+  NWOW64E::ProtectVirtualMemory(NtCurrentProcess, &RegionBase, &RegionSize, OldProtect, &OldProtect);
+  DBGMSG("Patched: Wow64NtCreateThread");
+ }
+
+/* {      // Useless: Wow64pCpuInitializeStartupContext is allowed to fail if NtReadVirtualMemory/NtWriteVirtualMemory fails
+  DWORD64 PatchAddr  = wowdll + OffsSigB + 20;
+  DWORD64 RegionBase = PatchAddr;
+  DWORD64 RegionSize = sizeof(DWORD) + 4;
+  ULONG   OldProtect = 0;
+  DWORD   NewRvaAddr = AddrToRelAddr<long>(PatchAddr-2,6,wowdll+RwImportRecRva);       // Write rel of__imp_NtWriteVirtualMemory instead of __imp_NtReadVirtualMemory    // FF 15 NN NN NN NN
+  NWOW64E::ProtectVirtualMemory(NtCurrentProcess, &RegionBase, &RegionSize, PAGE_EXECUTE_READWRITE, &OldProtect);
+  NWOW64E::setMem64(PatchAddr, &NewRvaAddr, sizeof(NewRvaAddr));   // Patch it or crash :)
+  NWOW64E::ProtectVirtualMemory(NtCurrentProcess, &RegionBase, &RegionSize, OldProtect, &OldProtect);
+  DBGMSG("Patched: Wow64pCpuInitializeStartupContext");
+ } */
+                  
+ LastResult = 1;
+ return 1;
+}
+//------------------------------------------------------------------------------------
+static inline void _stdcall RawThreadFixParams(PVOID* ParamA, PVOID* ParamB)     // Why no '__declspec(naked)' supported even for static functions?
+{
+ // put EAX and EBX to ParamA and ParamB
+}
+//------------------------------------------------------------------------------------
+#else
+static inline void _fastcall RawThreadFixParams(PVOID* ParamA, PVOID* ParamB){}
+#endif
 //------------------------------------------------------------------------------------
 // Starting in Windows 8.1, GetVersion() and GetVersionEx() are subject to application manifestation
 // See https://stackoverflow.com/questions/32115255/c-how-to-detect-windows-10
 //
 static inline DWORD _fastcall GetRealVersionInfo(PDWORD dwMajor=NULL, PDWORD dwMinor=NULL, PDWORD dwBuild=NULL, PDWORD dwPlatf=NULL)
 {
- PPEB teb = NtCurrentPeb();
- if(dwMajor)*dwMajor = teb->OSMajorVersion;
- if(dwMinor)*dwMinor = teb->OSMinorVersion;
- if(dwBuild)*dwBuild = teb->OSBuildNumber;
- if(dwPlatf)*dwPlatf = teb->OSPlatformId;
- DWORD Composed = (teb->OSPlatformId << 16)|(teb->OSMinorVersion << 8)|teb->OSMajorVersion;
+ PPEB peb = NtCurrentPeb();
+ if(dwMajor)*dwMajor = peb->OSMajorVersion;
+ if(dwMinor)*dwMinor = peb->OSMinorVersion;
+ if(dwBuild)*dwBuild = peb->OSBuildNumber;
+ if(dwPlatf)*dwPlatf = peb->OSPlatformId;
+ DWORD Composed = (peb->OSPlatformId << 16)|(peb->OSMinorVersion << 8)|peb->OSMajorVersion;
  return Composed;
 }
 //---------------------------------------------------------------------------

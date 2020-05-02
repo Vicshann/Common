@@ -15,30 +15,33 @@
   WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. 
 */
 
-
-#ifndef _RGBOctreeQuantizerH_
-#define _RGBOctreeQuantizerH_
-
 // TODO: Optimize memory
 //------------------------------------------------------------------------------------------------------------------------------
 class CRGBOTQuantizer     // OCTREEQUANTIZER
 {
+public:
+static const int TREEMINDEPTH = 2;  // Why 2 is min?
 static const int TREEMAXDEPTH = 9;
-static const int DEFAULTDEPTH = 5;
+static const int DEFAULTDEPTH = 5;    // Most balanced quality  // But very SLOW!
 static const int TOTALCOLORS  = 256;
 static const int COLRANGEMAX  = TOTALCOLORS-1;
 
-struct RGBQUAD 
+union RGBQUAD 
 {
- unsigned char Blue;
- unsigned char Green;
- unsigned char Red;
- unsigned char Unused;
+ unsigned int Value;
+ struct
+  {
+   unsigned char Blue;
+   unsigned char Green;
+   unsigned char Red;
+   unsigned char Unused;
+  };
 };
+private:
 //------------------------------------------------------------------------------------------------------------------------------
 struct COLORVALUE
 {
- unsigned int ClrValArrayR[TOTALCOLORS*2];  // WORD will be enough, but with DWORD no data alignment penalty on CPU
+ unsigned int ClrValArrayR[TOTALCOLORS*2];   // 'short' is not enough
  unsigned int ClrValArrayG[TOTALCOLORS*2];
  unsigned int ClrValArrayB[TOTALCOLORS*2];
  unsigned int *CVAMiddleR;
@@ -231,19 +234,20 @@ int FindNearestColor(unsigned char Red, unsigned char Green, unsigned char Blue)
 void SetOctreeDepth(int Depth)
 {
  int Nodes = 0;
- Depth     = (Depth > TREEMAXDEPTH)?TREEMAXDEPTH:Depth;
+ if(Depth > TREEMAXDEPTH)Depth = TREEMAXDEPTH;
+   else if(Depth < TREEMINDEPTH)Depth = TREEMINDEPTH;
  if((unsigned int)Depth == (TreeDepth+1))return;      // Do not change anything !!!
  MaxNodes  = 0;
 
  for(int ctr=0,nctr=1;ctr < TREEMAXDEPTH;ctr++,nctr*=8)
   {
    if(ctr  <  Depth)Nodes = nctr;                        // TODO: Optimize - rearrange
-   if((ctr <  Depth)&&(NodeLevels[ctr] == NULL)){NodeLevels[ctr] = new OCTREENODE[nctr]();}   // Specifying '()' for POD allocation forces a compiler to set that memory to 0 (C++ spec); MSVC invokes memset for this when SPEED optimization is enabled or uses 'rep stos' without it. Also with SPEED optimization it uses malloc instead of global 'new'        // (OCTREENODE*)VirtualAlloc(NULL,(sizeof(OCTREENODE)*nctr),MEM_COMMIT,PAGE_READWRITE);
-   if((ctr >= Depth)&&(NodeLevels[ctr] != NULL)){delete[] NodeLevels[ctr]; NodeLevels[ctr] = NULL;}    // VirtualFree(NodeLevels[ctr],NULL,MEM_RELEASE);
+   if((ctr <  Depth)&&(NodeLevels[ctr] == nullptr)){NodeLevels[ctr] = new OCTREENODE[nctr]();}   // Specifying '()' for POD allocation forces a compiler to set that memory to 0 (C++ spec); MSVC invokes memset for this when SPEED optimization is enabled or uses 'rep stos' without it. Also with SPEED optimization it uses malloc instead of global 'new'        // (OCTREENODE*)VirtualAlloc(NULL,(sizeof(OCTREENODE)*nctr),MEM_COMMIT,PAGE_READWRITE);
+   if((ctr >= Depth)&&(NodeLevels[ctr] != nullptr)){delete[] NodeLevels[ctr]; NodeLevels[ctr] = nullptr;}    // VirtualFree(NodeLevels[ctr],NULL,MEM_RELEASE);
   }
 
  TreeDepth = Depth;
- if(ColorNodes){delete[] ColorNodes; ColorNodes = NULL;}   //  VirtualFree(ColorNodes,NULL,MEM_RELEASE);
+ if(ColorNodes){delete[] ColorNodes; ColorNodes = nullptr;}   //  VirtualFree(ColorNodes,NULL,MEM_RELEASE);
  if(!TreeDepth)return;       // Exit, if Depth = 0
 
  TreeDepth--;
@@ -279,14 +283,14 @@ void AppendColor(unsigned char Red, unsigned char Green, unsigned char Blue)
 //------------------------------------------------------------------------------------------------------------------------------
 CRGBOTQuantizer(void)
 {
- CurPalette    = NULL;
+ CurPalette    = nullptr;
  MaxNodes      = 0;
- ColorNodes    = NULL;
- TreeDepth     = 0;
+ ColorNodes    = nullptr;
+ TreeDepth     = -1;
  ColorsInTree  = 0;
  PalColorIndex = 0;
 
- for(int ctr=0;ctr < TREEMAXDEPTH;ctr++)NodeLevels[ctr] = NULL;
+ for(int ctr=0;ctr < TREEMAXDEPTH;ctr++)NodeLevels[ctr] = nullptr;
  for(int ctr=-COLRANGEMAX,index=0;ctr <= COLRANGEMAX;ctr++,index++) // Precalculate ccolor values (fi = 30*(Ri-R0)2+59*(Gi-G0)2+11*(Bi-B0)2)   // Range: -255 <> +255
   {
    ClrValTable.ClrValArrayR[index] = (ctr*ctr)*32;    // 30 // Numbers are human eye color perception differences
@@ -296,7 +300,7 @@ CRGBOTQuantizer(void)
  ClrValTable.CVAMiddleR = &ClrValTable.ClrValArrayR[COLRANGEMAX];  // Or 256(Second half)???????
  ClrValTable.CVAMiddleG = &ClrValTable.ClrValArrayG[COLRANGEMAX];
  ClrValTable.CVAMiddleB = &ClrValTable.ClrValArrayB[COLRANGEMAX];
- this->SetOctreeDepth(DEFAULTDEPTH);
+// this->SetOctreeDepth(DEFAULTDEPTH);
 }
 //------------------------------------------------------------------------------------------------------------------------------
 ~CRGBOTQuantizer()
@@ -306,4 +310,3 @@ CRGBOTQuantizer(void)
 //------------------------------------------------------------------------------------------------------------------------------
 };
 //------------------------------------------------------------------------------------------------------------------------------
-#endif

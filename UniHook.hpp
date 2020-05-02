@@ -1,8 +1,5 @@
 
 #pragma once
-
-#ifndef UniHookH
-#define UniHookH
 /*
   Copyright (c) 2020 Victor Sheinmann, Vicshann@gmail.com
 
@@ -17,9 +14,9 @@
   WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. 
 */
 
-#include <emmintrin.h>   // NOTE: All '#include' must be commented out and used only as a hint to compose BaseHdr.h individually for each project
-#include "FormatPE.h"
-#include "HDE.h"
+//#include <emmintrin.h>   // NOTE: All '#include' must be commented out and used only as a hint to compose BaseHdr.h individually for each project
+//#include "FormatPE.h"
+//#include "HDE.h"
 
 // TODO: If hooking a function that is imported by this module, update ImportRecord to point to OrigProc
 // https://software.intel.com/sites/landingpage/IntrinsicsGuide/#techs=SSE2
@@ -55,13 +52,12 @@
 //------------------------------------------------------------------------------------
 #pragma pack(push,1)
 
-template<typename T> _inline long  AddrToRelAddr(T CmdAddr, UINT CmdLen, T TgtAddr){return -((CmdAddr + CmdLen) - TgtAddr);}
-template<typename T> _inline T     RelAddrToAddr(T CmdAddr, UINT CmdLen, long TgtOffset){return ((CmdAddr + CmdLen) + TgtOffset);}
-
+struct NUNIHK
+{
 //====================================================================================
 //
 //------------------------------------------------------------------------------------
-#define VHOOK(proc) SVftHook<&proc>       // SVftHook<decltype(proc), &proc>         
+#define VHOOK(proc) NUNIHK::SVftHook<&proc>       // SVftHook<decltype(proc), &proc>         
 template<auto HookProc> struct SVftHook      //  'T HProc' will crash the MSVC compiler!
 {
  decltype(HookProc) OrigProc;  //T* OrigProc;
@@ -73,7 +69,7 @@ template<auto HookProc> struct SVftHook      //  'T HProc' will crash the MSVC c
   }
 };
 
-#define VHOOKEX(proc,idx) SVftHookEx<&proc, idx>  
+#define VHOOKEX(proc,idx) NUNIHK::SVftHookEx<&proc, idx>  
 template<auto HookProc, int VftIdx> struct SVftHookEx      //  'T HProc' will crash the MSVC compiler!
 {
  decltype(HookProc) OrigProc;
@@ -111,10 +107,10 @@ template<auto HookProc, int VftIdx> struct SVftHookEx      //  'T HProc' will cr
 //====================================================================================
 //                                   SProcHook<decltype(&proc), &proc>            <typename T, T HProc=0> struct SProcHook   
 //------------------------------------------------------------------------------------
-#define PHOOK(proc) SProcHook<decltype(&proc), &proc>             // Waiting for C++17`s auto as a template argument type   // TODO: Skip int3 or other types of software breakpoints
-namespace EHookFlg {
-enum NHookFlg {hfNone,hfFillNop=1,hfFollowJmp=2,hfForceHook=4};       // Restore MemProt flag?
-};
+#define PHOOK(proc) NUNIHK::SProcHook<decltype(&proc), &proc>             // Waiting for C++17`s auto as a template argument type   // TODO: Skip int3 or other types of software breakpoints
+
+enum EHookFlg {hfNone,hfFillNop=1,hfFollowJmp=2,hfForceHook=4};       // Restore MemProt flag?
+
 
 template<typename T, T HProc=0> struct SProcHook        //  'T HProc' will crash the MSVC compiler!    // Declare all members static that the hook struct can be declared temporary on stack (without 'static' cpecifier)?
 {
@@ -154,9 +150,9 @@ bool SetHookIntr(PBYTE ProcAddr=NULL, UINT Flags=EHookFlg::hfFillNop|EHookFlg::h
  if(!ProcAddr || (this->IsActive() && !(Flags & EHookFlg::hfForceHook))){/*DBGMSG("Failed: %p",ProcAddr);*/ return false;}       // Logging here will make the message duplicated by templating and size will bloat!
 // DBGMSG("Hooking: %p",ProcAddr);
 #ifdef _AMD64_
- HDE64 dhde;
+ NHDE::HDE64 dhde;
 #else
- HDE32 dhde;
+ NHDE::HDE32 dhde;
 #endif					   
  UINT  CodeLen   = 0;
  this->HookLen   = 0;
@@ -321,7 +317,7 @@ bool SetHook(LPSTR ProcName, LPSTR LibName, UINT Flags=EHookFlg::hfFillNop|EHook
  if(this->IsActive() && !(Flags & EHookFlg::hfForceHook))return false;       // Already set
  HMODULE  hLib  = (HMODULE)NNTDLL::GetModuleBaseLdr(LibName);            // GetModuleHandleA(LibName);
  if(!hLib && LibName)hLib  = LoadLibraryA(LibName);             // Only with a ForceLoad flag?
- PBYTE ProcAddr = (PBYTE)GetProcAddr(hLib, ProcName);    // 'C:\Windows\AppPatch\AcLayers.dll' sometimes intercept GetProcAddress and substitutes its result
+ PBYTE ProcAddr = (PBYTE)NPEFMT::GetProcAddr(hLib, ProcName);    // 'C:\Windows\AppPatch\AcLayers.dll' sometimes intercept GetProcAddress and substitutes its result
  if(!ProcAddr){DBGMSG("Failed: %s:%s",LibName?LibName:"",ProcName); return false;}
 // DBGMSG("Module=%p, Proc=%p",hLib,ProcAddr);
  return this->SetHook(ProcAddr,Flags,HookFunc);  
@@ -397,7 +393,7 @@ PVOID _stdcall FindRtlDispatchException(void)
   {
    char PrName[] = {~'K',~'i',~'U',~'s',~'e',~'r',~'E',~'x',~'c',~'e',~'p',~'t',~'i',~'o',~'n',~'D',~'i',~'s',~'p',~'a',~'t',~'c',~'h',~'e',~'r',0};
    for(int ctr=0;PrName[ctr];ctr++)PrName[ctr] = ~PrName[ctr];
-   PBase = (PBYTE)GetProcAddr(GetNtDllBaseFast(), PrName);   // "KiUserExceptionDispatcher"       
+   PBase = (PBYTE)NPEFMT::GetProcAddr(NPEFMT::GetNtDllBaseFast(), PrName);   // "KiUserExceptionDispatcher"       
    if(!PBase)return NULL;
   }
  PBase += 8;     
@@ -427,9 +423,9 @@ EB     // Short Jump
 bool _stdcall SetHook(THookProc ProcBefore, THookProc ProcAfter)
 {
 #ifdef _AMD64_
- HDE64 dhde;
+ NHDE::HDE64 dhde;
 #else
- HDE32 dhde;
+ NHDE::HDE32 dhde;
 #endif
  PBYTE AddrQueue[MaxQueue];
  this->ProcBegPtr = (PBYTE)FindRtlDispatchException();
@@ -583,13 +579,13 @@ PVOID _stdcall FindLdrpInitialize(void)
   {
    char PrName[] = {~'L',~'d',~'r',~'I',~'n',~'i',~'t',~'i',~'a',~'l',~'i',~'z',~'e',~'T',~'h',~'u',~'n',~'k',0};
    for(int ctr=0;PrName[ctr];ctr++)PrName[ctr] = ~PrName[ctr];
-   PBase = (PBYTE)GetProcAddr(GetNtDllBaseFast(), PrName);   // "LdrInitializeThunk"    
+   PBase = (PBYTE)NPEFMT::GetProcAddr(NPEFMT::GetNtDllBaseFast(), PrName);   // "LdrInitializeThunk"    
    if(!PBase)return NULL;
   }
 #ifdef _AMD64_
- HDE64 dhde;
+ NHDE::HDE64 dhde;
 #else
- HDE32 dhde;
+ NHDE::HDE32 dhde;
 #endif
  PBYTE LastInstr = PBase;
  for(UINT offs=0;offs < 32;LastInstr=PBase, PBase += dhde.len, offs += dhde.len)
@@ -612,9 +608,9 @@ PVOID _stdcall FindLdrpInitialize(void)
 bool _stdcall SetHook(THookProc ProcBefore)
 {
 #ifdef _AMD64_
- HDE64 dhde;
+ NHDE::HDE64 dhde;
 #else
- HDE32 dhde;
+ NHDE::HDE32 dhde;
 #endif
  this->ProcBegPtr = (PBYTE)FindLdrpInitialize();
  if(!this->ProcBegPtr){DBGMSG("Failed to find LdrpInitialize!"); return false;}
@@ -701,4 +697,4 @@ bool Remove(void)
 //------------------------------------------------------------------------------------
 };
 //------------------------------------------------------------------------------------
-#endif
+};

@@ -15,7 +15,7 @@
   WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. 
 */
 
-struct ShMem      
+struct NShMem     // TODO: Crossplatform - part of the FRAMEWORK 
 {
 //===========================================================================
 // 'Global\HelloWorld' => '\BaseNamedObjects\HelloWorld'
@@ -89,7 +89,7 @@ static NTSTATUS OpenMemSection(PHANDLE SectionHandle, ACCESS_MASK DesiredAccess,
  return NtOpenSection(SectionHandle, DesiredAccess, &oattr);
 }
 //---------------------------------------------------------------------------- 
-static inline ULONG WaitForSingle(HANDLE hHandle, DWORD dwMilliseconds)
+static inline long WaitForSingle(HANDLE hHandle, DWORD dwMilliseconds)
 {
 #ifdef _NTDLL_H
  LARGE_INTEGER Timeout;
@@ -132,7 +132,7 @@ static inline ULONG CurrentProcessID(void)
 #endif
 }
 //----------------------------------------------------------------------------
-static inline ULONG CloseOHandle(HANDLE Hndl)
+static inline long CloseOHandle(HANDLE Hndl)
 {
  if(((SIZE_T)Hndl + 1) > 1)   // Checked for NULL(0) and INVALID_HANDLE_VALUE(-1)
 #ifdef _NTDLL_H
@@ -258,7 +258,7 @@ CCritSectEx(void)
 #endif
   }
 }
-~CCritSectEx(){ShMem::CloseOHandle(this->hSemaphore);}
+~CCritSectEx(){NShMem::CloseOHandle(this->hSemaphore);}
 #else
 CCritSectEx(void){InitializeCriticalSection(&this->csec);} 
 ~CCritSectEx(){DeleteCriticalSection(&this->csec);}  
@@ -277,7 +277,7 @@ bool Lock(ULONG SpinCtr=DefSpinCtr, ULONG WaitTimeout=DefTimeout)
 #else
    HANDLE hSemaphore = CreateSemaphoreW(NULL, 0, 0x7FFFFFFF, NULL);    
 #endif
-   if(_InterlockedCompareExchangePointer(&this->hSemaphore, hSemaphore, NULL))ShMem::CloseOHandle(hSemaphore); //Close it if someone is already created it
+   if(_InterlockedCompareExchangePointer(&this->hSemaphore, hSemaphore, NULL))NShMem::CloseOHandle(hSemaphore); //Close it if someone is already created it
 //   if(this->TryLock(SpinCtr))return true;
   }
  bool bWaiter = false;
@@ -294,7 +294,7 @@ bool Lock(ULONG SpinCtr=DefSpinCtr, ULONG WaitTimeout=DefTimeout)
      WaitElapsed = WaitTimeout - WaitElapsed;
     }
 	else WaitElapsed = (ULONG)-1;
-   switch(ShMem::WaitForSingle(this->hSemaphore, WaitTimeout))
+   switch(NShMem::WaitForSingle(this->hSemaphore, WaitTimeout))
     {
      case WAIT_OBJECT_0:
      case WAIT_ABANDONED:  // An previous owner thread just died 
@@ -579,6 +579,29 @@ PBYTE PopBlkEx(UINT* ValLen, char* Name=NULL, UINT* Hint=NULL)  // No PopArgEx f
  return this->PopBlk(ValSize, NULL);
 }
 //------------------------------------------------------------------------------------
+PBYTE GetBlkAt(UINT& Offset=-1)
+{
+ if(Offset == (UINT)-1)Offset = this->DSize;
+ UINT ValSize = 0;
+ if(sizeof(ValSize) > Offset)return NULL; 
+ Offset -= sizeof(ValSize);                 
+ ValSize = *(UINT*)&this->Buff[Offset];
+ if(ValSize & 0x40000000)Offset -= sizeof(UINT);
+ if(ValSize & 0x80000000)
+  {
+   UINT StrSize = 0;
+   if(sizeof(StrSize) > Offset)return NULL; 
+   Offset -= sizeof(StrSize);                 
+   StrSize = *(UINT*)&this->Buff[Offset];
+   if(StrSize > Offset)return NULL; 
+   Offset -= StrSize;
+  }
+ ValSize &= 0x0FFFFFFF;
+ if(ValSize > Offset)return NULL; 
+ Offset -= ValSize;
+ return &this->Buff[Offset];
+}
+//------------------------------------------------------------------------------------
 template<typename T> PBYTE PushArg(T& Value){return this->PushBlk(sizeof(T), &Value);}
 template<typename T> PBYTE PopArg(T& Value){return this->PopBlk(sizeof(T), &Value);}
 template<typename T> T     PopArg(void){T val; this->PopBlk(sizeof(T), &val); return val;}
@@ -633,11 +656,11 @@ static const int MaxNameSize = 64;
 #pragma pack(push,1)
 struct SMemDescr: public Usr  
 {
- volatile ULONG MemFlgs;    // Unused for now
- volatile ULONG MemSize;    // Size of MemData
- volatile BYTE  NtfEName[MaxNameSize];
- volatile BYTE  SynMName[MaxNameSize];         // Name of Mutex
- volatile BYTE  Data[0];              // Should be aligned to 8
+ volatile UINT32 MemFlgs;    // Unused for now
+ volatile UINT32 MemSize;    // Size of MemData
+ volatile BYTE   NtfEName[MaxNameSize];
+ volatile BYTE   SynMName[MaxNameSize];         // Name of Mutex
+ volatile BYTE   Data[0];              // Should be aligned to 8
 };
 #pragma pack(pop)
 
@@ -794,8 +817,8 @@ ConvertStringSecurityDescriptorToSecurityDescriptor(
    MakeObjName((ULONG_PTR)this->hMapFile, "N", (LPSTR)&this->MemDesc->NtfEName);  
   }
 #ifdef _NTDLL_H
- ShMem::MutexCreateA(&this->hSyncMutex, NULL, FALSE, (LPSTR)&this->MemDesc->SynMName);  
- ShMem::EventCreateA(&this->hNotifyEvt, NULL, TRUE, FALSE, (LPSTR)&this->MemDesc->NtfEName);
+ NShMem::MutexCreateA(&this->hSyncMutex, NULL, FALSE, (LPSTR)&this->MemDesc->SynMName);  
+ NShMem::EventCreateA(&this->hNotifyEvt, NULL, TRUE, FALSE, (LPSTR)&this->MemDesc->NtfEName);
 #else  
  this->hSyncMutex = CreateMutexA(NULL, FALSE, (LPSTR)&this->MemDesc->SynMName);     // Take the names from shared memory 
  this->hNotifyEvt = CreateEventA(NULL, TRUE, FALSE, (LPSTR)&this->MemDesc->NtfEName); 
@@ -829,7 +852,7 @@ bool LockBuffer(UINT WaitDelay=5000)
 {
 // DBGMSG("<<<<<<<<<<<<<<<<: %u",WaitDelay);
 // DWORD val = GetTicksCount();
- bool  res = (ShMem::WaitForSingle(this->hSyncMutex,WaitDelay) != WAIT_TIMEOUT);
+ bool  res = (NShMem::WaitForSingle(this->hSyncMutex,WaitDelay) != WAIT_TIMEOUT);
 // DBGMSG("<<<<<<<<<<<<<<<<: %u = %u",res,GetTicksCount()-val);
  if(res && !this->IsConnected()){this->UnlockBuffer(); return false;}
  return res;
@@ -884,7 +907,7 @@ bool WaitForChange(UINT WaitDelay=1000)
 {
 // DBGMSG("++++++++++++++++: %u",WaitDelay);
 // DWORD val = GetTickCount();
- bool res = (ShMem::WaitForSingle(this->hNotifyEvt,WaitDelay) != WAIT_TIMEOUT);
+ bool res = (NShMem::WaitForSingle(this->hNotifyEvt,WaitDelay) != WAIT_TIMEOUT);
 // DBGMSG("++++++++++++++++: %u = %u",res,GetTickCount()-val);
  return res;
 }
@@ -903,20 +926,20 @@ class CSharedIPC
 static const int WaitChangeDelMs = 100;
 #pragma pack(push,1)
 public:
-struct SMsgBlk    // Always aligned to 64 bit
+struct SMsgBlk     // Size is 32 + Data + ValidMrk2    // Always aligned to 16 bytes  
 {
- volatile ULONG DataSize;    
- volatile ULONG ViewCntr;   
- volatile ULONG PrevOffs; 
- volatile ULONG NextOffs;   // From beginning of buffer  // There may be gaps between messages after a wrap overwrites some of them
- volatile ULONG TargetID;
- volatile ULONG SenderID;
- volatile ULONG MsgSeqID;   // Incremented for each message
- volatile ULONG ValidMrk;   // A Opening marker. An Closing marker is after the data  
- volatile BYTE  Data[0];    // Better to be aligned to 8 bytes
+ volatile UINT32 DataSize;    
+ volatile UINT32 ViewCntr;   
+ volatile UINT32 PrevOffs; 
+ volatile UINT32 NextOffs;   // From beginning of buffer  // There may be gaps between messages after a wrap overwrites some of them
+ volatile UINT32 TargetID;
+ volatile UINT32 SenderID;
+ volatile UINT32 MsgSeqID;   // Incremented for each message
+ volatile UINT32 ValidMrk;   // A Opening marker. An Closing marker is after the data  
+ volatile BYTE   Data[0];    // Better to be aligned to 8 bytes
 
- static ULONG FullSize(ULONG DSize){return AlignFrwd(DSize + sizeof(SMsgBlk) + 8,8);}
- ULONG FullSize(void){return FullSize(this->DataSize);}   // AlignFrwd(this->DataSize + sizeof(SMsgBlk) + 8,8);}     // All data blocks aligned to 8 bytes    
+ static UINT32 FullSize(UINT32 DSize){return AlignFrwd(DSize + sizeof(SMsgBlk) + sizeof(UINT32), 16);}    // After Hdr+Data, at aligned end is UINT32(~ValidMrk)  // Align 16 (SSE compatible)
+ UINT32 FullSize(void){return FullSize(this->DataSize);}   // AlignFrwd(this->DataSize + sizeof(SMsgBlk) + 8,8);}     // All data blocks aligned to 8 bytes    
  bool  IsBroadcast(void){return !this->TargetID;}
 };
 
@@ -924,15 +947,15 @@ private:
 struct SDescr   // No message wrapping is supported(), if it is not fits then RD and WR pointers are get updated to beginning of the buffer
 {
  enum EFlags {flEmpty,flUsed=1};
- volatile ULONG Flags;      // 0 if buffer is empty    // MessageCtr is useless and too costly to maintain
- volatile ULONG NxtMsgID;   // Next MessageID to be used (Used by each instance to exclude a viewed messages from enumeration)  // What will happen after overflow?
- volatile ULONG FirstBlk;   // Points to oldest available message
- volatile ULONG LastBlk;    // Points last added message  
+ volatile UINT32 Flags;      // 0 if buffer is empty    // MessageCtr is useless and too costly to maintain
+ volatile UINT32 NxtMsgID;   // Next MessageID to be used (Used by each instance to exclude a viewed messages from enumeration)  // What will happen after overflow?
+ volatile UINT32 FirstBlk;   // Points to oldest available message
+ volatile UINT32 LastBlk;    // Points last added message  
 };
 #pragma pack(pop)
 
- ULONG  SyncDelay;
- ULONG  InstanceID;
+ UINT32   SyncDelay;
+ UINT32   InstanceID;
  SMsgBlk* NewMsg;   // Temporary ptr, protected by Lock
  CSharedMem<SDescr> MBuf;
 
@@ -942,31 +965,29 @@ bool IsValidHdr(SMsgBlk* Blk)
  PBYTE Ptr = this->MBuf.BufferPtr();
  PBYTE End = &Ptr[this->MBuf.BufferSize()];
  PBYTE Msg = (PBYTE)Blk;                 
- if((Msg < Ptr)||(Msg >= End)){DBGMSG("Problem: %u",0); return false;}    // Begin is not inside the shared buffer
- if((&Msg[sizeof(SMsgBlk)] < Ptr)||(&Msg[sizeof(SMsgBlk)] > End)){DBGMSG("Problem: %u",1); return false;}    // Hdr is not inside the shared buffer
+ if((Msg < Ptr)||(Msg >= End)){DBGMSG("MsgBegOutside"); return false;}    // Begin is not inside the shared buffer
+ if((&Msg[sizeof(SMsgBlk)] < Ptr)||(&Msg[sizeof(SMsgBlk)] > End)){DBGMSG("HdrOutside"); return false;}    // Hdr is not inside the shared buffer
  ULONG Len = Blk->FullSize();
- if((&Msg[Len] < Ptr)||(&Msg[Len] > End)){DBGMSG("Problem: %u",2); return false;}    // End is not inside the shared buffer
- if(!Blk->SenderID){DBGMSG("Problem: %u",3); return false;}   // Not finished yet       
- bool res = !(~(*(ULONG*)&Msg[Len-sizeof(ULONG)]) ^ Blk->ValidMrk);  
- if(!res){DBGMSG("Problem: %u",4); return false;}       // Validation markers do not match
+ if((&Msg[Len] < Ptr)||(&Msg[Len] > End)){DBGMSG("MsgEndOutside"); return false;}    // End is not inside the shared buffer
+ if(!Blk->SenderID){DBGMSG("Unfinished"); return false;}   // Not finished yet       
+ bool res = !(~(*(UINT32*)&Msg[Len-sizeof(UINT32)]) ^ Blk->ValidMrk);  
+ if(!res){DBGMSG("OutOfSync: %08X, %08X",Msg-Ptr,Len); return false;}       // Validation markers do not match    // Happens if doing sequential add-remove of pairs Req/Rsp of different size
  return res;
 }
 //---------------------------------------------------------------------------
 void SetValidHdr(SMsgBlk* Blk)
 {
- PBYTE Msg = (PBYTE)Blk;
+// DBGMSG("Blk: %p",Blk);
  ULONG Len = Blk->FullSize();
  Blk->ValidMrk = (Blk->DataSize ^ Blk->TargetID ^ Blk->MsgSeqID);       // Checksum of a fields that will stay unmodified
- *(ULONG*)&Msg[Len-(sizeof(ULONG)*2)] = 0;              // ???
- *(ULONG*)&Msg[Len-sizeof(ULONG)] = ~Blk->ValidMrk;
+ *(UINT32*)&((PBYTE)Blk)[Len-sizeof(UINT32)] = ~Blk->ValidMrk;
 }
 //---------------------------------------------------------------------------
 void InvalidateHdr(SMsgBlk* Blk)
 {
- PBYTE Msg = (PBYTE)Blk;
- ULONG Len = Blk->FullSize();
- Blk->ValidMrk = 0;     
- *(ULONG*)&Msg[Len-sizeof(ULONG)] = 0;
+// DBGMSG("Blk: %p",Blk);
+ ULONG Len = Blk->FullSize();    
+ *(UINT32*)&((PBYTE)Blk)[Len-sizeof(UINT32)] = Blk->ValidMrk = 0;
 }
 //---------------------------------------------------------------------------
 
@@ -976,22 +997,22 @@ enum MEFlags {mfNone,mfLocked=0x02,mfAnyTgt=0x04,mfOwnMsg=0x08,mfNoLock=0x10,mfH
 //---------------------------------------------------------------------------
 struct SEnumCtx
 {
- ULONG Flags;
- ULONG TgtID;
- ULONG SndID;
- ULONG NxtOffs;
- ULONG LstOffs;
- ULONG NxtMsgID;
- ULONG LstMsgID;    // Last Found message ID
- ULONG MaxViewCtr;
+ UINT32 Flags;
+ UINT32 TgtID;
+ UINT32 SndID;
+ UINT32 NxtOffs;
+ UINT32 LstOffs;
+ UINT32 NxtMsgID;
+ UINT32 LstMsgID;    // Last Found message ID
+ UINT32 MaxViewCtr;
  SEnumCtx(void){this->Reset();}
  void Reset(void){TgtID=SndID=NxtMsgID=LstMsgID=Flags=0; MaxViewCtr=NxtOffs=LstOffs=-1;}
 };
 //---------------------------------------------------------------------------
-CSharedIPC(ULONG SDel=5000)
+CSharedIPC(UINT SDel=5000)
 {
  this->SyncDelay  = SDel;
- this->InstanceID = ((ULONG)this + GetTicksCount())|1;  // Must never be 0   // Reinit after Disconnect?
+ this->InstanceID = ((SIZE_T)this + GetTicksCount())|1;  // Must never be 0   // Reinit after Disconnect?
 }
 //---------------------------------------------------------------------------
 ~CSharedIPC(){}
@@ -1020,13 +1041,13 @@ SMsgBlk* GetLastBlk(void)      // Most recent (Backward enumeration)
 //---------------------------------------------------------------------------
 SMsgBlk* GetPrevBlk(SMsgBlk* Blk)     // In memory order                
 {
- if(this->IsEmpty() || (Blk->PrevOffs == (ULONG)-1))return NULL;
+ if(this->IsEmpty() || (Blk->PrevOffs == (UINT32)-1))return NULL;
  return (SMsgBlk*)&this->MBuf.BufferPtr()[Blk->PrevOffs];
 }
 //---------------------------------------------------------------------------
 SMsgBlk* GetNextBlk(SMsgBlk* Blk)     // In memory order        
 {
- if(this->IsEmpty() || (Blk->NextOffs == (ULONG)-1))return NULL;
+ if(this->IsEmpty() || (Blk->NextOffs == (UINT32)-1))return NULL;
  return (SMsgBlk*)&this->MBuf.BufferPtr()[Blk->NextOffs];
 }
 //---------------------------------------------------------------------------
@@ -1058,7 +1079,7 @@ bool Clear(void)         // Don`t forget to keep NxtMsgID !
 }
 //---------------------------------------------------------------------------
 static SMsgBlk* DataPtrToMsgHdr(PBYTE Data){return (SMsgBlk*)&Data[-sizeof(SMsgBlk)];}
-ULONG GetNexMsgSeqNum(void){return (this->IsConnected())?(this->MBuf.UserData()->NxtMsgID):(-1);}
+UINT32 GetNexMsgSeqNum(void){return (this->IsConnected())?(this->MBuf.UserData()->NxtMsgID):(-1);}
 //---------------------------------------------------------------------------
 // TODO: Enumeration in different processes should not block each other? (But enumeration definently should block any manipulation(SRW lock))
 PBYTE EnumFirst(SEnumCtx* Ctx, PUINT Size)    // For This InstanceID or broadcast  // Peek - do not remove messages; Any - Get messages for any InstanceID
@@ -1077,23 +1098,23 @@ PBYTE EnumFirst(SEnumCtx* Ctx, PUINT Size)    // For This InstanceID or broadcas
   {
 //   DBGMSG("Beg mfHaveLstMsg: NxtOffs=%08X, LstOffs=%08X, LstMsgID=%08X",Ctx->NxtOffs,Ctx->LstOffs,Ctx->LstMsgID);
    Ctx->NxtOffs = Desc->FirstBlk;        // Start from beginning of the buffer (Default)
-   if(Ctx->LstOffs != (ULONG)-1)     // Offset is already specified
+   if(Ctx->LstOffs != (UINT32)-1)     // Offset is already specified
     {
      SMsgBlk* CurMsg = (SMsgBlk*)&this->MBuf.BufferPtr()[Ctx->LstOffs];
      if(!this->IsValidHdr(CurMsg) || (Ctx->LstMsgID != CurMsg->MsgSeqID))Ctx->LstOffs = -1;  // An invalid offset or a different massage at it
     }
-   if(Ctx->LstOffs == (ULONG)-1)  // Try to continue with ID after LstMsgID
+   if(Ctx->LstOffs == (UINT32)-1)  // Try to continue with ID after LstMsgID
     {
-     ULONG LstID = Ctx->NxtMsgID;
+     UINT32 LstID = Ctx->NxtMsgID;
      if(Ctx->LstMsgID > (LstID-1))  // MsgID has been overflowed  // TODO: TEST IT !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
       {
        bool OPoint = false;
        SMsgBlk* CurMsg = NULL;
-       ULONG Offs  = Desc->LastBlk;                       
-       while(Offs != (ULONG)-1)  // Find an overflow point [56789-OP-01234 <<]  // 9 is OP here    
+       UINT32 Offs = Desc->LastBlk;                       
+       while(Offs != (UINT32)-1)  // Find an overflow point [56789-OP-01234 <<]  // 9 is OP here    
         {
          CurMsg = (SMsgBlk*)&this->MBuf.BufferPtr()[Offs];
-         if(!this->IsValidHdr(CurMsg)){DBGMSG("Corrupted: Removing mfHaveLstMsg"); Ctx->Flags &= ~mfHaveLstMsg; return NULL;}    // Corrupted buffer! 
+         if(!this->IsValidHdr(CurMsg)){DBGMSG("Corrupted1: Removing mfHaveLstMsg"); Ctx->Flags &= ~mfHaveLstMsg; return NULL;}    // Corrupted buffer! 
          if(LstID <= CurMsg->MsgSeqID){OPoint = true; break;}  // Overflow point  
          Offs  = CurMsg->PrevOffs;      // Enumerating backwards
          LstID = CurMsg->MsgSeqID;
@@ -1104,18 +1125,18 @@ PBYTE EnumFirst(SEnumCtx* Ctx, PUINT Size)    // For This InstanceID or broadcas
           {
            if(Ctx->LstMsgID >= CurMsg->MsgSeqID){Ctx->NxtOffs = CurMsg->NextOffs; break;} // Found with a lesser or equal ID (Continue from a next message)  
            Offs = CurMsg->PrevOffs;      // Enumerating backwards
-           if(Offs == (ULONG)-1)break;   // No more messages - enumerate from beginning
+           if(Offs == (UINT32)-1)break;   // No more messages - enumerate from beginning
            CurMsg = (SMsgBlk*)&this->MBuf.BufferPtr()[Offs];
-           if(!this->IsValidHdr(CurMsg)){DBGMSG("Corrupted: Removing mfHaveLstMsg"); Ctx->Flags &= ~mfHaveLstMsg; return NULL;}    // Corrupted buffer!                         
+           if(!this->IsValidHdr(CurMsg)){DBGMSG("Corrupted2: Removing mfHaveLstMsg"); Ctx->Flags &= ~mfHaveLstMsg; return NULL;}    // Corrupted buffer!                         
           }
         }
       }
        else   // Not overflowed or overflowed too far with Message IDs
         {
-         for(ULONG Offs = Desc->LastBlk;Offs != (ULONG)-1;)     // Find a message offset by ID     
+         for(UINT32 Offs = Desc->LastBlk;Offs != (UINT32)-1;)     // Find a message offset by ID     
           {
            SMsgBlk* CurMsg = (SMsgBlk*)&this->MBuf.BufferPtr()[Offs];
-           if(!this->IsValidHdr(CurMsg)){DBGMSG("Corrupted: Removing mfHaveLstMsg"); Ctx->Flags &= ~mfHaveLstMsg; return NULL;}    // Corrupted buffer!  
+           if(!this->IsValidHdr(CurMsg)){DBGMSG("Corrupted3: Removing mfHaveLstMsg"); Ctx->Flags &= ~mfHaveLstMsg; return NULL;}    // Corrupted buffer!  
            if(Ctx->LstMsgID >= CurMsg->MsgSeqID){Ctx->NxtOffs = CurMsg->NextOffs; break;} // Found with a lesser or equal ID (Continue from a next message)  
            Offs = CurMsg->PrevOffs;      // Enumerating backwards
           }
@@ -1130,14 +1151,14 @@ PBYTE EnumFirst(SEnumCtx* Ctx, PUINT Size)    // For This InstanceID or broadcas
   }
  else if(Ctx->Flags & mfHaveNxtMsg)   // Search for exact match (Fail enumeration if not found)
   {
-   if(Ctx->NxtOffs != (ULONG)-1)     // Offset is already specified
+   if(Ctx->NxtOffs != (UINT32)-1)     // Offset is already specified
     {
      SMsgBlk* CurMsg = (SMsgBlk*)&this->MBuf.BufferPtr()[Ctx->NxtOffs];
      if(!this->IsValidHdr(CurMsg) || (Ctx->NxtMsgID != CurMsg->MsgSeqID))Ctx->NxtOffs = -1;  // An invalid offset or a different massage at it
     }
-   if(Ctx->NxtOffs == (ULONG)-1) 
+   if(Ctx->NxtOffs == (UINT32)-1) 
     {
-     for(ULONG Offs = Desc->LastBlk;Offs != (ULONG)-1;)     // Find a message offset by ID     
+     for(UINT32 Offs = Desc->LastBlk;Offs != (UINT32)-1;)     // Find a message offset by ID     
       {
        SMsgBlk* CurMsg = (SMsgBlk*)&this->MBuf.BufferPtr()[Offs];
        if(!this->IsValidHdr(CurMsg)){DBGMSG("Corrupted: Removing mfHaveNxtMsg"); Ctx->Flags &= ~mfHaveNxtMsg; return NULL;}    // Corrupted buffer!  
@@ -1148,7 +1169,7 @@ PBYTE EnumFirst(SEnumCtx* Ctx, PUINT Size)    // For This InstanceID or broadcas
   }
    else Ctx->NxtOffs = Desc->FirstBlk;        // Start from beginning of the buffer (Default)
 
- if(Ctx->NxtOffs != (ULONG)-1)    // NxtOffs is for a first message
+ if(Ctx->NxtOffs != (UINT32)-1)    // NxtOffs is for a first message
   { 
    Ctx->Flags   |= mfEnumActive;
    Ctx->NxtMsgID = ((SMsgBlk*)&this->MBuf.BufferPtr()[Ctx->NxtOffs])->MsgSeqID;
@@ -1166,13 +1187,13 @@ PBYTE EnumNext(SEnumCtx* Ctx, PUINT Size)
 {
  if(!(Ctx->Flags & mfEnumActive) || this->IsEmpty())return NULL;    // Not possible
  SDescr* Desc = this->MBuf.UserData();
- while(Ctx->NxtOffs != (ULONG)-1)   // NOTE: The buffer will always end up being full of a viwed messages 
+ while(Ctx->NxtOffs != (UINT32)-1)   // NOTE: The buffer will always end up being full of a viwed messages 
   {
    SMsgBlk* CurMsg = (SMsgBlk*)&this->MBuf.BufferPtr()[Ctx->NxtOffs];      // Without Lock this may become invalid because of some AddBlock
-   if(!this->IsValidHdr(CurMsg) || (Ctx->NxtMsgID != CurMsg->MsgSeqID)){Ctx->NxtOffs = (ULONG)-1; break;}  // Check NxtMsgID in the loop in case that the buffer is not locked  // NxtOffs and NxtMsgID used to validate that NextMessage is same as was found previously 
-   ULONG CurrOffs = Ctx->NxtOffs;
-   Ctx->NxtOffs   = CurMsg->NextOffs;    // Enumerate forward in the linked list of messages  // Save the offset that we can continue later     
-   if(Ctx->NxtOffs != (ULONG)-1)
+   if(!this->IsValidHdr(CurMsg) || (Ctx->NxtMsgID != CurMsg->MsgSeqID)){Ctx->NxtOffs = (UINT32)-1; break;}  // Check NxtMsgID in the loop in case that the buffer is not locked  // NxtOffs and NxtMsgID used to validate that NextMessage is same as was found previously 
+   UINT32 CurrOffs = Ctx->NxtOffs;
+   Ctx->NxtOffs    = CurMsg->NextOffs;    // Enumerate forward in the linked list of messages  // Save the offset that we can continue later     
+   if(Ctx->NxtOffs != (UINT32)-1)
     {
      Ctx->NxtMsgID = ((SMsgBlk*)&this->MBuf.BufferPtr()[Ctx->NxtOffs])->MsgSeqID;
      Ctx->Flags   |= mfHaveNxtMsg;
@@ -1183,14 +1204,14 @@ PBYTE EnumNext(SEnumCtx* Ctx, PUINT Size)
        Ctx->Flags   &= ~mfHaveNxtMsg;
       }
 //   DBGMSG("Next: Ctx=%p, NxtOffs=%08X, NxtMsgID=%08X, LstMsgID=%08X",Ctx,Ctx->NxtOffs,Ctx->NxtMsgID,Ctx->LstMsgID);
-//   DBGMSG("Msg at %08X: Size=%08X, ViewCntr=%u, SenderID=%08X, TargetID=%08X, MsgSeqID=%08X",((PBYTE)CurMsg - this->MBuf.BufferPtr()),CurMsg->DataSize,CurMsg->ViewCntr,CurMsg->SenderID,CurMsg->TargetID,CurMsg->MsgSeqID);                                                               
+//   DBGMSG("Msg at %08X: Size=%08X(%08X), ViewCntr=%u, SenderID=%08X, TargetID=%08X, MsgSeqID=%08X",((PBYTE)CurMsg - this->MBuf.BufferPtr()),CurMsg->DataSize,SMsgBlk::FullSize(CurMsg->DataSize),CurMsg->ViewCntr,CurMsg->SenderID,CurMsg->TargetID,CurMsg->MsgSeqID);                                                               
    if((!Ctx->TgtID || CurMsg->IsBroadcast() || (CurMsg->TargetID == Ctx->TgtID)) && (CurMsg->ViewCntr <= Ctx->MaxViewCtr) && ((!Ctx->SndID || (CurMsg->SenderID == Ctx->SndID)) && ((Ctx->Flags & mfOwnMsg) || (CurMsg->SenderID != this->InstanceID))))  // NOTE: Headers are followed by a data and this approach is very cache unfriendly. But this way a maximum number of messages that the buffer can hold is not predefined and depends only on size of messages
     {
      if(Size)*Size = CurMsg->DataSize;
      Ctx->LstMsgID = CurMsg->MsgSeqID;
      Ctx->LstOffs  = CurrOffs;
      Ctx->Flags   |= mfHaveLstMsg;     // Do not read an already viwed messages when repeating enumeration with same context   // Allow this Flag to be forced here?  
-     if(CurMsg->ViewCntr != (ULONG)-1)CurMsg->ViewCntr++;  // Do not overflow!
+     if(CurMsg->ViewCntr != (UINT32)-1)CurMsg->ViewCntr++;  // Do not overflow!
 //     DBGMSG("Found at %08X: Size=%08X, ViewCntr=%u, SenderID=%08X, TargetID=%08X, MsgSeqID=%08X",((PBYTE)CurMsg - this->MBuf.BufferPtr()),CurMsg->DataSize,CurMsg->ViewCntr,CurMsg->SenderID,CurMsg->TargetID,CurMsg->MsgSeqID);   
      return (PBYTE)&CurMsg->Data;
     }      
@@ -1227,9 +1248,9 @@ int AddBlock(UINT TgtID, PVOID* Data, UINT Size)          // TgtID = 0 - Broadca
  SDescr* Desc    = this->MBuf.UserData();
  SMsgBlk* LstMsg = NULL;
  SMsgBlk* FstMsg = NULL;
- ULONG FullLen   = SMsgBlk::FullSize(Size);  
- ULONG FMsg      = Desc->FirstBlk; 
- ULONG LMsg      = Desc->LastBlk;
+ UINT32 FullLen  = SMsgBlk::FullSize(Size);  
+ UINT32 FMsg     = Desc->FirstBlk; 
+ UINT32 LMsg     = Desc->LastBlk;
  if(!this->IsEmpty())
   {
    FstMsg = (SMsgBlk*)&this->MBuf.BufferPtr()[FMsg]; 
@@ -1241,12 +1262,12 @@ int AddBlock(UINT TgtID, PVOID* Data, UINT Size)          // TgtID = 0 - Broadca
      if((LMsg + FullLen) >= this->MBuf.BufferSize()){LMsg = 0; MStraight = false;}   // Will not fit in rest of buffer - start from beginning   // At 0 there is always a valid message or else the buffer is empty  
      if(!MStraight)    // |LF---| : |-LF--| : |--LF-| : |---LF|
       {
-       ULONG EndOffs = LMsg + FullLen;    // End offset of a new message   
+       UINT32 EndOffs = LMsg + FullLen;    // End offset of a new message   
        if((Desc->LastBlk >= LMsg)&&(EndOffs > Desc->LastBlk)){DBGMSG("DelPrev: EndOffs=%08X, Desc:LastBlk=%08X",EndOffs, Desc->LastBlk); LstMsg = NULL;}  // Will be overwritten
        for(SMsgBlk* FirstMsg = (SMsgBlk*)&this->MBuf.BufferPtr()[FMsg];EndOffs > FMsg;FirstMsg = (SMsgBlk*)&this->MBuf.BufferPtr()[FMsg])     // Move forward FirstBlk
         {
 //         DBGMSG("Overwriting: FirstBlk=%08X, LastBlk=%08X, FullLen=%08X, Size=%08X, ViewCntr=%u, NextOffs=%08X, SeqID=%08X, SenderID=%08X, TargetID=%08X",FMsg, LMsg, FullLen, FirstMsg->DataSize, FirstMsg->ViewCntr, FirstMsg->NextOffs,  FirstMsg->MsgSeqID, FirstMsg->SenderID, FirstMsg->TargetID);      
-         if(!this->IsValidHdr(FirstMsg)||(FirstMsg->NextOffs <= FMsg)||(FirstMsg->NextOffs == (ULONG)-1))      // Rest of messages is probably corrupted as well / Loop / no next message
+         if(!this->IsValidHdr(FirstMsg)||(FirstMsg->NextOffs <= FMsg)||(FirstMsg->NextOffs == (UINT32)-1))      // Rest of messages is probably corrupted as well / Loop / no next message
           {
            DBGMSG("ResetBuf: FMsg=%08X, LMsg=%08X",FMsg, LMsg);
            FMsg = 0;         // Only messages at beginning of buffer is considered valid now  // New message will taaake as much memory as needed at rest of the buffer(We already checked that it will fit there)
@@ -1285,7 +1306,7 @@ int AddBlock(UINT TgtID, PVOID* Data, UINT Size)          // TgtID = 0 - Broadca
  return 0;
 }
 //---------------------------------------------------------------------------
-bool CloseBlock(PULONG MsgSeqNum)     // Call after AddBlock or Enumeration
+bool CloseBlock(UINT32* MsgSeqNum)     // Call after AddBlock or Enumeration
 {
 // DBGMSG("InstanceID=%08X",this->InstanceID);
  if(!this->NewMsg || !this->IsConnected())return false;
@@ -1305,7 +1326,7 @@ ULONG RemoveLastBlocks(ULONG BlkCnt, bool KeepBroadcast=false)   // TODO: Never 
  if(this->IsEmpty())return 0;
  ULONG RemTotal = 0; 
  SDescr* Desc = this->MBuf.UserData();
- ULONG Offs = Desc->LastBlk;
+ UINT32  Offs = Desc->LastBlk;
  while(RemTotal < BlkCnt)        
   {
    SMsgBlk* CurMsg = (SMsgBlk*)&this->MBuf.BufferPtr()[Offs];
@@ -1314,7 +1335,7 @@ ULONG RemoveLastBlocks(ULONG BlkCnt, bool KeepBroadcast=false)   // TODO: Never 
    Offs = CurMsg->PrevOffs;      // Enumerating backwards
    RemTotal++;
    this->InvalidateHdr(CurMsg);
-   if(Offs == (ULONG)-1)  // No more messages in the buffer
+   if(Offs == (UINT32)-1)  // No more messages in the buffer
     {
      Desc->Flags    = SDescr::flEmpty;    // No messages left
      Desc->FirstBlk = Desc->LastBlk = 0;
@@ -1334,18 +1355,18 @@ static DWORD TicksDelta(DWORD Initial)
  return (Curr > Initial)?(Curr-Initial):(Initial-Curr);
 }
 //---------------------------------------------------------------------------
-bool IsChanged(ULONG* LstChngHash)
+bool IsChanged(UINT32* LstChngHash)
 {
  if(!this->IsConnected())return false;
- SDescr* Desc  = this->MBuf.UserData();       // Shared access is not important here
- ULONG NewHash = Desc->NxtMsgID;              // Test only one field
+ SDescr* Desc   = this->MBuf.UserData();       // Shared access is not important here
+ UINT32 NewHash = Desc->NxtMsgID;              // Test only one field
  bool res = (NewHash != *LstChngHash); 
 //   if(res){ DBGMSG("NewHash=%u, LstChngHash=%u",NewHash,*LstChngHash); }   // <<<<<<<<<<<<<<<<<<<<<<<<<<<<
  *LstChngHash = NewHash;
  return res;
 }
 //---------------------------------------------------------------------------
-bool WaitForChange(ULONG* LstChngHash=NULL, UINT WaitDelay=5000)    // After this you can start enumerating for messages     // TODO: Use WaitOnAddress if available!
+bool WaitForChange(UINT32* LstChngHash=NULL, UINT WaitDelay=5000)    // After this you can start enumerating for messages     // TODO: Use WaitOnAddress if available!
 {
  if(!this->IsConnected())return false; 
  for(DWORD InitTick = GetTicksCount();TicksDelta(InitTick) <= WaitDelay;)
@@ -1388,7 +1409,7 @@ static inline ULONG MakeIdStr(UINT InstanceID, char* StrOut)
  int   HLen  = 0;
  char HexBuf[64];
  StrOut[Index++] = 'I';
- char* ptr = ShMem::UIntToHexString(InstanceID, sizeof(UINT)*2, HexBuf, true, &HLen);
+ char* ptr = NShMem::UIntToHexString(InstanceID, sizeof(UINT)*2, HexBuf, true, &HLen);
  Index += CopyString(&StrOut[Index], ptr, HLen); 
  StrOut[Index++] = 'S';
  ptr = UIntToString(sizeof(PVOID),HexBuf,&HLen);
@@ -1398,7 +1419,7 @@ static inline ULONG MakeIdStr(UINT InstanceID, char* StrOut)
 //------------------------------------------------------------------------------------
 
 public:
-struct SMsgHdr  
+struct SMsgHdr      // Size 16
 {
  UINT16 MsgType;    // EMsgType
  UINT16 MsgID;
@@ -1412,8 +1433,8 @@ struct SMsgHdr
 
 struct SMsgCtx
 {
- bool  EnumMsg;
- ULONG Change;
+ bool   EnumMsg;
+ UINT32 Change;
  SMsgHdr* Last;
  CSharedIPC::SEnumCtx BEnum;
 
@@ -1558,14 +1579,14 @@ int BeginMsg(PVOID* MsgPtr, UINT16 MsgType, UINT16 MsgID, UINT32 DataID, UINT Da
  return 0;
 }
 //------------------------------------------------------------------------------------
-int DoneMsg(PULONG MsgSeqNum=NULL)
+int DoneMsg(UINT32* MsgSeqNum=NULL)
 {
  if(!this->ipc.CloseBlock(MsgSeqNum)){this->csec.Unlock(); return -3;}
  this->csec.Unlock();
  return 0;
 }
 //------------------------------------------------------------------------------------
-int PutMsg(UINT16 MsgType, UINT16 MsgID, UINT32 DataID, PVOID MsgData, UINT DataSize, PULONG MsgSeqNum=NULL, UINT TgtID=CSharedIPC::MSG_BROADCAST)      // From clients to exact InstanceID (And optionally a stream) or broadcast
+int PutMsg(UINT16 MsgType, UINT16 MsgID, UINT32 DataID, PVOID MsgData, UINT DataSize, UINT32* MsgSeqNum=NULL, UINT TgtID=CSharedIPC::MSG_BROADCAST)      // From clients to exact InstanceID (And optionally a stream) or broadcast
 {
  PVOID MsgPtr = NULL;
  if(this->BeginMsg(&MsgPtr, MsgType, MsgID, DataID, DataSize, TgtID) < 0)return -5;

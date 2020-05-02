@@ -1,8 +1,5 @@
 
 #pragma once
- 
-#ifndef BdsCompH
-#define BdsCompH
 /*
   Copyright (c) 2018 Victor Sheinmann, Vicshann@gmail.com
 
@@ -37,7 +34,7 @@
 // ArgA: EAX
 // RetAddr
 //---------------------------------------------------------------------------
-namespace BDS
+struct NBDS
 {
 template <typename R, typename... Types> constexpr int GetArgCount( R(_stdcall *f)(Types ...) ){ return sizeof...(Types); }   // GetArgCount( R(*f)(Types ...) )
 
@@ -54,8 +51,8 @@ template <typename Ret, typename... Args> struct CountArgs<Ret(Args...)>
 // Expose a proc as a BDS fastcall (MSVC proc must be declared as '_stdcall')
 // UINT64 is two DWORDS on stack but counted as one argument!
 //
-#define BDSWRAP(proc) &BDS::BdsFWrap<proc, BDS::GetArgCount(proc)>      // There is some problem with GetArgCount !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-template<void* WProc, int Args> PVOID _stdcall BdsFWrap(void)   // [EAX,EDX,ECX,...] [EAX,EDX,ECX] [EAX,EDX] [EAX] []   // Use of specialization for 1 and 2 arg variants is somehow possible?
+#define BDSWRAP(proc) &NBDS::BdsFWrap<proc, NBDS::GetArgCount(proc)>      // There is some problem with GetArgCount !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+template<void* WProc, int Args> static PVOID _stdcall BdsFWrap(void)   // [EAX,EDX,ECX,...] [EAX,EDX,ECX] [EAX,EDX] [EAX] []   // Use of specialization for 1 and 2 arg variants is somehow possible?
 {
  static const PVOID Addr = WProc;         // Can`t be taken by an assembler code directly(Results in Null)
  static const int   acnt = Args;  
@@ -101,7 +98,7 @@ Finish:
 // Call a BDS fastcall proc
 // Not compatible with Floating Point and structs(UINT64?)?  // MSVC always uses stack for UINT64 (x32) even if a proc is _fastcall!
 //                                                                                                                    -12  -8  -4      -8  -4       -4
-template<typename R, typename... Args> R _stdcall BdsFCall(PVOID Addr, Args...)       // Can be made simple?  Stack: [EAX,EDX,ECX] or [EAX,EDX] or [EAX]
+template<typename R, typename... Args> static R _stdcall BdsFCall(PVOID Addr, Args...)       // Can be made simple?  Stack: [EAX,EDX,ECX] or [EAX,EDX] or [EAX]
 {
  static const unsigned int asize = (((sizeof...(Args)) < 3)?(sizeof...(Args)):(3));     // constexpr?
 //  push        ebp       // Nothing will stop the compiler from inserting these!
@@ -184,4 +181,3 @@ static inline int __fastcall DelphiRandom(UINT a1)
 #pragma warning(pop)
 
 //====================================================================================
-#endif

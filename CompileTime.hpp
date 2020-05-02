@@ -35,9 +35,8 @@
 // NOTE: Without '__forceinline' the MSVC compiler likes to ignore inlining and compile-time encryption
 // TODO: Add another encryption class that supports an encrypted string tables
 //------------------------------------------------------------------------------
-namespace CT
+struct NCTM
 {
-
 #if defined(__GNUC__) || (defined(__MWERKS__) && (__MWERKS__ >= 0x3000)) || (defined(__ICC) && (__ICC >= 600)) || defined(__ghs__)
 #define ctFUNC __PRETTY_FUNCTION__
 #elif defined(__DMC__) && (__DMC__ >= 0x810)
@@ -67,16 +66,16 @@ namespace CT
 #define ctEncKeyEx  (~((__TIME__[7] + __TIME__[6]) * ((__COUNTER__ + 3) << 1)))   // WORD
 #endif
 
-constexpr unsigned int ctAlignAsPtr(unsigned int Size){return (Size/sizeof(void*)) + (bool)(Size%sizeof(void*));}   // Used to calculate a string size in pointer-sized blocks
+constexpr static unsigned int ctAlignAsPtr(unsigned int Size){return (Size/sizeof(void*)) + (bool)(Size%sizeof(void*));}   // Used to calculate a string size in pointer-sized blocks
 
-template <typename T> constexpr __forceinline T _fastcall ctRotL(T Value, unsigned char Shift){return (Value << Shift) | (Value >> ((sizeof(T) * 8U) - Shift));}
-template <typename T> constexpr __forceinline T _fastcall ctRotR(T Value, unsigned char Shift){return (Value >> Shift) | (Value << ((sizeof(T) * 8U) - Shift));}
+template <typename T> constexpr __forceinline static T _fastcall ctRotL(T Value, unsigned char Shift){return (Value << Shift) | (Value >> ((sizeof(T) * 8U) - Shift));}
+template <typename T> constexpr __forceinline static T _fastcall ctRotR(T Value, unsigned char Shift){return (Value >> Shift) | (Value << ((sizeof(T) * 8U) - Shift));}
 
-constexpr static __forceinline int ctStrLen(char const* str, const int offs){return (str[offs])?(ctStrLen(str, offs+1)):(offs);}       // Offset included in result
-constexpr static __forceinline int ctStrDif(char const* sa, char const* sb, const int offs){return (sa[offs] == sb[offs])?(ctStrDif(sa, sb, offs+1)):(offs);}   // Offset included in result
-template <int N> constexpr __forceinline char CharAt(char const(&s)[N], int i){return s[i];}     
-template<typename T> constexpr __forceinline char* CurrFuncSig(void){return ctFUNC; };    // Useless for templates
-template<typename T> constexpr __forceinline char  CurrFuncSigChr(int Idx){return ctFUNC[Idx]; }; 
+constexpr  __forceinline static int ctStrLen(char const* str, const int offs){return (str[offs])?(ctStrLen(str, offs+1)):(offs);}       // Offset included in result
+constexpr  __forceinline static int ctStrDif(char const* sa, char const* sb, const int offs){return (sa[offs] == sb[offs])?(ctStrDif(sa, sb, offs+1)):(offs);}   // Offset included in result
+template <int N> constexpr __forceinline static char CharAt(char const(&s)[N], int i){return s[i];}     
+template<typename T> constexpr __forceinline static char* CurrFuncSig(void){return ctFUNC; };    // Useless for templates
+template<typename T> constexpr __forceinline static char  CurrFuncSigChr(int Idx){return ctFUNC[Idx]; }; 
 
 
 // The constantify template is used to make sure that the result of constexpr function will be computed at compile-time instead of run-time
@@ -189,20 +188,20 @@ __forceinline C* Decrypt(void)  // Run-time decryption   // There will be a copy
 
 // Compile-time string encryption macro
 #ifndef ctDISENCSTR
-#define ctOENCSA(Str, Name) CT::ctCplEncryptedString<char,  sizeof(Str), ctEncKey, ctEncKeyEx, CT::ctCplIndexes<CT::ctAlignAsPtr(sizeof(Str))>::Result> Name(Str)   // Str size includes a terminating NULL   
-#define ctOENCSW(Str, Name) CT::ctCplEncryptedString<wchar_t, sizeof(Str)/sizeof(wchar_t), ctEncKey, ctEncKeyEx, CT::ctCplIndexes<CT::ctAlignAsPtr(sizeof(Str))>::Result> Name(Str)   // Str size includes a terminating NULL
+#define ctOENCSA(Str, Name) NCTM::ctCplEncryptedString<char,  sizeof(Str), ctEncKey, ctEncKeyEx, NCTM::ctCplIndexes<NCTM::ctAlignAsPtr(sizeof(Str))>::Result> Name(Str)   // Str size includes a terminating NULL   
+#define ctOENCSW(Str, Name) NCTM::ctCplEncryptedString<wchar_t, sizeof(Str)/sizeof(wchar_t), ctEncKey, ctEncKeyEx, NCTM::ctCplIndexes<NCTM::ctAlignAsPtr(sizeof(Str))>::Result> Name(Str)   // Str size includes a terminating NULL
 
-#define ctCENCSA(Str) CT::ctCplEncryptedString<char,  sizeof(Str), ctEncKey, ctEncKeyEx, CT::ctCplIndexes<CT::ctAlignAsPtr(sizeof(Str))>::Result>(Str)   // Str size includes a terminating NULL   
-#define ctCENCSW(Str) CT::ctCplEncryptedString<wchar_t, sizeof(Str)/sizeof(wchar_t), ctEncKey, ctEncKeyEx, CT::ctCplIndexes<CT::ctAlignAsPtr(sizeof(Str))>::Result>(Str)   // Str size includes a terminating NULL
+#define ctCENCSA(Str) NCTM::ctCplEncryptedString<char,  sizeof(Str), ctEncKey, ctEncKeyEx, NCTM::ctCplIndexes<NCTM::ctAlignAsPtr(sizeof(Str))>::Result>(Str)   // Str size includes a terminating NULL   
+#define ctCENCSW(Str) NCTM::ctCplEncryptedString<wchar_t, sizeof(Str)/sizeof(wchar_t), ctEncKey, ctEncKeyEx, NCTM::ctCplIndexes<NCTM::ctAlignAsPtr(sizeof(Str))>::Result>(Str)   // Str size includes a terminating NULL
 
 #define ctENCSA(Str) (ctCENCSA(Str).Decrypt())   // Str size includes a terminating NULL   
 #define ctENCSW(Str) (ctCENCSW(Str).Decrypt())   // Str size includes a terminating NULL
 #else
-#define ctOENCSA(Str, Name) CT::ctStrHldr<char, CT::ctCplIndexes<sizeof(Str)>::Result> Name(Str)   
-#define ctOENCSW(Str, Name) CT::ctStrHldr<wchar_t, CT::ctCplIndexes<sizeof(Str)/sizeof(wchar_t)>::Result> Name(Str)   
+#define ctOENCSA(Str, Name) NCTM::ctStrHldr<char, NCTM::ctCplIndexes<sizeof(Str)>::Result> Name(Str)   
+#define ctOENCSW(Str, Name) NCTM::ctStrHldr<wchar_t, NCTM::ctCplIndexes<sizeof(Str)/sizeof(wchar_t)>::Result> Name(Str)   
 
-#define ctCENCSA(Str) (Str) CT::ctStrHldr<char, CT::ctCplIndexes<sizeof(Str)>::Result>(Str)                     // TODO: Use xmm registers should not be allowed because they are stored in data section
-#define ctCENCSW(Str) (Str) CT::ctStrHldr<wchar_t, CT::ctCplIndexes<sizeof(Str)/sizeof(wchar_t)>::Result>(Str)   
+#define ctCENCSA(Str) (Str) NCTM::ctStrHldr<char, NCTM::ctCplIndexes<sizeof(Str)>::Result>(Str)                     // TODO: Use xmm registers should not be allowed because they are stored in data section
+#define ctCENCSW(Str) (Str) NCTM::ctStrHldr<wchar_t, NCTM::ctCplIndexes<sizeof(Str)/sizeof(wchar_t)>::Result>(Str)   
 
 #define ctENCSA(Str) (Str)
 #define ctENCSW(Str) (Str)
@@ -236,10 +235,10 @@ template <char... Idx> struct SChrUnp<ctCplIntList<Idx...> >    // Seems there i
   }
 };
 
-template<typename T> constexpr __forceinline int ctTNPos(const char chr, const int offs, const int End){return ((offs < End) && (CurrFuncSigChr<T>(offs) != chr))?(ctTNPos<T>(chr,offs+1,End)):(offs);} 
-template<typename T> constexpr __forceinline int ctTNLen(const int offs){return (CurrFuncSigChr<T>(offs))?(ctTNLen<T>(offs+1)):(offs);}     // Offset included in result
-template<typename T> constexpr __forceinline int ctTNLenBk(const int offs){return ((offs >= 0) && ((CurrFuncSigChr<T>(offs) > 0x20) || (CurrFuncSigChr<T>(offs-1) == ',')))?(ctTNLenBk<T>(offs-1)):(offs+1);}   // Breaks on any space in case of 'struct SMyStruct' type
-template<typename A, typename B> constexpr __forceinline int ctTNDif(const int offs){return (CurrFuncSigChr<A>(offs) == CurrFuncSigChr<B>(offs))?(ctTNDif<A,B>(offs+1)):(offs);}   // Offset included in result
+template<typename T> constexpr __forceinline static int ctTNPos(const char chr, const int offs, const int End){return ((offs < End) && (CurrFuncSigChr<T>(offs) != chr))?(ctTNPos<T>(chr,offs+1,End)):(offs);} 
+template<typename T> constexpr __forceinline static int ctTNLen(const int offs){return (CurrFuncSigChr<T>(offs))?(ctTNLen<T>(offs+1)):(offs);}     // Offset included in result
+template<typename T> constexpr __forceinline static int ctTNLenBk(const int offs){return ((offs >= 0) && ((CurrFuncSigChr<T>(offs) > 0x20) || (CurrFuncSigChr<T>(offs-1) == ',')))?(ctTNLenBk<T>(offs-1)):(offs+1);}   // Breaks on any space in case of 'struct SMyStruct' type
+template<typename A, typename B> constexpr __forceinline static int ctTNDif(const int offs){return (CurrFuncSigChr<A>(offs) == CurrFuncSigChr<B>(offs))?(ctTNDif<A,B>(offs+1)):(offs);}   // Offset included in result
 
 struct SCplFuncInfo  // Holds info about a TypeName position in a function signature for current compiler
 {
@@ -273,5 +272,5 @@ constexpr unsigned int ctCplHash(const unsigned char* Str)           { return (*
 #define ctHASH(Str) (unsigned int)(ctCplConstantify<ctCplHash(Str)>::Value ^ ctCplConstantify<ctCplRandom(1)>::Value)
 */
 //==============================================================================
- }
+};
 #pragma warning(pop)

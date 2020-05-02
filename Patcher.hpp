@@ -16,19 +16,19 @@
 
 //#define SIGSCANSAFE
 
+struct NSIGP
+{
+ enum EPatchFlg {pfNone,pfForce=0x10,pfProtMem=0x20,prSkipUnread=0x40};   // CSigPatch
+ enum ESigFlg {sfNone,sfBinary=1,sfBackward=2};  // CSigScan
+ enum EPOp {poDat=0x00,     // Next byte is a single raw byte           // Low half can be random(To prevent some detection)      // TODO: CompileTime signature obfuscator
+            poLoH=0x10,     // Low half contains LoHalf of a data byte  // Terminates a byte  // Can be used instead of poDat for obfuscation to prevent some detection
+            poHiH=0x20,     // Low half contains HiHalf of a data byte  // Combine with poLoH to make it terminate a byte  // Can be used instead of poDat for obfuscation to prevent some detection
+            poRaw=0x40,     // Raw bytes, if (& 0x7F)==0 then next byte is an counter of raw bytes or else rest of bits is a byte counter(63 max)   // No zero counter - 0 means 1
+            poSkp=0x80,     // Skip bytes, counter is same as poRaw; Combine with poRaw to continue in a variable range. Counter byte specifies max range to search for a pattern continuation
+  };
+//===========================================================================
 template<int MaxStatSig=0> class CSigScan   // Anything more than MaxStatSig goes to dynamic memory
 {
-public:
-enum EPOp {poDat=0x00,     // Next byte is a single raw byte    // Low half can be random(To prevent some detection)      // TODO: CompileTime signature obfuscator
-           poLoH=0x10,     // Low half contains LoHalf of a data byte  // Terminates a byte  // Can be used instead of poDat for obfuscation to prevent some detection
-           poHiH=0x20,     // Low half contains HiHalf of a data byte  // Combine with poLoH to make it terminate a byte  // Can be used instead of poDat for obfuscation to prevent some detection
-           poRaw=0x40,     // Raw bytes, if (& 0x7F)==0 then next byte is an counter of raw bytes or else rest of bits is a byte counter(63 max)   // No zero counter - 0 means 1
-           poSkp=0x80,     // Skip bytes, counter is same as poRaw; Combine with poRaw to continue in a variable range. Counter byte specifies max range to search for a pattern continuation
-  };
-
-enum ESigFlg {sfNone,sfBinary=1,sfBackward=2};
-
-private:
 struct SAddrLst
 {
  SIZE_T* AddrLst;
@@ -133,7 +133,7 @@ PVOID GetSigAddr(char* SigName, UINT SigIdx, UINT AddrIdx)    // By tag or just 
 //---------------------------------------------------------------------------
 void AddSignature(PBYTE SigData, UINT SigSize, UINT16 Flags=0, UINT MatchIdx=1, UINT MatchCtr=-1, long BoundIdx=-1, char* SigName=nullptr)   // MatchIdx=-1: Until end From MatchIdx(Just a very big number)
 {
- if(BoundIdx >= this->GetSigCount())BoundIdx = -1;
+ if(BoundIdx >= (long)this->GetSigCount())BoundIdx = -1;
  SSigRec* Rec = this->AddSigRec();
  if(!MatchCtr)MatchCtr = -1;    // 0 is useless here
  Rec->FndAddrLst.AddrLst = nullptr;
@@ -310,10 +310,6 @@ static int IsSignatureMatchStr(PVOID Address, SIZE_T Size, LPSTR Signature, UINT
 */
 class CSigPatch 
 {
-public:
- enum EPatchFlg {pfNone,pfForce=0x10,pfProtMem=0x20,prSkipUnread=0x40};
-
-private:
 struct SCodeBlk
 {
  long Offset;
@@ -367,7 +363,7 @@ void SetBorders(UINT Lower, UINT Upper)
 //---------------------------------------------------------------------------
 UINT AddPatch(LONG_PTR Offset, long BoundIdx=-1, char* Name=nullptr)   // Negative is from end of data
 {
- if(BoundIdx >= this->GetPatchCount())BoundIdx = -1;
+ if(BoundIdx >= (long)this->GetPatchCount())BoundIdx = -1;
  this->PatchCnt++;
  if(!this->Patches)this->Patches = (SPatchRec**)HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,this->PatchCnt*sizeof(PVOID));    // malloc(this->DySigNum*sizeof(SSigRec));
    else this->Patches = (SPatchRec**)HeapReAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,this->Patches,this->PatchCnt*sizeof(PVOID));   //   realloc(DySigArr,this->DySigNum*sizeof(SSigRec));
@@ -387,7 +383,7 @@ UINT AddPatch(LONG_PTR Offset, long BoundIdx=-1, char* Name=nullptr)   // Negati
 //---------------------------------------------------------------------------
 UINT AddPatch(PBYTE SigData, UINT SigSize, UINT16 SigFlags=0, UINT SigMIdx=1, UINT SigMCtr=-1, long BoundIdx=-1, char* Name=nullptr)   // TODO: Match range(From, To)
 {
- if(BoundIdx >= this->GetPatchCount())BoundIdx = -1;
+ if(BoundIdx >= (long)this->GetPatchCount())BoundIdx = -1;
  UINT PatchIdx = this->AddPatch(0, BoundIdx, Name);
  SPatchRec* Patch = this->Patches[PatchIdx];
  Patch->SigIdx = this->SigList.GetSigCount();
@@ -602,7 +598,8 @@ int LoadPatchScript(LPSTR Script, UINT ScriptSize=0)          // TODO: SigMCtr
 }
 //--------------------------------------------------------------------------- 
 
-}; 
+};
 
-typedef CSigScan<> SF;
+};
+//typedef CSigScan<> SF;
 //============================================================================================================

@@ -15,7 +15,7 @@
 */
 
 //---------------------------------------------------------------------------
-namespace NSTR        // TODO: Goes to FRAMEWORK
+struct NSTR        // TODO: Goes to FRAMEWORK
 {
 // #define haszero(v) (((v) - 0x01010101UL) & ~(v) & 0x80808080UL)
 // #define hasvalue(x,n) \ (haszero((x) ^ (~0UL/255 * (n))))
@@ -31,7 +31,7 @@ template<typename T=wchar_t> union ChrOpSiUC {static const int Dir=0; static T D
 //   UNRELIABLE !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 // Need to separate?
 //
-template<typename COp=ChrOpNone<>, typename A=wchar_t*, typename B=wchar_t*> int _fastcall StrCompare(A StrValA, B StrValB, size_t MaxLen=-1)  // Not exactly standard!  // NOTE: For a case sensitive strings there should be a faster way
+template<typename COp=ChrOpNone<>, typename A=wchar_t*, typename B=wchar_t*> static int _fastcall StrCompare(A StrValA, B StrValB, size_t MaxLen=-1)  // Not exactly standard!  // NOTE: For a case sensitive strings there should be a faster way
 {
  for(size_t voffs=0;;voffs++,MaxLen--)    // TODO: Do not decrement, precalculate EndOfStr
   {
@@ -44,7 +44,7 @@ template<typename COp=ChrOpNone<>, typename A=wchar_t*, typename B=wchar_t*> int
   }
 }
 //--------------------------------------------------------------------------- 
-template<typename COp=ChrOpNone<>, typename A=wchar_t*> int _fastcall ChrOffset(A StrVal, wchar_t ChrVal, size_t Offs=0, size_t Len=-1)   // TODO: constexpr if to exclude 'Len' if not used (-1)
+template<typename COp=ChrOpNone<>, typename A=wchar_t*> static int _fastcall ChrOffset(A StrVal, wchar_t ChrVal, size_t Offs=0, size_t Len=-1)   // TODO: constexpr if to exclude 'Len' if not used (-1)
 {
  if(Offs > Len)return -2;    // NOTE: No pointer check
  ChrVal = COp::DoOp(ChrVal);
@@ -58,7 +58,7 @@ template<typename COp=ChrOpNone<>, typename A=wchar_t*> int _fastcall ChrOffset(
 // Offs is needed bacause you can pass in StrBase an object which just supports operator[]
 // But in case of a plain strings, a size is passed separatedly
 //
-template<typename COp=ChrOpNone<>, typename A=wchar_t*, typename B=wchar_t*> int _fastcall StrOffset(A StrBase, B StrVal, size_t Offs=0, size_t BaseLen=-1, size_t ValLen=-1)    // char *strstr(const char *haystack, const char *needle)
+template<typename COp=ChrOpNone<>, typename A=wchar_t*, typename B=wchar_t*> static int _fastcall StrOffset(A StrBase, B StrVal, size_t Offs=0, size_t BaseLen=-1, size_t ValLen=-1)    // char *strstr(const char *haystack, const char *needle)
 {
  if(Offs > BaseLen)return -2;    // if(!StrBase || !StrVal || !*StrVal || (Offs > Len))
  for(size_t voffs=0;StrBase[Offs] && (Offs < BaseLen);)     // Slow, by one char. TODO: Use memcmp for case sensitive strngs
@@ -70,14 +70,14 @@ template<typename COp=ChrOpNone<>, typename A=wchar_t*, typename B=wchar_t*> int
  return -1;  // BaseStr terminated early
 }
 //--------------------------------------------------------------------------- 
-template<typename T> size_t StrLen(T Path)
+template<typename T> static size_t StrLen(T Path)
 {
  size_t len = 0;
  for(;Path[len];len++);
  return len;
 }
 //---------------------------------------------------------------------------
-template<typename D, typename S> size_t StrCopy(D Dst, S Src)      // Shlwapi.h on Windows use #define for StrCpy and StrCat
+template<typename D, typename S> static size_t StrCopy(D Dst, S Src)      // Shlwapi.h on Windows use #define for StrCpy and StrCat
 {
  size_t len = 0;
  for(;Src[len];len++)Dst[len] = Src[len];
@@ -85,7 +85,7 @@ template<typename D, typename S> size_t StrCopy(D Dst, S Src)      // Shlwapi.h 
  return len;
 }
 //---------------------------------------------------------------------------
-template<typename D, typename S> size_t StrCopy(D Dst, S Src, size_t MaxLen)
+template<typename D, typename S> static size_t StrCopy(D Dst, S Src, size_t MaxLen)
 {
  size_t len = 0;
  for(;Src[len] && (len < MaxLen);len++)Dst[len] = Src[len];         // Probably 'if constexpr (!MaxLen || (len < MaxLen))'  to exclude it if MaxLen is 0 and not needed
@@ -93,7 +93,7 @@ template<typename D, typename S> size_t StrCopy(D Dst, S Src, size_t MaxLen)
  return len;
 } 
 //---------------------------------------------------------------------------
-template<typename D, typename S> size_t StrCnat(D Dst, S Src)
+template<typename D, typename S> static size_t StrCnat(D Dst, S Src)
 {
  size_t slen = 0;
  size_t dlen = StrLen(Dst);
@@ -111,20 +111,20 @@ template<typename D, typename S> size_t StrCnat(D Dst, S Src)
 //template<typename COp=ChrOpNone<>, typename A=wchar_t*, typename B=wchar_t*> bool IsContainSubStr(A StrVal, B StrBase){return (SubOffset<COp>(StrVal, StrBase) >= 0);}
 
 // NOTE: Offsets are provided since source str may be a class, not a pointer   // TODO: Support pessing by refs for a classes                                             
-template<typename A, typename B> int _fastcall StrOffsetSC(A StrBase, B StrVal){return StrOffset<ChrOpNone<> >(StrBase, StrVal);}
-template<typename A, typename B> int _fastcall StrOffsetIC(A StrBase, B StrVal){return StrOffset<ChrOpSiLC<> >(StrBase, StrVal);}
+template<typename A, typename B> static int _fastcall StrOffsetSC(A StrBase, B StrVal){return StrOffset<ChrOpNone<> >(StrBase, StrVal);}
+template<typename A, typename B> static int _fastcall StrOffsetIC(A StrBase, B StrVal){return StrOffset<ChrOpSiLC<> >(StrBase, StrVal);}
 
-template<typename A> bool _fastcall CharOffsetSC(A StrVal, wchar_t ChrVal, size_t Offs=0, size_t Len=-1){return ChrOffset<ChrOpNone<>, A>(StrVal, ChrVal, Offs, Len);}   
-template<typename A> bool _fastcall CharOffsetIC(A StrVal, wchar_t ChrVal, size_t Offs=0, size_t Len=-1){return ChrOffset<ChrOpSiLC<>, A>(StrVal, ChrVal, Offs, Len);}
+template<typename A> static bool _fastcall CharOffsetSC(A StrVal, wchar_t ChrVal, size_t Offs=0, size_t Len=-1){return ChrOffset<ChrOpNone<>, A>(StrVal, ChrVal, Offs, Len);}   
+template<typename A> static bool _fastcall CharOffsetIC(A StrVal, wchar_t ChrVal, size_t Offs=0, size_t Len=-1){return ChrOffset<ChrOpSiLC<>, A>(StrVal, ChrVal, Offs, Len);}
 
-template<typename A, typename B> bool _fastcall IsContainSubStrSC(A StrBase, B StrVal){return (StrOffset<ChrOpNone<> >(StrBase, StrVal) >= 0);}
-template<typename A, typename B> bool _fastcall IsContainSubStrIC(A StrBase, B StrVal){return (StrOffset<ChrOpSiLC<> >(StrBase, StrVal) >= 0);}
+template<typename A, typename B> static bool _fastcall IsContainSubStrSC(A StrBase, B StrVal){return (StrOffset<ChrOpNone<> >(StrBase, StrVal) >= 0);}
+template<typename A, typename B> static bool _fastcall IsContainSubStrIC(A StrBase, B StrVal){return (StrOffset<ChrOpSiLC<> >(StrBase, StrVal) >= 0);}
 
-template<typename A, typename B> int  _fastcall CompareSC(A StrValA, B StrValB, size_t MaxLen=-1){return StrCompare<ChrOpNone<>, A, B>(StrValA, StrValB, MaxLen);}  // Template alias argument deduction is not implemented in C++ 
-template<typename A, typename B> int  _fastcall CompareIC(A StrValA, B StrValB, size_t MaxLen=-1){return StrCompare<ChrOpSiLC<>, A, B>(StrValA, StrValB, MaxLen);} 
+template<typename A, typename B> static int  _fastcall CompareSC(A StrValA, B StrValB, size_t MaxLen=-1){return StrCompare<ChrOpNone<>, A, B>(StrValA, StrValB, MaxLen);}  // Template alias argument deduction is not implemented in C++ 
+template<typename A, typename B> static int  _fastcall CompareIC(A StrValA, B StrValB, size_t MaxLen=-1){return StrCompare<ChrOpSiLC<>, A, B>(StrValA, StrValB, MaxLen);} 
 
-template<typename A, typename B> bool _fastcall IsStrEqualSC(A StrValA, B StrValB, size_t MaxLen=-1){return !StrCompare<ChrOpNone<>, A, B>(StrValA, StrValB, MaxLen);}  // == 0
-template<typename A, typename B> bool _fastcall IsStrEqualIC(A StrValA, B StrValB, size_t MaxLen=-1){return !StrCompare<ChrOpSiLC<>, A, B>(StrValA, StrValB, MaxLen);}  // == 0
+template<typename A, typename B> static bool _fastcall IsStrEqualSC(A StrValA, B StrValB, size_t MaxLen=-1){return !StrCompare<ChrOpNone<>, A, B>(StrValA, StrValB, MaxLen);}  // == 0
+template<typename A, typename B> static bool _fastcall IsStrEqualIC(A StrValA, B StrValB, size_t MaxLen=-1){return !StrCompare<ChrOpSiLC<>, A, B>(StrValA, StrValB, MaxLen);}  // == 0
 
 //---------------------------------------------------------------------------
 struct SCStr       // SCStr cstr("Hello World");

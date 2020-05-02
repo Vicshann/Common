@@ -1,9 +1,6 @@
 
-
 #pragma once
 
-#ifndef JSONH
-#define JSONH
 /*
   Copyright (c) 2018 Victor Sheinmann, Vicshann@gmail.com
 
@@ -17,9 +14,6 @@
   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, 
   WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. 
 */
-
-#include "MiniString.h"
-#include "FileStream.h"
 
 class CJSonItem;
 
@@ -1357,4 +1351,4 @@ template <typename T> static CJSonItem* SetJsnParamValue(T val, LPSTR Name, CJSo
  return res;
 }
 //---------------------------------------------------------------------------
-#endif
+

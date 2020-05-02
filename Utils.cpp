@@ -14,8 +14,12 @@
 */
 
 #include <emmintrin.h>
+#include "ntdll.h"
 #include "Utils.h"
-#include "FormatPE.h"
+//#include "FormatPE.h"
+//#include "StrUtils.hpp"
+//#include "UTF.hpp"
+#include "Common.hpp"
 //====================================================================================
                                             // sprintf: hex, bits
 HANDLE hLogFile = NULL;
@@ -54,7 +58,14 @@ void*  __cdecl memset(void* _Dst, int _Val, size_t _Size)      // TODO: Aligned,
 {
  size_t ALen = _Size/sizeof(size_t);
  size_t BLen = _Size%sizeof(size_t);
- size_t DVal = (size_t)_Val * 0x0101010101010101;         // Multiply by 0x0101010101010101 to copy the lowest byte into all other bytes
+ size_t DVal =_Val & 0xFF;               // Bad and incorrect For x32: '(size_t)_Val * 0x0101010101010101;'         // Multiply by 0x0101010101010101 to copy the lowest byte into all other bytes
+ if(DVal)
+  {
+   DVal = _Val | (_Val << 8) | (_Val << 16) | (_Val << 24);
+#ifdef _AMD64_
+   DVal |= DVal << 32;
+#endif
+  }
  for(size_t ctr=0;ctr < ALen;ctr++)((size_t*)_Dst)[ctr] = DVal; 
  for(size_t ctr=(ALen*sizeof(size_t));ctr < _Size;ctr++)((char*)_Dst)[ctr] = DVal;  
  return _Dst;
@@ -557,7 +568,8 @@ bool _stdcall IsLogHandle(HANDLE Hnd)
 void  _cdecl LogProc(int Flags, char* ProcName, char* Message, ...)
 {
  va_list args;
- static volatile  ULONG MsgIdx = 0;
+ static volatile ULONG  MsgIdx  = 0;
+ static volatile UINT64 PrvTime = 0;
  NTSTATUS Status;
  UINT  MSize = 0;
  char* MPtr  = NULL;
@@ -572,8 +584,8 @@ void  _cdecl LogProc(int Flags, char* ProcName, char* Message, ...)
    UINT Len = 0;
    if(Flags & lfLogTime)
     {
-     SIZE_T Ticks = NNTDLL::GetTicks();
-     ConvertToHexStr(Ticks, 8, TmpBuf, true, &Len); // Ticks time
+     NNTDLL::GetAbstractTimeStamp(&PrvTime);           // NNTDLL::GetTicks();
+     ConvertToHexStr(PrvTime, 16, TmpBuf, true, &Len); // Ticks time
      MSize += Len;
      TmpBuf[MSize++] = 0x20;
     }
@@ -620,7 +632,7 @@ void  _cdecl LogProc(int Flags, char* ProcName, char* Message, ...)
   {                                                                                                                 
    if(!hLogFile)  // NOTE: Without FILE_APPEND_DATA offsets must be specified to NtWriteFile
     {          // (LogMode & lmFileUpd)?FILE_APPEND_DATA:FILE_WRITE_DATA       //           //  LogMode |= lmFileUpd;
-     Status = NNTDLL::FileCreateSync(LogFilePath, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ|FILE_SHARE_WRITE, (LogMode & lmFileUpd)?FILE_OPEN_IF:FILE_OVERWRITE_IF, FILE_NON_DIRECTORY_FILE, &hLogFile);
+     Status = NCMN::NNTDLL::FileCreateSync(LogFilePath, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ|FILE_SHARE_WRITE, (LogMode & lmFileUpd)?FILE_OPEN_IF:FILE_OVERWRITE_IF, FILE_NON_DIRECTORY_FILE, &hLogFile);
      if(Status)return;
     }
    LARGE_INTEGER offset = {};
@@ -629,10 +641,9 @@ void  _cdecl LogProc(int Flags, char* ProcName, char* Message, ...)
   }
  if(LogMode & lmCons)
   {           
-   LARGE_INTEGER offset = {};
    IO_STATUS_BLOCK iosb = {};
-   if(!hConsOut)hConsOut = NtCurrentPeb()->ProcessParameters->StandardOutput;
-   Status = NtWriteFile(hConsOut, NULL, NULL, NULL, &iosb, MPtr, MSize, &offset, NULL);
+   if(!hConsOut)hConsOut = NtCurrentPeb()->ProcessParameters->StandardOutput;               // Not a real file handle on Windows 7!
+   if((UINT)hConsOut != 7)Status = NtWriteFile(hConsOut, NULL, NULL, NULL, &iosb, MPtr, MSize, NULL, NULL);        // Will not work until Windows 8
   }
 }
 //---------------------------------------------------------------------------
@@ -899,7 +910,7 @@ int _stdcall FormatToBuffer(char* format, char* buffer, UINT maxlen, va_list va)
         unsigned int f = l;    // Full len  of the string       
         if(flags & FLAGS_PRECISION) f = l = (l < precision ? l : precision);    // Not greater than precision or 0
         if(!(flags & FLAGS_LEFT)){while (l++ < width)buffer[idx++] = ' ';}      // pre padding       
-        if(flags & FLAGS_LONG)idx += UTF::Utf16To8(buffer, wp, f, idx, 0);      
+        if(flags & FLAGS_LONG)idx += NUTF::Utf16To8(buffer, wp, f, idx, 0);      
          else {for (;f;f--)buffer[idx++] = *(cp++);}   // string output         //  out(*(p++), buffer, idx++, maxlen);  // while ((*p != 0) && (!(flags & FLAGS_PRECISION) || precision--))buffer[idx++] = *(p++);       
         if(flags & FLAGS_LEFT){while (l++ < width)buffer[idx++] = ' ';}         // post padding
         format++;
@@ -1086,6 +1097,24 @@ SIZE_T _stdcall GetRealModuleSize(PVOID ModuleBase)
 	 else break;
   }
  return ModuleSize;
+}
+//---------------------------------------------------------------------------
+SIZE_T _stdcall CopyValidModuleMem(PVOID ModuleBase, PVOID DstAddr, SIZE_T DstSize)
+{
+ MEMORY_BASIC_INFORMATION meminfo;
+ SIZE_T RetLen     = 0; 
+ SIZE_T Offset     = 0;
+ PBYTE  ModuleAddr = (PBYTE)ModuleBase;
+ memset(&meminfo, 0, sizeof(MEMORY_BASIC_INFO));
+ while(!NtQueryVirtualMemory(NtCurrentProcess,ModuleAddr,MemoryBasicInformation,&meminfo,sizeof(MEMORY_BASIC_INFORMATION),&RetLen))   // Use MEMORY_IMAGE_INFORMATION instead?
+  {
+   if(meminfo.AllocationBase != ModuleBase)break;
+   if((Offset +  meminfo.RegionSize) > DstSize)break; 
+   if(meminfo.State == MEM_COMMIT)memcpy((PBYTE)DstAddr + Offset, (PBYTE)ModuleBase + Offset, meminfo.RegionSize);
+   ModuleAddr += meminfo.RegionSize;
+   Offset     += meminfo.RegionSize;
+  }
+ return Offset;
 }
 //---------------------------------------------------------------------------
 // Some pages of some system DLLs may not be mapped
@@ -2577,8 +2606,8 @@ HMODULE _stdcall FindModuleByExpName(LPSTR ModuleName)              // For modul
   {
    do
     {
-     if(!IsValidPEHeader(ment32.hModule))continue;
-     LPSTR MName = GetExpModuleName(ment32.hModule, false);
+     if(!NPEFMT::IsValidPEHeader(ment32.hModule))continue;
+     LPSTR MName = NPEFMT::GetExpModuleName(ment32.hModule, false);
      if(!lstrcmpiA(MName,ModuleName))
       {
        CloseHandle(hModulesSnap);
@@ -2627,7 +2656,7 @@ int _stdcall BinaryPackToBlobStr(LPSTR ApLibPath, LPSTR SrcBinPath, LPSTR OutBin
  if(SrcFile.Length() <= 0){LOGMSG("Failed to load the Binary: %s", SrcBinPath);}
  WrkMem.SetLength(aP_workmem_size(SrcFile.Length()));
  Packed.SetLength(aP_max_packed_size(SrcFile.Length())+sizeof(DWORD));
- UINT MapModSize = GetImageSize(SrcFile.c_data());
+ UINT MapModSize = NPEFMT::GetPEImageSize(SrcFile.c_data());
  UINT OutLen = aP_pack(SrcFile.c_data(), Packed.c_data(), SrcFile.Length(), WrkMem.c_data(), NULL, NULL);
  if(OutLen == (UINT)-1){LOGMSG("Failed to pack the Binary!"); return -2;}     // APLIB_ERROR
  *(PDWORD)(&Packed.c_data()[OutLen]) = (MapModSize > OutLen)?(MapModSize):(OutLen);
@@ -2695,10 +2724,6 @@ int __stdcall SetProcessPrivilegeState(bool bEnable, LPSTR PrName, HANDLE hProce
  if(!res)return 1;    // ???
  return 0;
 }
-//------------------------------------------------------------------------------------------------------------
-
-//------------------------------------------------------------------------------------------------------------
-//------------------------------------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------------------------
 
 /*

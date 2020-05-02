@@ -15,7 +15,7 @@
 */
 
 //---------------------------------------------------------------------------
-struct UTF
+struct NUTF
 {    // NOTE: Streams should emulate array access
 static const UINT32 maxUtf32 = 0x0010FFFFUL;
 

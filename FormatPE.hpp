@@ -1,8 +1,7 @@
 
 #pragma once
-
 /*
-  Copyright (c) 2018 Victor Sheinmann, Vicshann@gmail.com
+  Copyright (c) 2020 Victor Sheinmann, Vicshann@gmail.com
 
   Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), 
   to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, 
@@ -15,13 +14,6 @@
   WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. 
 */
 
-//#ifndef FormatPEH
-//#define FormatPEH
-
-#include <intrin.h>
-#include "NtDllEx.hpp"
-
-
 #pragma warning(push)
 #pragma warning(disable:4200)     // Overflow in a key transformation is expected
 #pragma warning(disable:4244) 
@@ -30,66 +22,65 @@
 #pragma warning(disable:4302)     // Type cast (WinAPI compatibility)
 #pragma warning(disable:4244)     // Type cast (WinAPI compatibility)
 
-#define PLATMEMALIGN    0x00001000
-#define PLATMEMALIGNMSK ~(PLATMEMALIGN-1)     // TODO: Move to 'platform.hpp'
+struct NPEFMT
+{
+static const ULONG PLATMEMALIGN    = 0x00001000;
+static const ULONG PLATMEMALIGNMSK = ~(PLATMEMALIGN-1);     // TODO: Move to 'platform.hpp'
 //==============================================================================
-#define ALIGN_FORWARD(Value,Alignment) ((((Value)/(Alignment))+((bool)((Value)%(Alignment))))*(Alignment))
-#define ALIGN_BACKWARD(Value,Alignment) (((Value)/(Alignment))*(Alignment))
+//#define ALIGN_FORWARD(Value,Alignment) ((((Value)/(Alignment))+((bool)((Value)%(Alignment))))*(Alignment))
+//#define ALIGN_BACKWARD(Value,Alignment) (((Value)/(Alignment))*(Alignment))
 
-#define RVATOADDR(SecRva,ModuleBase)  (((long)(ModuleBase))+((long)(SecRva)))
-#define ADDRTORVA(SecAddr,ModuleBase) (((long)(SecAddr))-((long)(ModuleBase)))
 //---------------------------------------------------------------------------
-#define SIGN_MZ 0x5A4D
-#define SIGN_PE 0x4550
+static const ULONG SIGN_MZ = 0x5A4D;
+static const ULONG SIGN_PE = 0x4550;
 //---------------------------------------------------------------------------
-#define SECTION_TYPE_DSECT                 0x00000001  // Reserved.
-#define SECTION_TYPE_NOLOAD                0x00000002  // Reserved.
-#define SECTION_TYPE_GROUP                 0x00000004  // Reserved.
-#define SECTION_TYPE_NO_PAD                0x00000008  // Reserved.
-#define SECTION_TYPE_COPY                  0x00000010  // Reserved.
-#define SECTION_CNT_CODE                   0x00000020  // Section contains code.
-#define SECTION_CNT_INITIALIZED_DATA       0x00000040  // Section contains initialized data.
-#define SECTION_CNT_UNINITIALIZED_DATA     0x00000080  // Section contains uninitialized data.
-#define SECTION_LNK_OTHER                  0x00000100  // Reserved.
-#define SECTION_LNK_INFO                   0x00000200  // Section contains comments or some other type of information.
-#define SECTION_TYPE_OVER                  0x00000400  // Reserved.
-#define SECTION_LNK_REMOVE                 0x00000800  // Section contents will not become part of image.
-#define SECTION_LNK_COMDAT                 0x00001000  // Section contents comdat.
-#define SECTION_UNKNOW                     0x00002000  // Reserved.
-#define SECTION_NO_DEFER_SPEC_EXC          0x00004000  // Reset speculative exceptions handling bits in the TLB entries for this section.
-#define SECTION_MEM_FARDATA                0x00008000  // Section content can be accessed relative to GP
-#define SECTION_MEM_SYSHEAP                0x00010000  // Obsolete
-#define SECTION_MEM_PURGEABLE              0x00020000  //
-#define SECTION_MEM_LOCKED                 0x00040000  //
-#define SECTION_MEM_PRELOAD                0x00080000  //
-#define SECTION_ALIGN_1BYTES               0x00100000  //
-#define SECTION_ALIGN_2BYTES               0x00200000  //
-#define SECTION_ALIGN_4BYTES               0x00300000  //
-#define SECTION_ALIGN_8BYTES               0x00400000  //
-#define SECTION_ALIGN_16BYTES              0x00500000  // Default alignment if no others are specified.
-#define SECTION_ALIGN_32BYTES              0x00600000  //
-#define SECTION_ALIGN_64BYTES              0x00700000  //
-#define SECTION_ALIGN_128BYTES             0x00800000  //
-#define SECTION_ALIGN_256BYTES             0x00900000  //
-#define SECTION_ALIGN_512BYTES             0x00A00000  //
-#define SECTION_ALIGN_1024BYTES            0x00B00000  //
-#define SECTION_ALIGN_2048BYTES            0x00C00000  //
-#define SECTION_ALIGN_4096BYTES            0x00D00000  //
-#define SECTION_ALIGN_8192BYTES            0x00E00000  //
-#define SECTION_ALIGN_MASK                 0x00F00000  // UNUSED - Helps reading align value
-#define SECTION_LNK_NRELOC_OVFL            0x01000000  // Section contains extended relocations.
-#define SECTION_MEM_DISCARDABLE            0x02000000  // Section can be discarded.
-#define SECTION_MEM_NOT_CACHED             0x04000000  // Section is not cachable.
-#define SECTION_MEM_NOT_PAGED              0x08000000  // Section is not pageable.
-#define SECTION_MEM_SHARED                 0x10000000  // Section is shareable.
-#define SECTION_MEM_EXECUTE                0x20000000  // Section is executable.
-#define SECTION_MEM_READ                   0x40000000  // Section is readable.
-#define SECTION_MEM_WRITE                  0x80000000  // Section is writeable.
+static const ULONG SECTION_TYPE_DSECT              =  0x00000001;  // Reserved.
+static const ULONG SECTION_TYPE_NOLOAD             =  0x00000002;  // Reserved.
+static const ULONG SECTION_TYPE_GROUP              =  0x00000004;  // Reserved.
+static const ULONG SECTION_TYPE_NO_PAD             =  0x00000008;  // Reserved.
+static const ULONG SECTION_TYPE_COPY               =  0x00000010;  // Reserved.
+static const ULONG SECTION_CNT_CODE                =  0x00000020;  // Section contains code.
+static const ULONG SECTION_CNT_INITIALIZED_DATA    =  0x00000040;  // Section contains initialized data.
+static const ULONG SECTION_CNT_UNINITIALIZED_DATA  =  0x00000080;  // Section contains uninitialized data.
+static const ULONG SECTION_LNK_OTHER               =  0x00000100;  // Reserved.
+static const ULONG SECTION_LNK_INFO                =  0x00000200;  // Section contains comments or some other type of information.
+static const ULONG SECTION_TYPE_OVER               =  0x00000400;  // Reserved.
+static const ULONG SECTION_LNK_REMOVE              =  0x00000800;  // Section contents will not become part of image.
+static const ULONG SECTION_LNK_COMDAT              =  0x00001000;  // Section contents comdat.
+static const ULONG SECTION_UNKNOW                  =  0x00002000;  // Reserved.
+static const ULONG SECTION_NO_DEFER_SPEC_EXC       =  0x00004000;  // Reset speculative exceptions handling bits in the TLB entries for this section.
+static const ULONG SECTION_MEM_FARDATA             =  0x00008000;  // Section content can be accessed relative to GP
+static const ULONG SECTION_MEM_SYSHEAP             =  0x00010000;  // Obsolete
+static const ULONG SECTION_MEM_PURGEABLE           =  0x00020000;  //
+static const ULONG SECTION_MEM_LOCKED              =  0x00040000;  //
+static const ULONG SECTION_MEM_PRELOAD             =  0x00080000;  //
+static const ULONG SECTION_ALIGN_1BYTES            =  0x00100000;  //
+static const ULONG SECTION_ALIGN_2BYTES            =  0x00200000;  //
+static const ULONG SECTION_ALIGN_4BYTES            =  0x00300000;  //
+static const ULONG SECTION_ALIGN_8BYTES            =  0x00400000;  //
+static const ULONG SECTION_ALIGN_16BYTES           =  0x00500000;  // Default alignment if no others are specified.
+static const ULONG SECTION_ALIGN_32BYTES           =  0x00600000;  //
+static const ULONG SECTION_ALIGN_64BYTES           =  0x00700000;  //
+static const ULONG SECTION_ALIGN_128BYTES          =  0x00800000;  //
+static const ULONG SECTION_ALIGN_256BYTES          =  0x00900000;  //
+static const ULONG SECTION_ALIGN_512BYTES          =  0x00A00000;  //
+static const ULONG SECTION_ALIGN_1024BYTES         =  0x00B00000;  //
+static const ULONG SECTION_ALIGN_2048BYTES         =  0x00C00000;  //
+static const ULONG SECTION_ALIGN_4096BYTES         =  0x00D00000;  //
+static const ULONG SECTION_ALIGN_8192BYTES         =  0x00E00000;  //
+static const ULONG SECTION_ALIGN_MASK              =  0x00F00000;  // UNUSED - Helps reading align value
+static const ULONG SECTION_LNK_NRELOC_OVFL         =  0x01000000;  // Section contains extended relocations.
+static const ULONG SECTION_MEM_DISCARDABLE         =  0x02000000;  // Section can be discarded.
+static const ULONG SECTION_MEM_NOT_CACHED          =  0x04000000;  // Section is not cachable.
+static const ULONG SECTION_MEM_NOT_PAGED           =  0x08000000;  // Section is not pageable.
+static const ULONG SECTION_MEM_SHARED              =  0x10000000;  // Section is shareable.
+static const ULONG SECTION_MEM_EXECUTE             =  0x20000000;  // Section is executable.
+static const ULONG SECTION_MEM_READ                =  0x40000000;  // Section is readable.
+static const ULONG SECTION_MEM_WRITE               =  0x80000000;  // Section is writeable.
 
-
-#define PETYPE64  ULONGLONG
-#define PETYPE32  ULONG
-#define PECURRENT ULONG_PTR
+typedef ULONGLONG  PETYPE64;
+typedef ULONG      PETYPE32;
+typedef ULONG_PTR  PECURRENT;
 
 #pragma pack( push, 1 )
 //---------------------------------------------------------------------------
@@ -340,7 +331,7 @@ struct SRichRec
 };
 #pragma pack( pop )
 //---------------------------------------------------------------------------
-static bool _stdcall IsValidPEHeader(PVOID Header)
+static bool IsValidPEHeader(PVOID Header)
 {
  DOS_HEADER* DosHdr  = (DOS_HEADER*)Header;
  if((DosHdr->FlagMZ != SIGN_MZ))return false;
@@ -349,7 +340,7 @@ static bool _stdcall IsValidPEHeader(PVOID Header)
  return true;
 }
 //---------------------------------------------------------------------------
-static bool _stdcall IsValidPEHeaderBlk(PVOID Header, UINT Size)
+static bool IsValidPEHeaderBlk(PVOID Header, UINT Size)
 {
  if(Size < sizeof(DOS_HEADER))return false;
  DOS_HEADER* DosHdr  = (DOS_HEADER*)Header;
@@ -360,7 +351,7 @@ static bool _stdcall IsValidPEHeaderBlk(PVOID Header, UINT Size)
  return true;
 }
 //---------------------------------------------------------------------------
-static bool _stdcall IsValidExeFile(PVOID Header)        // TODO: Use IsBadReadPtr or specify a memory range as argument to test WinHdr?   // Leave IsBadReadPtr for now because in a mapped images not all segments readable
+static bool IsValidExeFile(PVOID Header)        // TODO: Use IsBadReadPtr or specify a memory range as argument to test WinHdr?   // Leave IsBadReadPtr for now because in a mapped images not all segments readable
 {
  if(!IsValidPEHeader(Header))return false;
  DOS_HEADER *DosHdr = (DOS_HEADER*)Header;
@@ -369,21 +360,21 @@ static bool _stdcall IsValidExeFile(PVOID Header)        // TODO: Use IsBadReadP
  return !(WinHdr->FileHeader.Flags & 0x2000); // IsDll flag
 }
 //---------------------------------------------------------------------------
-static bool _stdcall IsValidModuleX64(PVOID Header)
+static bool IsValidModuleX64(PVOID Header)
 {
  DOS_HEADER *DosHdr = (DOS_HEADER*)Header;
  WIN_HEADER<PECURRENT> *WinHdr = (WIN_HEADER<PECURRENT>*)&(((BYTE*)Header)[DosHdr->OffsetHeaderPE]);
  return (WinHdr->OptionalHeader.Magic == 0x020B);
 }
 //---------------------------------------------------------------------------
-static bool _stdcall IsRvaInSection(SECTION_HEADER *Sec, UINT Rva)
+static bool IsRvaInSection(SECTION_HEADER *Sec, UINT Rva)
 {
  if(Sec->SectionRva > Rva)return false;
  if((Sec->SectionRva+Sec->VirtualSize) <= Rva)return false;
  return true;
 }
 //---------------------------------------------------------------------------
-static UINT _stdcall GetImageSize(PVOID Header)
+static UINT GetPEImageSize(PVOID Header)
 {
  DOS_HEADER *DosHdr = (DOS_HEADER*)Header;
  WIN_HEADER<PECURRENT> *WinHdr = (WIN_HEADER<PECURRENT>*)&(((BYTE*)Header)[DosHdr->OffsetHeaderPE]);
@@ -391,7 +382,7 @@ static UINT _stdcall GetImageSize(PVOID Header)
 }
 //---------------------------------------------------------------------------
 // NOTE: Assumed that section offsets is sequential!
-static UINT _stdcall SizeOfSections(PVOID ModuleBase, UINT MaxSecs=-1, bool IncludeHdr=true, bool RawSizes=false)
+static UINT SizeOfSections(PVOID ModuleBase, UINT MaxSecs=-1, bool IncludeHdr=true, bool RawSizes=false)
 {
  DOS_HEADER     *DosHdr = (DOS_HEADER*)ModuleBase;
  WIN_HEADER<PECURRENT>  *WinHdr = (WIN_HEADER<PECURRENT>*)&((PBYTE)ModuleBase)[DosHdr->OffsetHeaderPE];
@@ -403,13 +394,13 @@ static UINT _stdcall SizeOfSections(PVOID ModuleBase, UINT MaxSecs=-1, bool Incl
  for(UINT ctr=0;ctr < SMax;ctr++)
   {
    if(!Base)Base = RawSizes?(CurSec[ctr].PhysicalOffset):(CurSec[ctr].SectionRva);
-   Size += RawSizes?(ALIGN_FORWARD(CurSec[ctr].PhysicalSize, WinHdr->OptionalHeader.FileAlign)):(ALIGN_FORWARD(CurSec[ctr].VirtualSize, WinHdr->OptionalHeader.SectionAlign));
+   Size += RawSizes?(AlignFrwd(CurSec[ctr].PhysicalSize, WinHdr->OptionalHeader.FileAlign)):(AlignFrwd(CurSec[ctr].VirtualSize, WinHdr->OptionalHeader.SectionAlign));
   }                
- if(!Base)Base = RawSizes?WinHdr->OptionalHeader.SizeOfHeaders:(ALIGN_FORWARD(WinHdr->OptionalHeader.SizeOfHeaders, WinHdr->OptionalHeader.SectionAlign));    
+ if(!Base)Base = RawSizes?WinHdr->OptionalHeader.SizeOfHeaders:(AlignFrwd(WinHdr->OptionalHeader.SizeOfHeaders, WinHdr->OptionalHeader.SectionAlign));    
  return Base + Size;
 }
 //---------------------------------------------------------------------------
-static UINT _stdcall RvaToFileOffset(PBYTE ModuleBase, UINT Rva)
+static UINT RvaToFileOffset(PBYTE ModuleBase, UINT Rva)
 {
  DOS_HEADER     *DosHdr = (DOS_HEADER*)ModuleBase;
  WIN_HEADER<PECURRENT>  *WinHdr = (WIN_HEADER<PECURRENT>*)&ModuleBase[DosHdr->OffsetHeaderPE];
@@ -425,7 +416,7 @@ static UINT _stdcall RvaToFileOffset(PBYTE ModuleBase, UINT Rva)
  return 0;
 }
 //---------------------------------------------------------------------------
-template<typename T> static UINT _stdcall TFileOffsetToRva(PBYTE ModuleBase, UINT Offset)
+template<typename T> static UINT TFileOffsetToRva(PBYTE ModuleBase, UINT Offset)
 {
  DOS_HEADER     *DosHdr = (DOS_HEADER*)ModuleBase;
  WIN_HEADER<T>  *WinHdr = (WIN_HEADER<T>*)&ModuleBase[DosHdr->OffsetHeaderPE];
@@ -441,14 +432,14 @@ template<typename T> static UINT _stdcall TFileOffsetToRva(PBYTE ModuleBase, UIN
  return 0;
 }
 //---------------------------------------------------------------------------
-static UINT _stdcall FileOffsetToRvaConvert(PVOID ModuleBase, UINT Offset)
+static UINT FileOffsetToRvaConvert(PVOID ModuleBase, UINT Offset)
 {           
  if(!IsValidPEHeader(ModuleBase))return 0;
  if(IsValidModuleX64(ModuleBase))return TFileOffsetToRva<PETYPE64>((PBYTE)ModuleBase, Offset);
  return TFileOffsetToRva<PETYPE32>((PBYTE)ModuleBase, Offset);
 }
 //---------------------------------------------------------------------------
-static PWSTR _stdcall FindVerValue(VERSION_INFO* RootBlk, PWSTR Name, UINT Type)
+static PWSTR FindVerValue(VERSION_INFO* RootBlk, PWSTR Name, UINT Type)
 {
  //if(RootBlk->ValueLength && ((Type == (UINT)-1)||(Type == RootBlk->Type)) && (lstrcmpW((PWSTR)&RootBlk->Key,Name)==0)return (PWSTR)&RootBlk->Key;
 
@@ -474,7 +465,7 @@ int _pe_iterate_resources(
     void* callback_data)
 {
 */
-template<typename T> PVOID _stdcall TGetResBodyRaw(PBYTE ModuleBase, PBYTE ResBase, RESOURCE_DIR* Resour, UINT RootID, PUINT ResIdx, PUINT Size, LPSTR* Name, IMAGE_RESOURCE_DATA_ENTRY** DEntr)
+template<typename T> static PVOID TGetResBodyRaw(PBYTE ModuleBase, PBYTE ResBase, RESOURCE_DIR* Resour, UINT RootID, PUINT ResIdx, PUINT Size, LPSTR* Name, IMAGE_RESOURCE_DATA_ENTRY** DEntr)
 {
  for(UINT ctr=0;ctr < Resour->NumberOfIdEntries;ctr++)
   {
@@ -515,7 +506,7 @@ template<typename T> PVOID _stdcall TGetResBodyRaw(PBYTE ModuleBase, PBYTE ResBa
  return NULL; 
 }
 //---------------------------------------------------------------------------
-template<typename T> static PVOID _stdcall TGetResourceBodyRaw(PBYTE ModuleBase, UINT RootID, UINT ResIdx, PUINT Size, LPSTR* Name, IMAGE_RESOURCE_DATA_ENTRY** DEntr)
+template<typename T> static PVOID TGetResourceBodyRaw(PBYTE ModuleBase, UINT RootID, UINT ResIdx, PUINT Size, LPSTR* Name, IMAGE_RESOURCE_DATA_ENTRY** DEntr)
 {
  DOS_HEADER     *DosHdr = (DOS_HEADER*)ModuleBase;
  WIN_HEADER<T>  *WinHdr = (WIN_HEADER<T>*)&((PBYTE)ModuleBase)[DosHdr->OffsetHeaderPE];
@@ -525,7 +516,7 @@ template<typename T> static PVOID _stdcall TGetResourceBodyRaw(PBYTE ModuleBase,
  return TGetResBodyRaw<T>(ModuleBase, (PBYTE)Resour, Resour, RootID, &ResIdx, Size, Name, DEntr);
 }
 //---------------------------------------------------------------------------
-static PVOID _stdcall GetResourceBodyRaw(PVOID ModuleBase, UINT RootID, UINT ResIdx, PUINT Size, LPSTR* Name, IMAGE_RESOURCE_DATA_ENTRY** DEntr=NULL)
+static PVOID GetResourceBodyRaw(PVOID ModuleBase, UINT RootID, UINT ResIdx, PUINT Size, LPSTR* Name, IMAGE_RESOURCE_DATA_ENTRY** DEntr=NULL)
 {
  if(!IsValidPEHeader(ModuleBase))return NULL;
  if(IsValidModuleX64(ModuleBase))return TGetResourceBodyRaw<PETYPE64>((PBYTE)ModuleBase, RootID, ResIdx, Size, Name, DEntr);
@@ -533,7 +524,7 @@ static PVOID _stdcall GetResourceBodyRaw(PVOID ModuleBase, UINT RootID, UINT Res
 }
 //---------------------------------------------------------------------------
 
-/*template<typename T> static UINT _stdcall GetEntryPointersForApiName(PSTRING ModuleName, PSTRING ApiName, PVOID ModuleBase, T* *EntryA, T* *EntryB)
+/*template<typename T> static UINT GetEntryPointersForApiName(PSTRING ModuleName, PSTRING ApiName, PVOID ModuleBase, T* *EntryA, T* *EntryB)
 {
  if(!IsValidPEHeader(ModuleBase))return 1;
  DBGMSG("ModuleName='%Z', ApiName='%Z', ModuleBase=%p",ModuleName,ApiName,ModuleBase);
@@ -574,7 +565,7 @@ static PVOID _stdcall GetResourceBodyRaw(PVOID ModuleBase, UINT RootID, UINT Res
  return 1;
 }*/
 //---------------------------------------------------------------------------
-template<typename T> static LPSTR _stdcall TGetExpModuleName(PBYTE ModuleBase, bool Raw)  // Not for EXE     // TODO: Optional Pointer validation mode
+template<typename T> static LPSTR TGetExpModuleName(PBYTE ModuleBase, bool Raw)  // Not for EXE     // TODO: Optional Pointer validation mode
 {
  DOS_HEADER* DosHdr        = (DOS_HEADER*)ModuleBase;
  WIN_HEADER<T>* WinHdr     = (WIN_HEADER<T>*)&((PBYTE)ModuleBase)[DosHdr->OffsetHeaderPE];
@@ -584,13 +575,13 @@ template<typename T> static LPSTR _stdcall TGetExpModuleName(PBYTE ModuleBase, b
  return (LPSTR)&ModuleBase[(Raw)?(RvaToFileOffset(ModuleBase,Export->NameRVA)):(Export->NameRVA)];
 }
 //---------------------------------------------------------------------------
-static LPSTR _stdcall GetExpModuleName(PVOID ModuleBase, bool Raw)
+static LPSTR GetExpModuleName(PVOID ModuleBase, bool Raw)
 {
  if(IsValidModuleX64(ModuleBase))return TGetExpModuleName<PETYPE64>((PBYTE)ModuleBase, Raw);
  return TGetExpModuleName<PETYPE32>((PBYTE)ModuleBase, Raw);
 }
 //---------------------------------------------------------------------------
-static PVOID _stdcall ModuleAddressToBase(PVOID Address)  // Not all module sections may present in memory (discarded)
+static PVOID ModuleAddressToBase(PVOID Address)  // Not all module sections may present in memory (discarded)
 {
  PBYTE Base = (PBYTE)(((ULONG_PTR)Address) & ~0xFFF);   
  while(IsBadReadPtr(Base,sizeof(DOS_HEADER)) || !IsValidPEHeader(Base))Base -= 0x1000;  // !MmIsAddressValid(Base) // Why not all pages of ntoskrnl.exe are available on x64?
@@ -598,7 +589,7 @@ static PVOID _stdcall ModuleAddressToBase(PVOID Address)  // Not all module sect
  return Base;
 }
 //---------------------------------------------------------------------------
-/*static PVOID _stdcall GetSystemRoutineAddress(CHAR *ProcName) 
+/*static PVOID GetSystemRoutineAddress(CHAR *ProcName) 
 {
  UNICODE_STRING ustr; 
  WCHAR Name[256];
@@ -611,18 +602,18 @@ static PVOID _stdcall ModuleAddressToBase(PVOID Address)  // Not all module sect
  return MmGetSystemRoutineAddress(&ustr);   
 } */
 //---------------------------------------------------------------------------
-static CHAR _stdcall CharCaseUpper(CHAR Chr)
+static CHAR CharCaseUpper(CHAR Chr)
 {
  if((Chr > 0x60)&&(Chr < 0x7B))Chr -= 0x20;
  return Chr;  
 }
 //------------------------------------------------------------------------------
-static BOOL _stdcall IsCharsEqualIC(CHAR ChrA, CHAR ChrB)
+static BOOL IsCharsEqualIC(CHAR ChrA, CHAR ChrB)
 {
  return (CharCaseUpper(ChrA) == CharCaseUpper(ChrB));
 }
 //------------------------------------------------------------------------------
-static BOOL _stdcall IsSectionNamesEqual(CHAR *NameA, CHAR *NameB)
+static BOOL IsSectionNamesEqual(CHAR *NameA, CHAR *NameB)
 {
  for(int ctr=0;ctr<8;ctr++)
   {
@@ -632,7 +623,7 @@ static BOOL _stdcall IsSectionNamesEqual(CHAR *NameA, CHAR *NameB)
  return TRUE;
 }
 //------------------------------------------------------------------------------
-static BOOL _stdcall IsNamesEqual(CHAR *NameA, CHAR *NameB)
+static BOOL IsNamesEqual(CHAR *NameA, CHAR *NameB)
 {
  for(;;NameA++,NameB++)
   {
@@ -642,7 +633,7 @@ static BOOL _stdcall IsNamesEqual(CHAR *NameA, CHAR *NameB)
  return TRUE;
 }
 //------------------------------------------------------------------------------
-static BOOL _stdcall IsNamesEqualIC(CHAR *NameA, CHAR *NameB)
+static BOOL IsNamesEqualIC(CHAR *NameA, CHAR *NameB)
 {
  for(;;NameA++,NameB++)
   {
@@ -652,7 +643,7 @@ static BOOL _stdcall IsNamesEqualIC(CHAR *NameA, CHAR *NameB)
  return TRUE;
 }
 //------------------------------------------------------------------------------
-template<typename T> static bool _stdcall TGetModuleSection(PVOID ModuleBase, CHAR *SecName, SECTION_HEADER **ResSec)
+template<typename T> static bool TGetModuleSection(PVOID ModuleBase, CHAR *SecName, SECTION_HEADER **ResSec)
 {
  DOS_HEADER     *DosHdr = (DOS_HEADER*)ModuleBase;
  WIN_HEADER<T>  *WinHdr = (WIN_HEADER<T>*)&((PBYTE)ModuleBase)[DosHdr->OffsetHeaderPE];
@@ -670,7 +661,7 @@ template<typename T> static bool _stdcall TGetModuleSection(PVOID ModuleBase, CH
  return false;
 }
 //---------------------------------------------------------------------------
-template<typename T> static UINT _stdcall TCalcRawModuleSize(PVOID ModuleBase)
+template<typename T> static UINT TCalcRawModuleSize(PVOID ModuleBase)
 {
  DOS_HEADER     *DosHdr = (DOS_HEADER*)ModuleBase;
  WIN_HEADER<T>  *WinHdr = (WIN_HEADER<T>*)&((PBYTE)ModuleBase)[DosHdr->OffsetHeaderPE];
@@ -685,7 +676,7 @@ template<typename T> static UINT _stdcall TCalcRawModuleSize(PVOID ModuleBase)
  return LstSec->PhysicalOffset + LstSec->PhysicalSize;
 }
 //---------------------------------------------------------------------------
-static bool _stdcall GetModuleSizes(PBYTE ModuleBase, UINT* RawSize, UINT* VirSize)
+static bool GetModuleSizes(PBYTE ModuleBase, UINT* RawSize, UINT* VirSize)
 {
  DOS_HEADER     *DosHdr = (DOS_HEADER*)ModuleBase;
  WIN_HEADER<PECURRENT> *WinHdr = (WIN_HEADER<PECURRENT>*)&((PBYTE)ModuleBase)[DosHdr->OffsetHeaderPE];
@@ -699,14 +690,14 @@ static bool _stdcall GetModuleSizes(PBYTE ModuleBase, UINT* RawSize, UINT* VirSi
 }
 //---------------------------------------------------------------------------
 // Works with a Mapped in memory or a Raw file
-static bool _stdcall GetModuleSection(PVOID ModuleBase, CHAR *SecName, SECTION_HEADER **ResSec)
+static bool GetModuleSection(PVOID ModuleBase, CHAR *SecName, SECTION_HEADER **ResSec)
 {
  if(!IsValidPEHeader(ModuleBase))return false;
  if(IsValidModuleX64(ModuleBase))return TGetModuleSection<PETYPE64>(ModuleBase, SecName, ResSec);
  return TGetModuleSection<PETYPE32>(ModuleBase, SecName, ResSec);
 }
 //---------------------------------------------------------------------------
-static PVOID _stdcall GetLoadedModuleEntryPoint(PVOID ModuleBase)
+static PVOID GetLoadedModuleEntryPoint(PVOID ModuleBase)
 {
  if(!IsValidPEHeader(ModuleBase))return NULL;
  DOS_HEADER *DosHdr = (DOS_HEADER*)ModuleBase;
@@ -715,7 +706,7 @@ static PVOID _stdcall GetLoadedModuleEntryPoint(PVOID ModuleBase)
  return &((PBYTE)ModuleBase)[WinHdr->OptionalHeader.EntryPointRVA];
 }
 //---------------------------------------------------------------------------
-template<typename T> static UINT _stdcall TGetModuleEntryOffset(PBYTE ModuleBase, bool Raw)
+template<typename T> static UINT TGetModuleEntryOffset(PBYTE ModuleBase, bool Raw)
 {
  DOS_HEADER     *DosHdr    = (DOS_HEADER*)ModuleBase;
  WIN_HEADER<T>  *WinHdr    = (WIN_HEADER<T>*)&ModuleBase[DosHdr->OffsetHeaderPE];
@@ -723,13 +714,13 @@ template<typename T> static UINT _stdcall TGetModuleEntryOffset(PBYTE ModuleBase
  return (Raw)?(RvaToFileOffset(ModuleBase,WinHdr->OptionalHeader.EntryPointRVA)):(WinHdr->OptionalHeader.EntryPointRVA);
 }
 //---------------------------------------------------------------------------
-static UINT _stdcall GetModuleEntryOffset(PBYTE ModuleBase, bool Raw)
+static UINT GetModuleEntryOffset(PBYTE ModuleBase, bool Raw)
 {
  if(IsValidModuleX64(ModuleBase))return TGetModuleEntryOffset<PETYPE64>(ModuleBase, Raw);
  return TGetModuleEntryOffset<PETYPE32>(ModuleBase, Raw);
 }
 //---------------------------------------------------------------------------
-template<typename T> static LPSTR _stdcall TFindImportTable(PBYTE ModuleBase, LPSTR LibName, SImportThunk<T>** LookUpRec, SImportThunk<T>** AddrRec, bool Raw)
+template<typename T> static LPSTR TFindImportTable(PBYTE ModuleBase, LPSTR LibName, SImportThunk<T>** LookUpRec, SImportThunk<T>** AddrRec, bool Raw)
 {
  DOS_HEADER     *DosHdr    = (DOS_HEADER*)ModuleBase;
  WIN_HEADER<T>  *WinHdr    = (WIN_HEADER<T>*)&ModuleBase[DosHdr->OffsetHeaderPE];
@@ -757,7 +748,7 @@ struct SImportRec
  PVOID Pointer;
 };
 //---------------------------------------------------------------------------
-template<typename T> static bool _stdcall TFindImportRecord(PBYTE ModuleBase, LPSTR LibName, LPSTR ProcName, SImportThunk<T>** LookUpRec, SImportThunk<T>** AddrRec, bool Raw)   // Possible not fully correct  // TODO: By ordinal
+template<typename T> static bool TFindImportRecord(PBYTE ModuleBase, LPSTR LibName, LPSTR ProcName, SImportThunk<T>** LookUpRec, SImportThunk<T>** AddrRec, bool Raw)   // Possible not fully correct  // TODO: By ordinal
 {
  DOS_HEADER     *DosHdr    = (DOS_HEADER*)ModuleBase;
  WIN_HEADER<T>  *WinHdr    = (WIN_HEADER<T>*)&ModuleBase[DosHdr->OffsetHeaderPE];
@@ -812,7 +803,7 @@ template<typename T> static bool _stdcall TFindImportRecord(PBYTE ModuleBase, LP
  return false;
 }
 //---------------------------------------------------------------------------
-template<typename T> static PVOID _stdcall TResolveImportRecord(PVOID ModuleBase, SImportRec* IRec)
+template<typename T> static PVOID TResolveImportRecord(PVOID ModuleBase, SImportRec* IRec)
 {
  SImportThunk<T>* AddrRec;
  SImportThunk<T>* LookUpRec;
@@ -823,7 +814,7 @@ template<typename T> static PVOID _stdcall TResolveImportRecord(PVOID ModuleBase
  return Old;
 }
 //---------------------------------------------------------------------------
-static PVOID _stdcall ResolveImportRecord(PVOID ModuleBase, SImportRec* IRec)
+static PVOID ResolveImportRecord(PVOID ModuleBase, SImportRec* IRec)
 {
  if(!IsValidPEHeader(ModuleBase))return NULL;
  if(IsValidModuleX64(ModuleBase))return TResolveImportRecord<PETYPE64>(ModuleBase, IRec);
@@ -833,7 +824,7 @@ static PVOID _stdcall ResolveImportRecord(PVOID ModuleBase, SImportRec* IRec)
 // NOTE: Kernel32.dll exports some functions with a different names(i.e. lstrlen and lstrlenA)
 // Will not find a forwarded address
 //
-template<typename T> _declspec(noinline) static LPSTR _stdcall TGetProcedureInfoByAddr(PBYTE ModuleBase, PVOID ProcAddr, PDWORD OrdinalOut=NULL, int MatchIdx=0)  
+template<typename T> _declspec(noinline) static LPSTR TGetProcedureInfoByAddr(PBYTE ModuleBase, PVOID ProcAddr, PDWORD OrdinalOut=NULL, int MatchIdx=0)  
 {
  DOS_HEADER* DosHdr        = (DOS_HEADER*)ModuleBase;
  WIN_HEADER<T>* WinHdr     = (WIN_HEADER<T>*)&ModuleBase[DosHdr->OffsetHeaderPE];
@@ -861,7 +852,7 @@ template<typename T> _declspec(noinline) static LPSTR _stdcall TGetProcedureInfo
  return NULL;
 }
 //---------------------------------------------------------------------------      
-template<typename T, bool Raw=false> _declspec(noinline) static PVOID _stdcall TGetProcedureAddress(PBYTE ModuleBase, LPSTR ProcName, LPSTR* Forwarder=NULL, PVOID* ProcEntry=NULL)  // No forwarding support, no ordinals
+template<typename T, bool Raw=false> _declspec(noinline) static PVOID TGetProcedureAddress(PBYTE ModuleBase, LPSTR ProcName, LPSTR* Forwarder=NULL, PVOID* ProcEntry=NULL)  // No forwarding support, no ordinals
 {
  DOS_HEADER* DosHdr        = (DOS_HEADER*)ModuleBase;
  WIN_HEADER<T>* WinHdr     = (WIN_HEADER<T>*)&ModuleBase[DosHdr->OffsetHeaderPE];
@@ -896,7 +887,7 @@ template<typename T, bool Raw=false> _declspec(noinline) static PVOID _stdcall T
  return Addr;     
 }
 //---------------------------------------------------------------------------
-static PVOID _stdcall GetProcedureAddress(PVOID ModuleBase, LPSTR ApiName, LPSTR* Forwarder=NULL, PVOID* ProcEntry=NULL) 
+static PVOID GetProcedureAddress(PVOID ModuleBase, LPSTR ApiName, LPSTR* Forwarder=NULL, PVOID* ProcEntry=NULL) 
 {
 // DBGMSG("ApiName: %s",ApiName);
  if(!ModuleBase)return NULL;
@@ -905,7 +896,7 @@ static PVOID _stdcall GetProcedureAddress(PVOID ModuleBase, LPSTR ApiName, LPSTR
  return TGetProcedureAddress<PETYPE32>((PBYTE)ModuleBase,ApiName,Forwarder,ProcEntry); 
 }
 //---------------------------------------------------------------------------
-static PVOID _stdcall GetProcAddr(PVOID ModuleBase, LPSTR ApiName)
+static PVOID GetProcAddr(PVOID ModuleBase, LPSTR ApiName)
 {
  LPSTR Forwarder = NULL;
  PVOID Addr = GetProcedureAddress(ModuleBase, ApiName, &Forwarder);
@@ -924,7 +915,7 @@ static PVOID _stdcall GetProcAddr(PVOID ModuleBase, LPSTR ApiName)
  return Addr;
 }
 //---------------------------------------------------------------------------
-static int _stdcall ParseForwarderStr(LPSTR InStr, LPSTR OutDllName, LPSTR OutProcName)    //  “NTDLL.RtlDeleteCriticalSection”,  “NTDLL.#491”
+static int ParseForwarderStr(LPSTR InStr, LPSTR OutDllName, LPSTR OutProcName)    //  “NTDLL.RtlDeleteCriticalSection”,  “NTDLL.#491”
 {         
  int namctr = 0;
  for(;InStr[namctr] && (InStr[namctr] != '.');namctr++)OutDllName[namctr] = InStr[namctr];
@@ -947,19 +938,19 @@ static int _stdcall ParseForwarderStr(LPSTR InStr, LPSTR OutDllName, LPSTR OutPr
  return -1;
 }
 //---------------------------------------------------------------------------
-template<typename T> SIZE_T TBaseOfImage(PBYTE ModuleBase)
+template<typename T> static SIZE_T TBaseOfImage(PBYTE ModuleBase)
 {
  WIN_HEADER<T> *WinHdr = (WIN_HEADER<T>*)&ModuleBase[((DOS_HEADER*)ModuleBase)->OffsetHeaderPE];
  return (sizeof(PETYPE64)==sizeof(T))?(WinHdr->OptionalHeader.ImageBase64):(WinHdr->OptionalHeader.ImageBase);
 }       
 //---------------------------------------------------------------------------
-template<typename T> T* TBaseOfImagePtr(PBYTE ModuleBase)
+template<typename T> static T* TBaseOfImagePtr(PBYTE ModuleBase)
 {
  WIN_HEADER<T> *WinHdr = (WIN_HEADER<T>*)&ModuleBase[((DOS_HEADER*)ModuleBase)->OffsetHeaderPE];
  return (sizeof(PETYPE64)==sizeof(T))?((T*)&WinHdr->OptionalHeader.ImageBase64):((T*)&WinHdr->OptionalHeader.ImageBase);
 }       
 //---------------------------------------------------------------------------
-template<typename T, int Raw=0> static bool _stdcall TFixRelocations(PBYTE ModuleBase, PBYTE TargetBase)   // Possible not fully correct
+template<typename T, int Raw=0> static bool TFixRelocations(PBYTE ModuleBase, PBYTE TargetBase)   // Possible not fully correct
 {
  DOS_HEADER     *DosHdr    = (DOS_HEADER*)ModuleBase;
  WIN_HEADER<T>  *WinHdr    = (WIN_HEADER<T>*)&ModuleBase[DosHdr->OffsetHeaderPE];
@@ -994,7 +985,7 @@ template<typename T, int Raw=0> static bool _stdcall TFixRelocations(PBYTE Modul
  return true;
 }
 //--------------------------------------------------------------------------- 
-static PVOID _stdcall LLLoadLibrary(LPSTR LibName, PVOID pLdrLoadDll)
+static PVOID LLLoadLibrary(LPSTR LibName, PVOID pLdrLoadDll)
 {
  WCHAR NamBuf[MAX_PATH];
  UNICODE_STRING DllName; // we will use this to hold the information for the LdrLoadDll call
@@ -1009,7 +1000,7 @@ static PVOID _stdcall LLLoadLibrary(LPSTR LibName, PVOID pLdrLoadDll)
  return ModBase;
 }
 //--------------------------------------------------------------------------- 
-template<typename T> static int _stdcall TResolveImportsForMod(LPSTR ImpModName, PBYTE ModuleBase, PBYTE ExpModase, PVOID pLdrLoadDll=NULL)
+template<typename T> static int TResolveImportsForMod(LPSTR ImpModName, PBYTE ModuleBase, PBYTE ExpModase, PVOID pLdrLoadDll=NULL)
 {
  DOS_HEADER     *DosHdr    = (DOS_HEADER*)ModuleBase;
  WIN_HEADER<T>  *WinHdr = (WIN_HEADER<T>*)&ModuleBase[DosHdr->OffsetHeaderPE];
@@ -1086,7 +1077,7 @@ template<typename T> static int _stdcall TResolveImportsForMod(LPSTR ImpModName,
 
 enum EFixMod {fmNone,fmEncKeyMsk=0xFF, fmFixSec=0x0100,fmFixImp=0x0200,fmFixRel=0x0400,   fmCryHdr=0x1000,fmCryImp=0x2000,fmCryExp=0x4000,fmCryRes=0x8000,  fmEncMode=0x00010000,fmOwnLDib=0x00040000,fmSelfMov=0x00080000};
 
-template<typename T> static int _stdcall TResolveImports(PBYTE ModuleBase, PVOID pLdrLoadDll, UINT Flags=0)
+template<typename T> static int TResolveImports(PBYTE ModuleBase, PVOID pLdrLoadDll, UINT Flags=0)
 {
  BYTE EncKey = Flags & fmEncKeyMsk;
  DOS_HEADER     *DosHdr = (DOS_HEADER*)ModuleBase;
@@ -1142,7 +1133,7 @@ template<typename T> static int _stdcall TResolveImports(PBYTE ModuleBase, PVOID
  return 0;
 }
 //--------------------------------------------------------------------------- 
-_declspec(noinline) static UINT _stdcall MoveSections(UINT SecArrOffs, UINT TotalSecs, PBYTE ModuleBase, PBYTE Headers=NULL, UINT HdrSize=0)  // Must not be any function calls in body of this function
+_declspec(noinline) static UINT MoveSections(UINT SecArrOffs, UINT TotalSecs, PBYTE ModuleBase, PBYTE Headers=NULL, UINT HdrSize=0)  // Must not be any function calls in body of this function
 {
  if(!Headers || !HdrSize)Headers = ModuleBase;
  SECTION_HEADER *SecArr = (SECTION_HEADER*)&Headers[SecArrOffs];
@@ -1174,7 +1165,7 @@ _declspec(noinline) static UINT _stdcall MoveSections(UINT SecArrOffs, UINT Tota
  return RetFix;
 }
 //---------------------------------------------------------------------------
-template<typename T> static int _stdcall TCryptSensitiveParts(PBYTE ModuleBase, UINT Flags, bool Raw)
+template<typename T> static int TCryptSensitiveParts(PBYTE ModuleBase, UINT Flags, bool Raw)
 {
  BYTE EncKey = Flags & fmEncKeyMsk;
  if((Flags & (fmCryHdr|fmEncMode)) == fmCryHdr)   // Decrypt header first
@@ -1246,7 +1237,7 @@ template<typename T> static int _stdcall TCryptSensitiveParts(PBYTE ModuleBase, 
 //---------------------------------------------------------------------------
 __declspec(noinline) static PBYTE RetAddrProc(void) {return (PBYTE)_ReturnAddress();}   // Helps to avoid problems with inlining of functions, called from a thread`s EP (Or we may get address in ntdll.dll instead of our module)
 
-template<typename T> __declspec(noinline) static int _stdcall TFixUpModuleInplace(PBYTE& ModuleBase, PVOID pNtDll, UINT& Flags, UINT* pRetFix=NULL)   // Buffer at ModuleBase must be large enough to contain all sections
+template<typename T> __declspec(noinline) static int TFixUpModuleInplace(PBYTE& ModuleBase, PVOID pNtDll, UINT& Flags, UINT* pRetFix=NULL)   // Buffer at ModuleBase must be large enough to contain all sections
 {
  if(!ModuleBase)    // Will move Self if Base is not specified
   {
@@ -1333,19 +1324,19 @@ template<typename T> __declspec(noinline) static int _stdcall TFixUpModuleInplac
  return 0;    //((WinHdr->OptionalHeader.EntryPointRVA)?(&ModuleBase[WinHdr->OptionalHeader.EntryPointRVA]):(NULL));
 }
 //---------------------------------------------------------------------------
-static int _stdcall FixUpModuleInplace(PBYTE& ModuleBase, PVOID pNtDll, UINT Flags=0, UINT* pRetFix=NULL)
+static int FixUpModuleInplace(PBYTE& ModuleBase, PVOID pNtDll, UINT Flags=0, UINT* pRetFix=NULL)
 {
  if(IsValidModuleX64(ModuleBase))return TFixUpModuleInplace<PETYPE64>(ModuleBase, pNtDll, Flags, pRetFix);
  return TFixUpModuleInplace<PETYPE32>(ModuleBase, pNtDll, Flags, pRetFix);
 }
 //---------------------------------------------------------------------------
-static int _stdcall CryptSensitiveParts(PBYTE ModuleBase, UINT Flags, bool Raw)
+static int CryptSensitiveParts(PBYTE ModuleBase, UINT Flags, bool Raw)
 {
  if(IsValidModuleX64(ModuleBase))return TCryptSensitiveParts<PETYPE64>(ModuleBase, Flags, Raw);
  return TCryptSensitiveParts<PETYPE32>(ModuleBase, Flags, Raw);      
 }
 //---------------------------------------------------------------------------
-static void _stdcall MakeFakeHeaderPE(PBYTE Header)  // To pass a check in RtlImageNtHeaderEx
+static void MakeFakeHeaderPE(PBYTE Header)  // To pass a check in RtlImageNtHeaderEx
 {
  DOS_HEADER *DosHdr = (DOS_HEADER*)Header;
  DosHdr->FlagMZ = SIGN_MZ;
@@ -1354,7 +1345,7 @@ static void _stdcall MakeFakeHeaderPE(PBYTE Header)  // To pass a check in RtlIm
  WinHdr->FlagPE = SIGN_PE;
 }
 //---------------------------------------------------------------------------
-template<typename T> static int _stdcall TSectionsProtectRW(PBYTE ModuleBase, bool Restore)
+template<typename T> static int TSectionsProtectRW(PBYTE ModuleBase, bool Restore)
 {
  DOS_HEADER     *DosHdr = (DOS_HEADER*)ModuleBase;
  WIN_HEADER<T>  *WinHdr = (WIN_HEADER<T>*)&ModuleBase[DosHdr->OffsetHeaderPE];
@@ -1380,7 +1371,7 @@ template<typename T> static int _stdcall TSectionsProtectRW(PBYTE ModuleBase, bo
  return 0;
 }
 //---------------------------------------------------------------------------
-static DWORD _stdcall CalcChecksumPE(PBYTE ModuleBase, UINT Size)
+static DWORD CalcChecksumPE(PBYTE ModuleBase, UINT Size)
 {
  DOS_HEADER *DosHdr = (DOS_HEADER*)ModuleBase;
  WIN_HEADER<PECURRENT> *WinHdr = (WIN_HEADER<PECURRENT>*)&(((BYTE*)ModuleBase)[DosHdr->OffsetHeaderPE]);
@@ -1405,7 +1396,7 @@ static DWORD _stdcall CalcChecksumPE(PBYTE ModuleBase, UINT Size)
  return checksum;
 }
 //---------------------------------------------------------------------------
-static int _stdcall LoadRichInfo(PBYTE ModuleBase, SRichRec* Recs, PUINT RecsNum, PUINT Offset=nullptr, bool* IsChkValid=nullptr)
+static int LoadRichInfo(PBYTE ModuleBase, SRichRec* Recs, PUINT RecsNum, PUINT Offset=nullptr, bool* IsChkValid=nullptr)
 {
  if(!IsValidPEHeader(ModuleBase))return -1;
  DOS_HEADER* DosHdr  = (DOS_HEADER*)ModuleBase;
@@ -1457,7 +1448,7 @@ static int _stdcall LoadRichInfo(PBYTE ModuleBase, SRichRec* Recs, PUINT RecsNum
  return RichSize;
 }
 //---------------------------------------------------------------------------
-static int _stdcall SaveRichInfo(PBYTE ModuleBase, SRichRec* Recs, UINT RecsNum, UINT Offset)
+static int SaveRichInfo(PBYTE ModuleBase, SRichRec* Recs, UINT RecsNum, UINT Offset)
 {
  if(!IsValidPEHeader(ModuleBase))return -1;
  DOS_HEADER* DosHdr  = (DOS_HEADER*)ModuleBase;
@@ -1581,8 +1572,6 @@ class CRawResEnum
 
 };
 
-
+};
 //==============================================================================
 #pragma warning(pop)
-
-//#endif

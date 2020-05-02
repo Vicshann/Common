@@ -1,8 +1,6 @@
 
 #pragma once
 
-#ifndef MiniStrH
-#define MiniStrH
 /*
   Copyright (c) 2018 Victor Sheinmann, Vicshann@gmail.com
 
@@ -498,12 +496,12 @@ int Count(BYTE chr, int from=0)
 //-----------------------------------------------------------------------------
 //  static - To keep only one symbol instance of functions in *.h
 //
- static CMiniStr operator + (const CMiniStr &str1, const CMiniStr &str2) {return CMiniStr(str1,str2);}
+/* static CMiniStr operator + (const CMiniStr &str1, const CMiniStr &str2) {return CMiniStr(str1,str2);}       // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
  static CMiniStr operator + (const char*     str1, const CMiniStr &str2) {return CMiniStr(str1,str2);}
  static CMiniStr operator + (const wchar_t*  str1, const CMiniStr &str2) {return CMiniStr(str1,str2);}
 
  static CMiniStr operator + (const int val1, const CMiniStr &str2) {return CMiniStr(val1,str2);}
- static CMiniStr operator + (const CMiniStr &str2, const int val1) {return CMiniStr(str2,val1);} // Why BCC confuses it with 'operator []' ?
+ static CMiniStr operator + (const CMiniStr &str2, const int val1) {return CMiniStr(str2,val1);} // Why BCC confuses it with 'operator []' ?   */
 //---------------------------------------------------------------------------
 static int _stdcall ReplaceParamXML(CMiniStr& XmlStr, LPCSTR ParName, LPSTR ParValue, bool Single)
 {
@@ -591,4 +589,4 @@ static void _fastcall DecodeURI(CMiniStr& str)
 //------------------------------------------------------------------------------------
 
 //===========================================================================================================
-#endif
+

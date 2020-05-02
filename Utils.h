@@ -32,8 +32,8 @@
 //#include "json.h"
 //#include "crc32.h"
 //#include "sha256.h"
-#include "StrUtils.hpp"
-#include "UTF.hpp"
+//#include "StrUtils.hpp"
+//#include "UTF.hpp"
 
 // Global disable
 #pragma warning(disable:4244)    // conversion from '__int64' to 'int', possible loss of data
@@ -196,6 +196,7 @@ int   _stdcall ByteArrayToHexStr(PBYTE Buffer, LPSTR DstStr, UINT ByteCnt, bool 
 //void _stdcall CreateDirectoryPath(LPSTR Path);
 //void _stdcall CreateDirectoryPathW(PWSTR Path);
 SIZE_T _stdcall GetRealModuleSize(PVOID ModuleBase);
+SIZE_T _stdcall CopyValidModuleMem(PVOID ModuleBase, PVOID DstAddr, SIZE_T DstSize);
 __int64   _stdcall GetTime64(bool Local=false);
 bool  _stdcall IsValidAsciiString(PBYTE Ptr, UINT MinLen, UINT MaxLen);
 bool  _stdcall IsStringContains(LPSTR String, LPSTR Target, UINT StrLen=0, UINT TgtLen=0);
@@ -338,20 +339,6 @@ PPEB pebPtr = tebPtr->ProcessEnvironmentBlock;*/
                                 __asm jmp  EAX 
 //---------------------------------------------------------------------------
 #endif
-
-template <typename T> inline T RotL(T Value, unsigned char Shift){return (Value << Shift) | (Value >> ((sizeof(T) * 8U) - Shift));}
-template <typename T> inline T RotR(T Value, unsigned char Shift){return (Value >> Shift) | (Value << ((sizeof(T) * 8U) - Shift));}
-
-template<typename N, typename M> __inline M NumToPerc(N Num, M MaxVal){return (((Num)*100)/(MaxVal));}
-template<typename P, typename M> __inline M PercToNum(P Per, M MaxVal){return (((Per)*(MaxVal))/100);}                         
-
-template<class N, class M> __inline M AlignFrwd(N Value, M Alignment){return ((((Value)/(Alignment))+((bool)((Value)%(Alignment))))*(Alignment));}
-template<class N, class M> __inline M AlignBkwd(N Value, M Alignment){return (((Value)/(Alignment))*(Alignment));}
-
-// 2,4,8,16,...
-template<typename N> __inline N AlignP2Frwd(N Value, unsigned int Alignment){return (Value+(Alignment-1)) & ~(Alignment-1);}
-template<typename N> __inline N AlignP2Bkwd(N Value, unsigned int Alignment){return Value & ~(Alignment-1);}
-
 
 struct SAsm   // Data section must be executable to use this
 {
