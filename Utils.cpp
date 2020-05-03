@@ -739,6 +739,12 @@ int _stdcall FormatToBuffer(char* format, char* buffer, UINT maxlen, va_list va)
  size_t idx = 0U;
  while(*format && (idx < (size_t)maxlen))   // format specifier?  %[flags][width][.precision][length]
   {
+   // Check if the next 4 bytes contain %(0x25) or end of string. Using the 'hasless' trick: https://graphics.stanford.edu/~seander/bithacks.html#HasLessInWord
+//   v = *(stbsp__uint32 *)f;
+//   c = (~v) & 0x80808080;
+//   if (((v ^ 0x25252525) - 0x01010101) & c)goto schk1;
+//   if ((v - 0x01010101) & c)goto schk2;
+
    if(*format != '%'){buffer[idx++]=*(format++); continue;}  
    format++; 
 

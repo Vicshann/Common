@@ -115,7 +115,7 @@ CSigScan(void)
 //---------------------------------------------------------------------------
 UINT  GetSigCount(void){return this->StSigNum + this->DySigNum;}
 //---------------------------------------------------------------------------
-PVOID GetSigAddr(char* SigName, UINT SigIdx, UINT AddrIdx)    // By tag or just by index
+PVOID GetSigAddr(UINT SigIdx, UINT AddrIdx, char* SigName=nullptr)    // By tag or just by index
 {
  if(SigName)  // Idx is for same Tag only
   {
@@ -431,7 +431,7 @@ int ApplyPatches(PVOID Data, SIZE_T Size, long Step=1, UINT Flags=0)        // b
        if(Patch->Offset < 0)PAddr = &((PBYTE)Data)[(LONG_PTR)Size + Patch->Offset];      // Use bound values?
          else PAddr = &((PBYTE)Data)[Patch->Offset];
       }
-       else PAddr = (PBYTE)this->SigList.GetSigAddr(nullptr,Patch->SigIdx, ACtr);   // By signature
+       else PAddr = (PBYTE)this->SigList.GetSigAddr(Patch->SigIdx, ACtr, nullptr);   // By signature
     
      LOGMSG("Record %p [%p]: %s",PAddr,(PAddr-(PBYTE)Data),&Patch->Name);
      if(!PAddr)break;  // Not found

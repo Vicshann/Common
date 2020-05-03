@@ -1,15 +1,11 @@
-
 #pragma once
 
 /*
   Copyright (c) 2018 Victor Sheinmann, Vicshann@gmail.com
-
   Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), 
   to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, 
   and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
   The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, 
   WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. 
@@ -69,7 +65,7 @@ struct OCTREENODE    // Represents each node in octree (24 bytes)
  unsigned int  ValueB;       // Weight of B
  unsigned int  CurPixNum;    // Number of pixels, mapped to this node
  unsigned int  ChiPixNum;    // Number of pixels, mapped to all child nodes of this node
- unsigned char ChiNodesMask; // Mask of used child nodes (D0-D7, Foe each node if bit is set - node is not empty)
+ unsigned int  ChiNodesMask; // Mask of used child nodes (D0-D7, Foe each node if bit is set - node is not empty)   // 'char' is enough but 'int' is used to keep alignment
 // unsigned short  PalIndex;     // Index in palette where color value of this node was placed
 // unsigned char   FDirty;       // Use 'ChiPixNum' instead; Checking each node on 'AppendColor' and 'CreateTreeNodes' also makes the code slower
 };                   // When Data alignment=4, at end 3 bytes after 'ChiNodesMask' is free
@@ -77,6 +73,8 @@ struct OCTREENODE    // Represents each node in octree (24 bytes)
 
 
 private:
+   int LastNColor;      // To speed up FindNearestColor a little
+   int LastNClrIdx;     // To speed up FindNearestColor a little
    unsigned int MaxNodes;
    unsigned int PalColorIndex;
    COLORNODE*   ColorNodes;
@@ -110,23 +108,26 @@ void CreateTreeNodes(void)
 {
  for(unsigned int nctr=0;nctr < MaxNodes;nctr++)
   {
-   if(NodeLevels[TreeDepth][nctr].CurPixNum)
+   OCTREENODE* ONode = &NodeLevels[TreeDepth][nctr];
+   if(ONode->CurPixNum)
     {                                             // Current node counts minimum 1 pixel
      ColorsInTree++;                              // Count of total used colors ( <= 32768)
-     ColorNodes[ColorsInTree].NodeLevel    = TreeDepth;    // Depth Max (0 - (TreeDepth-1)), initially each node assumed depth is BASE
-     ColorNodes[ColorsInTree].NodeIndex    = nctr;         // Base Node Index
-     NodeLevels[TreeDepth][nctr].ChiPixNum = NodeLevels[TreeDepth][nctr].CurPixNum; // Set ChildPixelsCtr To CurPixelsCtr for base node with no child nodes
+     COLORNODE* ClrNode = &ColorNodes[ColorsInTree];
+     ClrNode->NodeLevel = TreeDepth;    // Depth Max (0 - (TreeDepth-1)), initially each node assumed depth is BASE
+     ClrNode->NodeIndex = nctr;         // Base Node Index
+     ONode->ChiPixNum   = ONode->CurPixNum; // Set ChildPixelsCtr To CurPixelsCtr for base node with no child nodes
      // If node not empty, set for his parents on all tree levels, bit ChildNMask so all child will bound one by one
      for(int cnode=(TreeDepth-1),index=nctr;cnode >= 0;cnode--) // Build child for parent nodes from BASE node with color (Adds one child node per level on each pass)
       {
-       unsigned int ChildNMask = (1 << (index & 0x00000007));  // Use index in BASE level as Low_8 index of child in parent
-       index = (index / 8);                  // For each next level, nodes count = (CurLevelNodes / 8)
-       NodeLevels[cnode][index].ChiPixNum    += NodeLevels[TreeDepth][nctr].CurPixNum; // Each node contains counter(Sum) of pixels in all his child nodes
-       NodeLevels[cnode][index].ChiNodesMask |= ChildNMask;  // Mask of Child nodes (For each NotEmpty BASE nodes, allk parents have Bit is Set)
+       unsigned int ChildNMask = (1 << (index & 7));  // Use index in BASE level as Low_8 index of child in parent
+       index >>= 3;   // '>> 3' is '/ 8'              // For each next level, nodes count = (CurLevelNodes / 8)
+       OCTREENODE* ONodeD = &NodeLevels[cnode][index];
+       ONodeD->ChiPixNum    += ONode->CurPixNum; // Each node contains counter(Sum) of pixels in all his child nodes
+       ONodeD->ChiNodesMask |= ChildNMask;  // Mask of Child nodes (For each NotEmpty BASE nodes, allk parents have Bit is Set)
       }
     }
   }
- for(unsigned int cind=ColorsInTree;cind > 0;cind--)UpdateColorNodes(cind); // Set ColorNodes to Octree nodes with approriate color values
+ for(unsigned int cind=ColorsInTree;cind > 0;cind--)this->UpdateColorNodes(cind); // Set ColorNodes to Octree nodes with approriate color values
 }
 //------------------------------------------------------------------------------------------------------------------------------
 void UpdateColorNodes(unsigned int ColorIndex)
@@ -135,62 +136,70 @@ void UpdateColorNodes(unsigned int ColorIndex)
  unsigned int PrvNIndex = ColorNodes[ColorIndex].NodeIndex;
  unsigned int PrvNCPixN = NodeLevels[PrvNLevel][PrvNIndex].ChiPixNum;
 
- while(ColorIndex <= (ColorsInTree / 2))
+ for(unsigned int MaxClrIdx = (ColorsInTree >> 1);ColorIndex <= MaxClrIdx;)     // '/ 2'
   {
-   unsigned int NStepCInd = (ColorIndex * 2);
-   if(NStepCInd < ColorsInTree)NStepCInd += (bool)((NodeLevels[(ColorNodes[NStepCInd].NodeLevel)][(ColorNodes[NStepCInd].NodeIndex)].ChiPixNum) > (NodeLevels[(ColorNodes[NStepCInd+1].NodeLevel)][(ColorNodes[NStepCInd+1].NodeIndex)].ChiPixNum));
-   if(PrvNCPixN <= (NodeLevels[(ColorNodes[NStepCInd].NodeLevel)][(ColorNodes[NStepCInd].NodeIndex)].ChiPixNum))break;
-   ColorNodes[ColorIndex] = ColorNodes[NStepCInd];   // Copy full SARRAY struct
+   unsigned int NStepCInd = (ColorIndex << 1);  // '* 2'
+   COLORNODE* ClrNode = &ColorNodes[NStepCInd];
+   if(NStepCInd < ColorsInTree)
+    {
+     unsigned int AVal = (bool)(NodeLevels[ ClrNode->NodeLevel ][ ClrNode->NodeIndex ].ChiPixNum > NodeLevels[ ClrNode[1].NodeLevel ][ ClrNode[1].NodeIndex ].ChiPixNum);
+     NStepCInd += AVal;
+     ClrNode   += AVal;
+    }
+   if(PrvNCPixN <= NodeLevels[ ClrNode->NodeLevel ][ ClrNode->NodeIndex ].ChiPixNum)break;
+   ColorNodes[ColorIndex] = *ClrNode; //  ColorNodes[NStepCInd];   // Copy full SARRAY struct   
    ColorIndex = NStepCInd;
-  }
+  } 
  ColorNodes[ColorIndex].NodeLevel = PrvNLevel;
- ColorNodes[ColorIndex].NodeIndex = PrvNIndex;
+ ColorNodes[ColorIndex].NodeIndex = PrvNIndex;  
 }
 //------------------------------------------------------------------------------------------------------------------------------
 void ReduceColorsInTree(unsigned int MaxColors)
 {
+ COLORNODE* ClrNodeOne = &ColorNodes[1];
  while(ColorsInTree > MaxColors)
   {
-   unsigned int FCNIndex = ColorNodes[1].NodeIndex;
-   unsigned int FCNLevel = (ColorNodes[1].NodeLevel - (bool)ColorNodes[1].NodeLevel);
-   OCTREENODE*  SrcNode  = &NodeLevels[(ColorNodes[1].NodeLevel)][FCNIndex];
-   OCTREENODE*  DstNode  = &NodeLevels[FCNLevel][(FCNIndex / 8)];
+   unsigned int FCNIndex = ClrNodeOne->NodeIndex;
+   unsigned int FCNLevel = (ClrNodeOne->NodeLevel - (bool)ClrNodeOne->NodeLevel);
+   OCTREENODE*  SrcNode  = &NodeLevels[ ClrNodeOne->NodeLevel ][FCNIndex];
+   OCTREENODE*  DstNode  = &NodeLevels[FCNLevel][ FCNIndex >> 3 ];  // '/ 8'
 
    if(DstNode->CurPixNum != 0)
     {
-     ColorNodes[1] = ColorNodes[ColorsInTree];
+     ColorNodes[1] = ColorNodes[ColorsInTree];   // Full node struct copy
      ColorsInTree--;
     }
      else
       {
-       ColorNodes[1].NodeLevel = FCNLevel;
-       ColorNodes[1].NodeIndex = (FCNIndex / 8);
+       ClrNodeOne->NodeLevel = FCNLevel;
+       ClrNodeOne->NodeIndex = (FCNIndex >> 3);  // '/ 8'
       }
    DstNode->CurPixNum    += SrcNode->CurPixNum;
    DstNode->ValueR       += SrcNode->ValueR;
    DstNode->ValueG       += SrcNode->ValueG;
    DstNode->ValueB       += SrcNode->ValueB;
-   DstNode->ChiNodesMask &= ~(1 << (FCNIndex & 0x07));   // (2 pow (TmpCtr & 0x07))
-   UpdateColorNodes(1);
-  }
+   DstNode->ChiNodesMask &= ~(1 << (FCNIndex & 7));   // (2 pow (TmpCtr & 0x07))
+   this->UpdateColorNodes(1);
+  } 
 }
 //------------------------------------------------------------------------------------------------------------------------------
 void MakePaletteFromTree(unsigned int Level, unsigned int Index)
 {
- if(NodeLevels[Level][Index].ChiNodesMask != 0)  // If current node have any child nodes{node is not leaf} - Go recursion trough them first
+ OCTREENODE*  Node = &NodeLevels[Level][Index];
+ if(Node->ChiNodesMask != 0)  // If current node have any child nodes{node is not leaf} - Go recursion trough them first
   {
    for(int ctr=7;ctr >= 0;ctr--)  // Check each of 8 child nodes
     {
-     if((NodeLevels[Level][Index].ChiNodesMask & (1 << ctr)))MakePaletteFromTree((Level+1),(ctr+(Index*8))); // Go to recursion if Bit of child node in mask is Set ((Index*8) Group of child nodes of current node on next tree level; 'ctr' used as index of child node in group)
+     if((Node->ChiNodesMask & (1 << ctr)))this->MakePaletteFromTree((Level+1),(ctr+(Index << 3)));  // '<< 3' is '* 8'  // Go to recursion if Bit of child node in mask is Set ((Index*8) Group of child nodes of current node on next tree level; 'ctr' used as index of child node in group)
     }
   }
-
- if(NodeLevels[Level][Index].CurPixNum != 0)  // If node contains color info, create a palette entry from it
+ if(Node->CurPixNum != 0)  // If node contains color info, create a palette entry from it
   {
-   CurPalette[PalColorIndex].Red   = ((NodeLevels[Level][Index].ValueR + (NodeLevels[Level][Index].CurPixNum / 2)) / NodeLevels[Level][Index].CurPixNum); // Create value of RED   from WeightR and PixCount
-   CurPalette[PalColorIndex].Green = ((NodeLevels[Level][Index].ValueG + (NodeLevels[Level][Index].CurPixNum / 2)) / NodeLevels[Level][Index].CurPixNum); // Create value of GREEN from WeightG and PixCount
-   CurPalette[PalColorIndex].Blue  = ((NodeLevels[Level][Index].ValueB + (NodeLevels[Level][Index].CurPixNum / 2)) / NodeLevels[Level][Index].CurPixNum); // Create value of BLUE  from WeightB and PixCount
-  // NodeLevels[Level][Index].PalIndex = PalColorIndex;     // Index in palette where color value of this node was placed: This value is only for statistic
+   RGBQUAD* PalEntry = &CurPalette[PalColorIndex];
+   PalEntry->Red   = ((Node->ValueR + (Node->CurPixNum >> 1)) / Node->CurPixNum); // Create value of RED   from WeightR and PixCount   // '>> 1' is '/ 2'
+   PalEntry->Green = ((Node->ValueG + (Node->CurPixNum >> 1)) / Node->CurPixNum); // Create value of GREEN from WeightG and PixCount
+   PalEntry->Blue  = ((Node->ValueB + (Node->CurPixNum >> 1)) / Node->CurPixNum); // Create value of BLUE  from WeightB and PixCount
+  // Node->PalIndex = PalColorIndex;     // Index in palette where color value of this node was placed: This value is only for statistic
    PalColorIndex++;        // Increase palette entry counter
   }
 }
@@ -216,14 +225,19 @@ int GetPalette(RGBQUAD *Palette, int MaxColors)
 //
 int FindNearestColor(unsigned char Red, unsigned char Green, unsigned char Blue)
 {
+ int ColorCode = (Red << 16)|(Green << 8)|Blue;
+ if(ColorCode == this->LastNColor)return this->LastNClrIdx;    // TODO: Some tree to cache all found colors
+
  int Index = -1;
  unsigned int MaxValue = -1;  // Low Color trim data loss constant
-
  for(unsigned int ctr=0;ctr < ColorsInTree;ctr++)
   {
-   unsigned int Value = (ClrValTable.CVAMiddleR[ (CurPalette[ctr].Red-Red) ])+(ClrValTable.CVAMiddleG[ (CurPalette[ctr].Green-Green) ])+(ClrValTable.CVAMiddleB[ (CurPalette[ctr].Blue-Blue) ]);
+   RGBQUAD* PalEntry  = &CurPalette[ctr];
+   unsigned int Value = ClrValTable.CVAMiddleR[ PalEntry->Red - Red ] + ClrValTable.CVAMiddleG[ PalEntry->Green - Green ] + ClrValTable.CVAMiddleB[ PalEntry->Blue - Blue ];
    if(Value < MaxValue){MaxValue = Value; Index = ctr;}
   }
+ this->LastNColor  = ColorCode;
+ this->LastNClrIdx = Index;
  return Index;
 }
 //------------------------------------------------------------------------------------------------------------------------------
@@ -275,14 +289,17 @@ void SetOctreeDepth(int Depth)
 void AppendColor(unsigned char Red, unsigned char Green, unsigned char Blue)
 {
  unsigned int NodeIndex = (FPQTable.ArrayB[ Blue ] + FPQTable.ArrayG[ Green ] + FPQTable.ArrayR[ Red ]);  // Get quantized index of node, some different colors will be mapped as same; NodeIndex will be optimized to REGISTER variable
- NodeLevels[TreeDepth][NodeIndex].ValueR   += Red;    // Update weight of RED
- NodeLevels[TreeDepth][NodeIndex].ValueG   += Green;  // Update weight of GREEN
- NodeLevels[TreeDepth][NodeIndex].ValueB   += Blue;   // Update weight of BLUE
- NodeLevels[TreeDepth][NodeIndex].CurPixNum++;        // Update mapped pixels counter for node
+ OCTREENODE*  Node = &NodeLevels[TreeDepth][NodeIndex];
+ Node->ValueR += Red;    // Update weight of RED           // TODO: Need to check for overflow? // (4096 x 4096) x 255 (of same color) is still fits into UINT32
+ Node->ValueG += Green;  // Update weight of GREEN
+ Node->ValueB += Blue;   // Update weight of BLUE
+ Node->CurPixNum++;      // Update mapped pixels counter for node
 }
 //------------------------------------------------------------------------------------------------------------------------------
 CRGBOTQuantizer(void)
 {
+ LastNColor    = -1;
+ LastNClrIdx   = -1;
  CurPalette    = nullptr;
  MaxNodes      = 0;
  ColorNodes    = nullptr;
@@ -293,7 +310,7 @@ CRGBOTQuantizer(void)
  for(int ctr=0;ctr < TREEMAXDEPTH;ctr++)NodeLevels[ctr] = nullptr;
  for(int ctr=-COLRANGEMAX,index=0;ctr <= COLRANGEMAX;ctr++,index++) // Precalculate ccolor values (fi = 30*(Ri-R0)2+59*(Gi-G0)2+11*(Bi-B0)2)   // Range: -255 <> +255
   {
-   ClrValTable.ClrValArrayR[index] = (ctr*ctr)*32;    // 30 // Numbers are human eye color perception differences
+   ClrValTable.ClrValArrayR[index] = (ctr*ctr)*32;    // 30 // The Numbers are human eye color perception differences
    ClrValTable.ClrValArrayG[index] = (ctr*ctr)*64;    // 59
    ClrValTable.ClrValArrayB[index] = (ctr*ctr)*16;    // 11
   }

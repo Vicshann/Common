@@ -181,15 +181,15 @@ T* Add(unsigned int ExtraSize=0)
 //===========================================================================
 struct SLZWDictionary    // Size is 20K
 {
- uint16_t minCodeSize;
- uint16_t codeLength;
- uint16_t clearCode;
- uint16_t eoiCode;
- uint16_t currentIndex;
- uint16_t maxCode;
- int16_t  prefix[4096];    // 8K
- int16_t  length[4096];    // 8K
- uint8_t  byteValue[4096]; // 4K
+ UINT16 minCodeSize;
+ UINT16 codeLength;
+ UINT16 clearCode;
+ UINT16 eoiCode;
+ UINT16 currentIndex;
+ UINT16 maxCode;
+ INT16  prefix[4096];    // 8K
+ INT16  length[4096];    // 8K
+ UINT8  byteValue[4096]; // 4K
 
 //---------------------------------------------------------------------------
 void Reset(void) // Resets a dictionary
@@ -209,13 +209,13 @@ void Init(size_t MinCodeSize)
  for(size_t i = 0; i < dictionarySize; i++) 
   {
    this->prefix[i]    = -1;
-   this->byteValue[i] = static_cast<uint8_t>(i);
+   this->byteValue[i] = static_cast<UINT8>(i);
    this->length[i]    = 1;
   }
  this->Reset();
 }
 //---------------------------------------------------------------------------
-size_t Add(int prefix, uint8_t byteValue)
+size_t Add(int prefix, UINT8 byteValue)
 {
  auto& ci = this->currentIndex;
  if(ci < 4096) 
@@ -289,7 +289,7 @@ class CImgBlk
  UINT8    Pixels[0];
 
 public:
- void* GetPixels(void){return &this->Pixels;}
+ void* GetPixels(UINT* Size=NULL){if(Size)*Size = this->PixelsSize; return &this->Pixels;}
  void* GetRow(UINT16 RowIdx){return (RowIdx < this->Height)?(&this->Pixels[(this->Width * RowIdx) * this->BytesPerPixel]):(nullptr);}
  void  SetPixel(UINT32 ValRGBA, UINT16 PosX, UINT16 PosY){if((PosY < this->Height) && (PosX < this->Width))this->Pixels[(PosY*this->Width)+PosX] = ValRGBA;}
 };
@@ -565,7 +565,7 @@ struct SPixQErr
    // The extra 8 bits of precision allow for sub-single-color error values to be propagated
    UINT Width  = Img->Width;
    UINT Height = Img->Height; 
-   SPixQErr* QuantPixels = (SPixQErr*)malloc(TotalPixels * sizeof(SPixQErr));    
+   SPixQErr* QuantPixels = new SPixQErr [TotalPixels];           // (SPixQErr*)malloc(TotalPixels * sizeof(SPixQErr));    
    SPixQErr* QPixelsEnd  = &QuantPixels[TotalPixels];
    for(UINT idx=0;idx < TotalPixels;idx++)   // ARGB  : BB GG RR AA 
     {
@@ -621,7 +621,7 @@ struct SPixQErr
 
    // Copy the palettized result to the output buffer
    for(UINT idx=0;idx < TotalPixels;idx++)DstPtr[idx] = QuantPixels[idx].I;   // ARGB  : BB GG RR AA 
-   free(QuantPixels);
+   delete [] QuantPixels;    // free(QuantPixels);
   }
    else
     {
@@ -1128,8 +1128,8 @@ int LoadGIF(PVOID Data, UINT Size)  // Read into sequence of images, decompresse
      UINT BytesLeft  = BlkPtr[Len++];    // Block size
      if(!BytesLeft){Result = -2; break;}  // No data!
      UINT   BitsRead = 0;
-     int16_t index;
-     int16_t old;
+     INT16 index;
+     INT16 old;
      index = GetBits(Decomp->codeLength, BlkPtr, Len, BytesLeft, BitsRead);     // Always read one more bit than the code length
      if(index != Decomp->clearCode){Result = -3; break;}
      index = GetBits(Decomp->codeLength, BlkPtr, Len, BytesLeft, BitsRead);    
