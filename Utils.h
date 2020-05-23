@@ -25,15 +25,6 @@
 
 #include <Windows.h>
 #include <tlhelp32.h>   // Required for tool help declarations
-//#include "ThirdParty\printf.h"
-
-//#include "BLOWFISH.h"
-//#include "MiniString.h"
-//#include "json.h"
-//#include "crc32.h"
-//#include "sha256.h"
-//#include "StrUtils.hpp"
-//#include "UTF.hpp"
 
 // Global disable
 #pragma warning(disable:4244)    // conversion from '__int64' to 'int', possible loss of data

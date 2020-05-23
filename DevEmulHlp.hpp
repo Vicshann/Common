@@ -35,13 +35,14 @@ struct CDevEmulHlp
  BYTE FakeGuid[16];
 
 public:
-void Initialize(LPSTR DevPath, PBYTE GClassA, PBYTE GClassB, PBYTE GFake)
+void Initialize(LPSTR DevPath, PBYTE GClassA, PBYTE GClassB, PBYTE GFake)   // TODO: WATR support
 {
  memset(this,0,sizeof(CDevEmulHlp));
  memcpy(&this->ClassGuidA,GClassA,16);
  memcpy(&this->ClassGuidB,GClassB,16);
  memcpy(&this->FakeGuid,GFake,16);
- lstrcpyn((LPSTR)&this->DevPathStr,DevPath,90);
+ *this->DevPathStr = 0;
+ if(DevPath)lstrcpyn((LPSTR)&this->DevPathStr,DevPath,90);
 // this->UsbDevInfoIdx = -1;
  this->FakeInterfIdx = -1;
 }
@@ -96,7 +97,7 @@ int After_ProcSetupDiEnumDeviceInterfaces(HDEVINFO DeviceInfoSet, DWORD MemberIn
  DeviceInterfaceData->Reserved = 0;
  DeviceInterfaceData->Flags    = SPINT_DEFAULT|SPINT_ACTIVE;
  memcpy(&DeviceInterfaceData->InterfaceClassGuid,&this->FakeGuid,sizeof(GUID));
- LOGMSG("Match No more Items To fake!",0); 
+ LOGMSG("Match - No more Items To fake!",0); 
  return 1;         
 }
 //---------------------------------------------------   
@@ -118,7 +119,7 @@ template<typename T> int Before_SetupDiGetDeviceInterfaceDetail(HDEVINFO DeviceI
 //---------------------------------------------------
 template<typename T> int After_SetupDiGetDeviceInterfaceDetail(PSP_DEVICE_INTERFACE_DATA DeviceInterfaceData, T DeviceInterfaceDetailData, int Res)         // T= PSP_DEVICE_INTERFACE_DETAIL_DATA_A/W
 {
- if(!Res || (DeviceInterfaceData != this->LstFakeIntfDataPtr) || !DeviceInterfaceDetailData || (memcmp(&DeviceInterfaceDetailData->DevicePath,&this->DevPathStr,26)!=0))return 0;   // 26 =  "\\\\?\\usb#vid_XXXX&pid_YYYY#"   // String compare case???
+ if(!Res || (DeviceInterfaceData != this->LstFakeIntfDataPtr) || !DeviceInterfaceDetailData || (*this->DevPathStr && (memcmp(&DeviceInterfaceDetailData->DevicePath,&this->DevPathStr,26)!=0)))return 0;   // 26 =  "\\\\?\\usb#vid_XXXX&pid_YYYY#"   // String compare case??? // TODO: Fix compare no unicode
  LOGMSG("Resetting hCurDevInf: %p",this->hCurDevInf); 
  this->hCurDevInf      = NULL;  
  this->LstFakeIntfDataPtr = NULL;

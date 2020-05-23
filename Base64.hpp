@@ -17,7 +17,7 @@
 //---------------------------------------------------------------------------
 // TODO: Preprocessor Flags to make it relocatable and static but with generated chars table to remove it from a binary  // And make MiniString optional
 
-class CBase64          // TODO: Derive this from CAlphaCoder <type,alphabet>
+class NBase64          // TODO: Derive this from CAlphaCoder <type,alphabet>
 {
  static const char PaddChar  = '='; 
  static const int  CharsNum  = 64;
@@ -51,14 +51,14 @@ static int GetByteFromIndex(BYTE IByte, int& padd)  // For Decoding
  if((IByte < 43)||(IByte > 122))return -1;  // Not a Base64 char
  IByte -= 43;
  if(IByte >= IdxTblLen)return -2;  // The index table is smaller!
- return (CBase64::IndexTbl()[IByte] - 1);
+ return (NBase64::IndexTbl()[IByte] - 1);
 }
 //--------------------------------------
 
 static bool IsCharBase64(BYTE Char)
 {
- const char*  Chars = CBase64::CharsTbl();
- if(Char == CBase64::PaddChar)return true;
+ const char*  Chars = NBase64::CharsTbl();
+ if(Char == NBase64::PaddChar)return true;
  for(;*Chars;Chars++)
   {
    if(*Chars == Char)return true;
@@ -74,7 +74,7 @@ static void Initialize(void)
    DoOnce = false; 
   // CharsTbl[62] = 45; // 0x2D '-'
   // CharsTbl[63] = 95; // 0x5F '_'
-   PBYTE IndexTbl = CBase64::IndexTbl();
+   PBYTE IndexTbl = NBase64::IndexTbl();
    for (int i = 0; i < CharsNum; i++)
 	{
 	 int j = -43 + CharsTbl()[i];
@@ -87,11 +87,11 @@ static void Initialize(void)
 //--------------------------------------
 static int Encode(CMiniStr &str)
 {
- CBase64::Initialize();
+ NBase64::Initialize();
  int octr = 0;
  int padd = 0;
  CMiniStr SrcStr = str;
- PBYTE CharsTbl = (PBYTE)CBase64::CharsTbl();
+ PBYTE CharsTbl = (PBYTE)NBase64::CharsTbl();
  str.SetLength(EncodedSize(str.Length()),0);
  if(SrcStr.Length() % 3)
   {
@@ -114,7 +114,7 @@ static int Encode(CMiniStr &str)
 //--------------------------------------
 static int Decode(CMiniStr &str)
 {
- CBase64::Initialize();
+ NBase64::Initialize();
  int pos  = 0;
  int Padd = 0;
  int Size = str.Length() & ~3; 

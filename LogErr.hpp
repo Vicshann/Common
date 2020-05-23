@@ -15,13 +15,13 @@
 */
 
 //---------------------------------------------------------------------------
-struct SLog
+struct SLog  // Log: Cached(In mem untill it full), File(Can me immediate or cached), Mem(Shared buffer), Raw(Not formatted, dumps all args), Callback(To some user callback)
 {
 static const int StackBufSize   = (1024 * 3);
 static const int LogBufNameLen  = 128;
 static const int LogFileNameLen = 256;
 
-struct SArg   // All typical types to log are here  // Assignment must be as cheap as possible
+struct SArg   // All typical types to log are here  // Assignment must be as cheap as possible  // TODO: Move to FmtBuf
 {
 enum EArgType {atNone,atInt,atUInt,atInt64,atUInt64,atFlt,atDbl,atPtr,atAStr,atWStr,atData,atExtraData=0x80};
  union 

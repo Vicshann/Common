@@ -66,6 +66,7 @@ template<typename N> inline static N AlignP2Bkwd(N Value, unsigned int Alignment
 };
 //---------------------------------------------------------------------------
 
+typedef NCMN::CJSonItem CJSonItem;
 typedef NCMN::CMiniStr  CMiniStr;
 typedef NCMN::CJSonItem CJSonItem;
 
@@ -80,4 +81,7 @@ typedef NCMN::NSTR    NSTR;
 typedef NCMN::NCTM    NCTM;
 typedef NCMN::NUTF    NUTF;
 typedef NCMN::NSIGP   NSIGP;
+typedef NCMN::NSTR    NSTR;
+typedef NCMN::NBase64 NBase64;
+
 //---------------------------------------------------------------------------
