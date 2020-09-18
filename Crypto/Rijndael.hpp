@@ -1,10 +1,6 @@
 
 #pragma once
 
-#define _RIJNDAELH_
-
-
-
 // Rijndael (pronounced Reindaal) is a block cipher, designed by Joan Daemen and Vincent Rijmen as a candidate algorithm for the AES.
 // The cipher has a variable block length and key length. The authors currently specify how to use keys with a length
 // of 128, 192, or 256 bits to encrypt blocks with al length of 128, 192 or 256 bits (all nine combinations of
@@ -20,6 +16,7 @@
 //
 class CRijndael
 {
+protected:
  int KeyLength;  // Key Length   // Defining its here will cause many functions to be templated and code will bloat but for speed and protection it is better
  int BlockSize;  // Block Size
  int RoundsNum;
@@ -228,7 +225,7 @@ void SetChain(char* chain){ memcpy(m_chain, chain, BlockSize); }
 //------------------------------------------------------------------------------------		
 //Expand a user-supplied key material into a session key.
 // key        - The 128/192/256-bit user-key to use.
-// chain      - initial chain block for CBC and CFB modes.
+// chain      - initial chain block(IV) for CBC and CFB modes.
 // keylength  - 16, 24 or 32 bytes
 // blockSize  - The block size in bytes of this Rijndael (16, 24 or 32 bytes).
 //

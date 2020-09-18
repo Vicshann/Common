@@ -37,6 +37,7 @@
 #define APIWRAPPER(LibPathName,NameAPI) extern "C" _declspec(dllexport) _declspec(naked) void __cdecl NameAPI(void) \
 { \
  static void* Address; \
+ DBGMSG("Name: %s",#NameAPI); \
  if(!Address)Address = GetProcAddress((sizeof(*LibPathName)==2)?(LoadLibraryW((PWSTR)LibPathName)):(LoadLibraryA((LPSTR)LibPathName)),#NameAPI); \
  __asm mov EAX, [Address] \
  __asm jmp EAX \
@@ -62,6 +63,7 @@ template<auto HookProc> struct SVftHook      //  'T HProc' will crash the MSVC c
 {
  decltype(HookProc) OrigProc;  //T* OrigProc;
 
+ bool IsSet(void){return (bool)this->OrigProc;}
  void SetHook(void** ProcAddr)
   {
    *(void**)&this->OrigProc = *ProcAddr; 
@@ -115,7 +117,7 @@ enum EHookFlg {hfNone,hfFillNop=1,hfFollowJmp=2,hfForceHook=4};       // Restore
 template<typename T, T HProc=0> struct SProcHook        //  'T HProc' will crash the MSVC compiler!    // Declare all members static that the hook struct can be declared temporary on stack (without 'static' cpecifier)?
 {
 #ifdef _AMD64_
- static const unsigned int TrLen = 12;    // 48 B8 11 22 33 00 FF FF FF 0F   movabs rax,FFFFFFF00332211  // jmp eax
+ static const unsigned int TrLen = 12;    // 48 B8 11 22 33 00 FF FF FF 0F   movabs rax,FFFFFFF00332211  // jmp rax
 #else
 #ifdef NORELHOOK
  static const unsigned int TrLen = 6;	  // 68 XX XX XX XX  C3  // push Addr; retn
@@ -130,7 +132,13 @@ template<typename T, T HProc=0> struct SProcHook        //  'T HProc' will crash
  UINT   HookLen;
  BYTE   OriginCode[16];  // Original code to restore when hook removed    // Size of __m128i 
  BYTE   StolenCode[64];  // A modified stolen code
-
+//------------------------------------------------------------------------------------
+static int CountNops(PVOID PAddr)
+{
+ int Cnt = 0;
+ for(PBYTE Addr=(PBYTE)PAddr;(*Addr == 0x90)||(*Addr == 0xCC);Addr++)Cnt++;
+ return Cnt;
+}
 //------------------------------------------------------------------------------------
 static bool IsAddrHooked(PVOID PAddr, PVOID Hook)       // Already hooked by this instance!  // It is allowed to hook by a different instances       // TODO: Test it! 
 {
@@ -226,7 +234,8 @@ bool SetHookIntr(PBYTE ProcAddr=NULL, UINT Flags=EHookFlg::hfFillNop|EHookFlg::h
   }
  if((dhde.opcode == 0xFF)&&(dhde.modrm == 0x25))    // jmp qword ptr [REL32] 
   {
-   if(((int)TrLen - (int)this->HookLen) <= 0)     // Fits as a last only    // <<<<<<<<< !!!!!!!!!! 
+   int Extra = CountNops(&DisAddr[dhde.len]);      // In Windows 10(2004) Shell32::SHGetFolderPathW is redirected to windows.storage.dll which is delay-loaded. Following jmp [rel] will set hook on delay-load stub instead of a target function
+   if(((int)TrLen - ((int)this->HookLen + Extra)) <= 0)     // Fits as a last only    // <<<<<<<<< !!!!!!!!!! 
     {
      PVOID  Addr = RelAddrToAddr(DisAddr,dhde.len,dhde.disp.disp32);           //   &DisAddr[(int)dhde.len + (int)dhde.disp.disp32];
      PDWORD Carr = (PDWORD)&this->StolenCode[CodeLen];
@@ -240,7 +249,7 @@ bool SetHookIntr(PBYTE ProcAddr=NULL, UINT Flags=EHookFlg::hfFillNop|EHookFlg::h
      CodeLen += 20;
      continue;
     }
-     else   
+     else      // Follow the jump
       {
        PVOID  Addr = RelAddrToAddr(DisAddr,dhde.len,dhde.disp.disp32);
        ProcAddr = DisAddr = *(PBYTE*)Addr;

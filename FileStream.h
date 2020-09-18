@@ -19,7 +19,7 @@
 #define FileStrH
 
 #include <Windows.h>
-#include <stdlib.h>
+////////////#include <stdlib.h>
 #include "MiniString.h"
 //===========================================================================================================
 class CFileStr

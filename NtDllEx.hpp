@@ -487,7 +487,7 @@ static inline DWORD _fastcall GetRealVersionInfo(PDWORD dwMajor=NULL, PDWORD dwM
 //---------------------------------------------------------------------------
 static int GetMappedFilePath(HANDLE hProcess, PVOID BaseAddr, PWSTR PathBuf, UINT BufByteSize)   // Returns as '\Device\HarddiskVolume'
 {
- SIZE_T RetLen;           
+ SIZE_T RetLen = 0;       
  if(!NtQueryVirtualMemory(hProcess,BaseAddr,MemoryMappedFilenameInformation,PathBuf,BufByteSize,&RetLen) && RetLen)
   {
    PWSTR PathStr = ((UNICODE_STRING*)PathBuf)->Buffer;

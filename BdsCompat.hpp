@@ -34,9 +34,9 @@
 // ArgA: EAX
 // RetAddr
 //---------------------------------------------------------------------------
-struct NBDS
+namespace NBDS
 {
-template <typename R, typename... Types> constexpr int GetArgCount( R(_stdcall *f)(Types ...) ){ return sizeof...(Types); }   // GetArgCount( R(*f)(Types ...) )
+template <typename R, typename... Types> constexpr static int GetArgCount( R(_stdcall *f)(Types ...) ){ return sizeof...(Types); }   // GetArgCount( R(*f)(Types ...) )
 
 
 template <typename Signature> struct CountArgs;

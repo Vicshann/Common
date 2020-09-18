@@ -9,6 +9,7 @@ static const int MD5Size = 16;
  bool   NeedStrMD5;
  UINT8  StrResultMD5[(MD5Size*2)+2];
  UINT8  BinResultMD5[MD5Size];
+
 private: 
  UINT8  lpszBuffer[64];
  UINT32 nCount[2];
@@ -86,9 +87,9 @@ static void DWordToByte(UINT8* Output, UINT32* Input, UINT nLength)
 }
 //------------------------------------------------------------------------------
 // The core of the MD5 algorithm is here. MD5 basic transformation. Transforms state based on block.
-static void Transform(register UINT32 *buf, register UINT32 *in)
+static void Transform(UINT32 *buf, UINT32 *in)
 {
- register UINT32 a = buf[0], b = buf[1], c = buf[2], d = buf[3];
+ UINT32 a = buf[0], b = buf[1], c = buf[2], d = buf[3];
 
 const UINT8 S11 = 7;
 const UINT8 S12 = 12;

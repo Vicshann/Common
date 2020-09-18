@@ -22,6 +22,8 @@
 
 #include "Utils.h"
 
+extern char* _cdecl gcvt(double f, size_t ndigit, char* buf);
+
 struct NCMN
 {
 template<typename T> inline static long  AddrToRelAddr(T CmdAddr, UINT CmdLen, T TgtAddr){return -((CmdAddr + CmdLen) - TgtAddr);}
@@ -45,7 +47,7 @@ template<typename N> inline static N AlignP2Bkwd(N Value, unsigned int Alignment
 #include "HDE.hpp"
 #include "StrUtils.hpp"
 #include "FormatPE.hpp"
-#include "BdsCompat.hpp"
+//#include "BdsCompat.hpp"         // Rarely used. Let it be outside for now
 #include "CompileTime.hpp"
 #include "InjDllLdr.hpp"
 #include "NtDllEx.hpp"
@@ -57,8 +59,8 @@ template<typename N> inline static N AlignP2Bkwd(N Value, unsigned int Alignment
 #include "MiniString.h"
 #include "FileStream.h"
 #include "json.h"
-#include "Base64.hpp"
-
+//#include "Base64.hpp"
+#include "BaseP2.hpp"
 
 #ifndef _AMD64_
 #include "wow64ext.hpp"
@@ -82,6 +84,10 @@ typedef NCMN::NCTM    NCTM;
 typedef NCMN::NUTF    NUTF;
 typedef NCMN::NSIGP   NSIGP;
 typedef NCMN::NSTR    NSTR;
-typedef NCMN::NBase64 NBase64;
-
+//typedef NCMN::NBase64 NBase64;
+typedef NCMN::NBP2::NBase64 NBase64;
+typedef NCMN::NBP2 NBP2;
+#ifndef _AMD64_
+typedef NCMN::NWOW64E NWOW64E;
+#endif
 //---------------------------------------------------------------------------

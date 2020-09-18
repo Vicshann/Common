@@ -1,3 +1,5 @@
+
+#pragma once
 /**
  *
  * WOW64Ext Library

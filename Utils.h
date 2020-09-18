@@ -46,13 +46,11 @@
 #ifdef NOLOG
 #define LOGMSG(msg,...)
 #define LOGTXT(txt,len)
-#define LOGHEX(buf,len)
 #define DBGMSG LOGMSG
 #define DBGTXT LOGTXT
-#define DBGHEX LOGHEX
 #else   
-#define LOGMSG(msg,...) LogProc(lfLineBreak|lfLogName|lfLogTime|lfLogThID,_PRNM_,msg,__VA_ARGS__)
-#define LOGTXT(txt,len) LogProc(lfRawTextMsg,(char*)len,txt); 
+#define LOGMSG(msg,...) LogProc(lfLineBreak|lfLogName|lfLogTime|lfLogThID,_PRNM_,msg,__VA_ARGS__)      // TODO: LogSafe or LogFast
+#define LOGTXT(txt,len) LogProc(lfRawTextMsg,(char*)((size_t)len),txt); 
 #ifdef _DEBUG
 #define DBGMSG LOGMSG
 #define DBGTXT LOGTXT
@@ -60,7 +58,8 @@
 #define DBGMSG(msg,...)
 #define DBGTXT(txt,len)
 #endif     
-#endif    
+#endif  
+#define OUTMSG(msg,...) LogProc(lfLineBreak,0,msg,__VA_ARGS__)  
 
 #define FOREGROUND_YELLOW (FOREGROUND_RED|FOREGROUND_GREEN)
 

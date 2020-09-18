@@ -260,6 +260,20 @@ template<typename T, bool NoTmpl=false> constexpr __forceinline const char* Type
 
 template<typename A, typename B, bool NoTmpl=false> constexpr __forceinline bool IsSameTypes(void){return (TypeName<A,NoTmpl>() == TypeName<B,NoTmpl>());}  
 //==============================================================================
+
+template<unsigned N> struct StaticStr        // C++20
+{
+ char buf[N + 1] {};
+ constexpr StaticStr(char const* s) { for (unsigned i = 0; i != N; ++i) buf[i] = s[i]; }
+ constexpr operator char const*() const { return buf; }
+};
+template<unsigned N> StaticStr(char const (&)[N]) -> StaticStr<N - 1>;
+//==============================================================================
+
+
+
+
+
 /*  // TODO: Case sens mode select and WideStr support
 // Compile-time recursive mod of string hashing algorithm, the actual algorithm was taken from Qt library (this function isn't case sensitive due to ctCplTolower)
 constexpr unsigned char	 ctCplTolower(unsigned char Ch)				   { return (Ch >= 'A' && Ch <= 'Z') ? (Ch - 'A' + 'a') : (Ch); }

@@ -730,6 +730,8 @@ template<typename T> size_t _ntoa(char* buffer, size_t idx, size_t maxlen, T val
  return idx;
 }
 //---------------------------------------------------------------------------
+// TODO: Put this and all num-to-str/str-to-num functions into Format.hpp (mamespace NFMT)
+// TODO: Use a template to generate a type validation string from all passed arguments
 int _stdcall FormatToBuffer(char* format, char* buffer, UINT maxlen, va_list va)
 {
  size_t idx = 0U;
@@ -919,8 +921,8 @@ int _stdcall FormatToBuffer(char* format, char* buffer, UINT maxlen, va_list va)
         break;
       }
 
-      case 'd' :
-      case 'D' : {   // Width is data block size, precision is line size(single line if not specified)
+      case 'd' :                     // LOGMSG("\r\n%#*.32D",Size,Src);
+      case 'D' : {   // Width is data block size, precision is line size(single line if not specified)  // '%*D' counted dump
         if(*format == 'D')flags |= FLAGS_UPPERCASE;
         unsigned char* DPtr  = va_arg(va, unsigned char*);
         unsigned int   RLen  = precision?precision:width;   // If no precision is specified then write everything in one line 
@@ -2341,10 +2343,14 @@ BOOL _stdcall IsUnicodeString(PVOID String)
 //---------------------------------------------------------------------------
 int _stdcall GetDesktopRefreshRate(void)
 {
+#ifndef NOGDI
  HDC hDCScreen = GetDC(NULL);
  int Refresh   = GetDeviceCaps(hDCScreen, VREFRESH);
  ReleaseDC(NULL, hDCScreen);
  return Refresh;
+#else
+ return 60;
+#endif
 }
 //---------------------------------------------------------------------------
 long  _stdcall GetProcessPath(LPSTR ProcNameOrID, LPSTR PathBuffer, long BufferLngth)  // NOTE: 'lstrcmpi' will work only if the process created normally(not work if a process created in another session by a hack)

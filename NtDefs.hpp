@@ -21,7 +21,7 @@
  */
 #pragma once
 
-#include <windows.h>
+//#include <windows.h>
 
 #ifndef STATUS_SUCCESS
 #   define STATUS_SUCCESS 0
