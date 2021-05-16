@@ -13,9 +13,10 @@
   WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. 
 */
 
-#include "ntdll.h"
+#include "ThirdParty\NTDLL\ntdll.h"
 #include "Utils.h"
 #include "Common.hpp"
+#include <Wbemidl.h>
 //====================================================================================
                                             // sprintf: hex, bits
 HANDLE hLogFile = NULL;
@@ -553,6 +554,15 @@ __declspec(naked) void _stdcall fix__fpreset(void)  // Fix conflict of BDS and T
 }
 #endif
 //---------------------------------------------------------------------------
+__declspec(noinline) PVOID _fastcall FixExportRedir(PVOID ThisLibBase, PVOID ExpProcAddr, PWSTR LibPath)
+{
+ LPSTR ProcName = NPEFMT::TGetProcedureInfoByAddr<NPEFMT::PECURRENT>((PBYTE)ThisLibBase, ExpProcAddr); 
+ HMODULE hOrig = LoadLibraryW(LibPath);    // Not GetModuleHandle since both have the same name 
+ DBGMSG("ThisLibBase=%p, OrigLibBase=%p, ExpProcAddr=%p, ExpProcName=%s = %ls",ThisLibBase, hOrig, ExpProcAddr, ProcName,    LibPath);
+ return GetProcAddress(hOrig, ProcName); 
+}
+//---------------------------------------------------------------------------
+
 bool _stdcall IsLogHandle(HANDLE Hnd)
 {
  return ((Hnd == hLogFile)||(Hnd == hConsOut));
@@ -571,7 +581,7 @@ void  _cdecl LogProc(int Flags, char* ProcName, char* Message, ...)
  char* MPtr  = NULL;
  char TmpBuf[1024*3];   // avoid chkstk
 
- if(!Message)return;   // NULL text string
+ if(!Message || !LogMode)return;   // NULL text string
  va_start(args,Message);
  ULONG MIndex = _InterlockedIncrement((long*)&MsgIdx);
  if(!(Flags & lfRawTextMsg))   // Format a normal message
@@ -961,11 +971,11 @@ int _stdcall FormatToBuffer(char* format, char* buffer, UINT maxlen, va_list va)
         break; }
 
       case 'p' : {
-        width = sizeof(void*) * 2U;
+//        width = sizeof(void*) * 2U;
         flags |= FLAGS_ZEROPAD | FLAGS_UPPERCASE;
-        const bool is_ll = sizeof(uintptr_t) == sizeof(long long);
-        if (is_ll)idx = _ntoa<unsigned long long>(buffer, idx, maxlen, (uintptr_t)va_arg(va, void*), false, 16U, precision, width, flags);
-          else idx = _ntoa<unsigned long>(buffer, idx, maxlen, (unsigned long)((uintptr_t)va_arg(va, void*)), false, 16U, precision, width, flags);
+        const bool is_ll = (sizeof(void*) == sizeof(long long)) || (flags & FLAGS_LONG);
+        if (is_ll)idx = _ntoa<unsigned long long>(buffer, idx, maxlen, (unsigned long long)va_arg(va, unsigned long long), false, 16U, precision, width=sizeof(long long)*2, flags);
+          else idx = _ntoa<unsigned long>(buffer, idx, maxlen, (unsigned long)va_arg(va, unsigned long), false, 16U, precision, width=sizeof(long)*2, flags);
         format++;
         break;
       }
@@ -2353,7 +2363,7 @@ int _stdcall GetDesktopRefreshRate(void)
 #endif
 }
 //---------------------------------------------------------------------------
-long  _stdcall GetProcessPath(LPSTR ProcNameOrID, LPSTR PathBuffer, long BufferLngth)  // NOTE: 'lstrcmpi' will work only if the process created normally(not work if a process created in another session by a hack)
+/*long  _stdcall GetProcessPath(LPSTR ProcNameOrID, LPSTR PathBuffer, long BufferLength)  // NOTE: 'lstrcmpi' will work only if the process created normally(not work if a process created in another session by a hack)
 {
  PROCESSENTRY32 pent32;
  MODULEENTRY32  ment32;
@@ -2372,7 +2382,7 @@ long  _stdcall GetProcessPath(LPSTR ProcNameOrID, LPSTR PathBuffer, long BufferL
 	{
 	 if(((((ULONG_PTR)ProcNameOrID > 0xFFFF) && !lstrcmpi(ProcNameOrID, pent32.szExeFile)) || (pent32.th32ProcessID == (DWORD)ProcNameOrID))) 
 	  {
-	   hModulesSnap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, pent32.th32ProcessID);
+	   hModulesSnap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, pent32.th32ProcessID);     // AccessDenied on recent Win10 if a target process is a service
 	   if(Module32First(hModulesSnap, &ment32))
 		{
          do
@@ -2380,7 +2390,7 @@ long  _stdcall GetProcessPath(LPSTR ProcNameOrID, LPSTR PathBuffer, long BufferL
            if(lstrcmpi(pent32.szExeFile, ment32.szModule)==0)
             {
              int len = 0;
-             while(ment32.szExePath[len])PathBuffer[len] = ment32.szExePath[len++];  // ++ before or after assignment?
+             for(;ment32.szExePath[len];len++)PathBuffer[len] = ment32.szExePath[len]; 
              CloseHandle(hModulesSnap);
              return len;  
             }
@@ -2395,9 +2405,200 @@ long  _stdcall GetProcessPath(LPSTR ProcNameOrID, LPSTR PathBuffer, long BufferL
   }
  CloseHandle(hProcessSnap);
  return 0;
+}*/
+//---------------------------------------------------------------------------
+long _stdcall NormalizeDrivePath(PWSTR PathBuffer, long BufferLength)
+{
+ wchar_t DrvPath[MAX_PATH];
+ PROCESS_DEVICEMAP_INFORMATION MDrives;    // size is 36 for both x32/64
+ PWSTR PathSrcPtr = PathBuffer;
+ if((PathSrcPtr[0] == '\\') && (PathSrcPtr[7] == '\\') && (PathSrcPtr[1] == 'D') && (PathSrcPtr[6] == 'e'))
+  {
+   PathSrcPtr  += 8;
+   BufferLength -= 8;
+  }
+ if((PathSrcPtr[0] == 'M') && (PathSrcPtr[1] == 'u') && (PathSrcPtr[2] == 'p') && (PathSrcPtr[3] == '\\'))   // NtQueryInformationProcess:ProcessImageFileName returns this for network drives
+  {
+   PathSrcPtr  += 4;
+   BufferLength -= 4;
+  }
+ NTSTATUS stat = NtQueryInformationProcess(NtCurrentProcess, ProcessDeviceMap, &MDrives, sizeof(MDrives), 0);           //DWORD DrvMsk = GetLogicalDrives();	
+ if(stat < 0)return -1;
+ DWORD DrvMsk = MDrives.Query.DriveMap;
+ for(wchar_t DrvIdx = 0; DrvMsk; DrvMsk >>= 1, DrvIdx++)
+  {
+   if(!(DrvMsk & 1))continue;
+   wchar_t Drive[] = {wchar_t('A' + DrvIdx), ':', 0};             
+   UINT res = QueryDosDeviceW(Drive, DrvPath, sizeof(DrvPath)/2); // \Device\LanmanRedirector\;Z:00000000000162a3\Host\sh   // \Device\LanmanRedirector\;Y:000000000002da76\Desktop-xxxxx\Tools    // \Device\ImDisk1
+   if(!res)continue;
+   BYTE DriveType = MDrives.Query.DriveType[DrvIdx];
+   DrvPath[res] = 0;
+   while(!DrvPath[res-1])res--;   // res includes some nulls!
+   int RCnt = 2;
+   PWSTR PPtr = DrvPath;
+   if(DriveType == DRIVE_REMOTE)RCnt += 2;
+   for(int idx=0;RCnt && *PPtr;PPtr++,res--)
+    {
+     if(*PPtr == '\\')RCnt--;
+    }
+   if(!memcmp(PathSrcPtr, PPtr, res*sizeof(wchar_t)))
+    {
+     PathBuffer[0] = Drive[0];
+     PathBuffer[1] = Drive[1];
+     long FLen = BufferLength - res;
+     memmove(&PathBuffer[2], &PathSrcPtr[res], FLen*sizeof(wchar_t));
+     FLen += 2;
+     PathBuffer[FLen] = 0;
+     return FLen; 
+    }
+  }
+ return 0;
 }
 //---------------------------------------------------------------------------
-/*long _stdcall GetProcessPathByHandle(HANDLE hProcess, LPSTR PathBuffer, long BufferLngth)   // Requires ntdef header
+long  _stdcall GetProcessPathById(DWORD ProcID, PWSTR PathBuffer, long BufferLength, bool Norm)   // Vista+ ???
+{
+ SYSTEM_PROCESS_ID_INFORMATION SysInfo;
+ SysInfo.ProcessId = (PVOID)ProcID;
+ SysInfo.ImageName.Length = 0;
+ SysInfo.ImageName.MaximumLength = BufferLength * sizeof(wchar_t);
+ SysInfo.ImageName.Buffer = PathBuffer;
+ ULONG RetLen = 0;
+ NTSTATUS Status = NtQuerySystemInformation(SystemProcessIdInformation, &SysInfo, sizeof(SysInfo), &RetLen);
+ if(Status < 0)return Status;
+ if(!SysInfo.ImageName.Buffer)return -1;
+ long NSize = 0;
+ PWSTR PathStr = SysInfo.ImageName.Buffer;
+ UINT  PathLen = SysInfo.ImageName.Length; 
+ if(Norm)NSize = NormalizeDrivePath(PathStr, PathLen/sizeof(WCHAR));
+  else NSize = PathLen / sizeof(WCHAR);
+ if(NSize > 0)
+  {
+   memmove(PathBuffer, PathStr, NSize*sizeof(WCHAR));  
+   PathBuffer[NSize] = 0;
+  }
+ return NSize;
+}
+//---------------------------------------------------------------------------
+// SeDebugPrivilege is required to open processes in another session(i.e. services)
+long  _stdcall GetProcessPath(PWSTR ProcNameOrID, PWSTR PathBuffer, long BufferLength, bool Norm)  // NOTE: 'lstrcmpi' will work only if the process created normally(not work if a process created in another session by a hack)
+{
+ if((ULONG_PTR)ProcNameOrID <= 0xFFFF)
+  {
+   long res = GetProcessPathById((DWORD)ProcNameOrID, PathBuffer, BufferLength, Norm); 
+   if(res >= 0)return res;
+  }
+ ULONG PInfBlkSize = 0x10000;
+ SIZE_T RegionSize  = 0;
+ PVOID  PInfBlkAddr = NULL;
+ for(;;)
+ { 
+  RegionSize = PInfBlkSize;
+  NTSTATUS Status = NtAllocateVirtualMemory(NtCurrentProcess, &PInfBlkAddr, 0, &RegionSize, MEM_COMMIT, PAGE_READWRITE);
+  if(Status < 0)return -1;
+  PInfBlkSize = RegionSize;
+  Status = NtQuerySystemInformation(SystemProcessInformation, PInfBlkAddr, RegionSize, &PInfBlkSize);
+  if(Status != STATUS_INFO_LENGTH_MISMATCH)break; // Full fit
+  NtFreeVirtualMemory(NtCurrentProcess, &PInfBlkAddr, &RegionSize, MEM_RELEASE);  
+  PInfBlkAddr = NULL;
+  PInfBlkSize = (PInfBlkSize + 0x1FFF) & ~0x1FFF;
+ }
+ if(!PInfBlkSize)return -2;
+
+ SYSTEM_PROCESS_INFORMATION* Pinf = (SYSTEM_PROCESS_INFORMATION*)PInfBlkAddr;
+ OBJECT_ATTRIBUTES ObjAttr;
+ long NSize = -3;  // Failed to open
+ ObjAttr.Length = sizeof(ObjAttr);
+ ObjAttr.RootDirectory = NULL;  
+ ObjAttr.Attributes = 0;           // bInheritHandle ? 2 : 0;
+ ObjAttr.ObjectName = NULL;
+ ObjAttr.SecurityDescriptor = ObjAttr.SecurityQualityOfService = NULL;
+ for(;;)
+  {
+   if(((((ULONG_PTR)ProcNameOrID > 0xFFFF) && !lstrcmpiW(ProcNameOrID, Pinf->ImageName.Buffer)) || ((DWORD)Pinf->UniqueProcessId == (DWORD)ProcNameOrID)))  // TODO: WSTR case insensitive compare
+    {
+     CLIENT_ID CliID;
+     HANDLE hProcess = NULL;   
+     CliID.UniqueThread  = 0;
+     CliID.UniqueProcess = Pinf->UniqueProcessId;
+
+     NtFreeVirtualMemory(NtCurrentProcess, &PInfBlkAddr, &RegionSize, MEM_RELEASE);   // The mem required anymore
+     long res = GetProcessPathById((DWORD)CliID.UniqueProcess, PathBuffer, BufferLength, Norm); 
+     if(res >= 0)return res;
+ 
+     NTSTATUS stat = NtOpenProcess(&hProcess, PROCESS_QUERY_LIMITED_INFORMATION, &ObjAttr, &CliID);   // May require SE_DEBUG_PRIVILEGE
+     if(stat == STATUS_ACCESS_DENIED)stat = NtOpenProcess(&hProcess, PROCESS_QUERY_LIMITED_INFORMATION, &ObjAttr, &CliID);   // Vista+   // Fails on 'Microsoft Windows [Version 10.0.18363.1198]'
+     if(!stat)
+      {
+       ULONG RetLen = 0;
+       stat = NtQueryInformationProcess(hProcess,ProcessImageFileName,PathBuffer,BufferLength * sizeof(WCHAR),&RetLen);   // Is it limited to MAX_PATH?
+       if(!stat)
+        {
+         PWSTR PathStr = ((UNICODE_STRING*)PathBuffer)->Buffer;
+         UINT  PathLen = ((UNICODE_STRING*)PathBuffer)->Length; 
+         if(Norm)NSize = NormalizeDrivePath(PathStr, PathLen/sizeof(WCHAR));
+          else NSize = PathLen / sizeof(WCHAR);
+         if(NSize > 0)
+          {
+           memmove(PathBuffer, PathStr, NSize*sizeof(WCHAR));  
+           PathBuffer[NSize] = 0;
+          }
+        }
+         else {LOGMSG("Failed to query process: %08X(%u) with code %08X", (DWORD)CliID.UniqueProcess,(DWORD)CliID.UniqueProcess, stat);}
+      }
+       else {LOGMSG("Failed to open process: %08X(%u) with code %08X", (DWORD)CliID.UniqueProcess,(DWORD)CliID.UniqueProcess, stat);}
+     break;
+    }
+   if(!Pinf->NextEntryOffset)break;
+   Pinf = (SYSTEM_PROCESS_INFORMATION*)&((PBYTE)Pinf)[Pinf->NextEntryOffset];
+  }
+ NtFreeVirtualMemory(NtCurrentProcess, &PInfBlkAddr, &RegionSize, MEM_RELEASE); 
+ return NSize;   // Not found!
+}
+//---------------------------------------------------------------------------
+long  _stdcall GetProcessPathNoAdmin(PWSTR ProcNameOrID, PWSTR PathBuffer, long BufferLength)
+{
+ static const GUID xCLSID_WbemLocator = {0x4590f811, 0x1d3a, 0x11d0, 0x89,0x1f,0x00,0xaa,0x00,0x4b,0x2e,0x24};
+ static const GUID xIID_IWbemLocator  = {0xdc12a687, 0x737f, 0x11cf, 0x88,0x4d,0x00,0xaa,0x00,0x4b,0x2e,0x24};
+
+ HRESULT hr = 0;
+ IWbemLocator         *WbemLocator  = NULL;
+ IWbemServices        *WbemServices = NULL;
+ IEnumWbemClassObject *EnumWbem  = NULL;
+   
+ hr = CoInitializeEx(0, COINIT_MULTITHREADED);
+ hr = CoInitializeSecurity(NULL, -1, NULL, NULL, RPC_C_AUTHN_LEVEL_DEFAULT, RPC_C_IMP_LEVEL_IMPERSONATE, NULL, EOAC_NONE, NULL);
+ hr = CoCreateInstance(xCLSID_WbemLocator, 0, CLSCTX_INPROC_SERVER, xIID_IWbemLocator, (LPVOID *) &WbemLocator);
+
+ hr = WbemLocator->ConnectServer(L"ROOT\\CIMV2", NULL, NULL, NULL, 0, NULL, NULL, &WbemServices);
+ hr = WbemServices->ExecQuery(L"WQL", L"SELECT ExecutablePath, ProcessID FROM Win32_Process WHERE ProcessID = 1160", WBEM_FLAG_FORWARD_ONLY, NULL, &EnumWbem);
+  if (EnumWbem != NULL)
+   {
+            IWbemClassObject *result = NULL;
+           ULONG returnedCount = 0;
+           while((hr = EnumWbem->Next(WBEM_INFINITE, 1, &result, &returnedCount)) == S_OK) {
+               VARIANT ProcessId;
+               VARIANT CommandLine;
+               VARIANT ExecutablePath;
+
+               // access the properties
+               hr = result->Get(L"ProcessId", 0, &ProcessId, 0, 0);
+               hr = result->Get(L"CommandLine", 0, &CommandLine, 0, 0);
+               hr = result->Get(L"ExecutablePath", 0, &ExecutablePath, 0, 0);
+
+                 result->Release();
+              }
+   }
+       EnumWbem->Release();
+       WbemServices->Release();
+       WbemLocator->Release();
+
+       CoUninitialize();
+       //getchar();
+
+ return 0;
+}
+//---------------------------------------------------------------------------
+/*long _stdcall GetProcessPathByHandle(HANDLE hProcess, LPSTR PathBuffer, long BufferLength)   // Requires ntdef header
 {
  PVOID         GetProcInfo;
  PEBL          ProcBlock;
@@ -2414,8 +2615,8 @@ long  _stdcall GetProcessPath(LPSTR ProcNameOrID, LPSTR PathBuffer, long BufferL
      ReadProcessMemory(hProcess, ProcInfo.PebBaseAddress,&ProcBlock,sizeof(ProcBlock),NULL) &&
      ReadProcessMemory(hProcess, ProcBlock.ProcessParameters,&ProcPars,sizeof(ProcPars),NULL) &&
      ReadProcessMemory(hProcess, ProcPars.ApplicationName.Buffer,&UImagePath,ProcPars.ApplicationName.Length,NULL))
-           return WideCharToMultiByte(CP_ACP,0,(PWSTR)&UImagePath,-1,PathBuffer,BufferLngth,NULL,NULL);
- return GetProcessPathByID(GetProcessId(hProcess), PathBuffer, BufferLngth);
+           return WideCharToMultiByte(CP_ACP,0,(PWSTR)&UImagePath,-1,PathBuffer,BufferLength,NULL,NULL);
+ return GetProcessPathByID(GetProcessId(hProcess), PathBuffer, BufferLength);
 }*/
 //---------------------------------------------------------------------------
 bool _stdcall FindFile(LPSTR FilePath, LPSTR OutBuffer)
@@ -2733,7 +2934,40 @@ int __stdcall SetProcessPrivilegeState(bool bEnable, LPSTR PrName, HANDLE hProce
  return 0;
 }
 //------------------------------------------------------------------------------------------------------------
+/*UINT _stdcall BuildNetDriveMap(CDynArray<SNetDrvMap>* Map)
+{
+ UINT DCnt = 0;
+ wchar_t DrvPath[MAX_PATH];
+ DWORD DrvMsk = GetLogicalDrives();	
+ for(wchar_t DrvIdx = 0; DrvMsk; DrvMsk >>= 1, DrvIdx++)
+  {
+   wchar_t Drive[] = {wchar_t('A' + DrvIdx), ':', '\\', 0};             
+   UINT uDriveType = GetDriveTypeW(Drive);    		
+   if(uDriveType != DRIVE_REMOTE)continue;
+   Drive[2] = 0;
+   UINT res = QueryDosDeviceW(Drive, DrvPath, sizeof(DrvPath)/2); // \Device\LanmanRedirector\;Z:00000000000162a3\Host\sh
+   if(!res)continue;
+   DrvPath[res] = 0;
+   while(!DrvPath[res-1])res--;   // res includes some nulls
+   wchar_t* ssp = wcschr(DrvPath, ':');
+   if(!ssp)continue;
+   wchar_t* ssa = wcschr(ssp, '\\');
+   if(!ssa)continue;
+   wchar_t* ssb = wcschr(&ssa[1], '\\');
+   if(!ssb)ssb = &DrvPath[res];     // End of a name
 
+   SNetDrvMap rec;
+   rec.NameLen = (ssb - ssa) + 1;
+   rec.PathLen = (&DrvPath[res] - ssa) + 1;
+   rec.Letter = ssp[-1];
+   rec.RemPath[0] = '\\';
+   wcscpy(&rec.RemPath[1], ssa);
+   Map->PushBack(rec);
+   DCnt++;
+  }
+ return DCnt;
+} */
+//------------------------------------------------------------------------------------------------------------
 /*
 PVOID _stdcall GetProcessImageBase(HANDLE hProcess)   // Requires ntdef header
 {

@@ -16,7 +16,7 @@
 
 // ToDo: Optionally export to self and resolve inports instead of ntdll.lib
 //---------------------------------------------------------------------------
-struct NNTDLL   // NT system service calls encapsulation
+struct NNTDLL   // NT system service calls encapsulation  // DODO: Rename to NWINNT and make it core of WinNt support in my cross platform framework
 {     // See KUSER_SHARED_DATA in ntddk.h
 static inline bool IsWinXPOrOlder(void)
 {
@@ -78,10 +78,10 @@ static NTSTATUS NTAPI NtSleep(DWORD dwMiliseconds, BOOL Alertable=FALSE)
  return NtDelayExecution(Alertable, (PLARGE_INTEGER)&MLI);
 }  
 //----------------------------------------------------------------------------
-static inline UINT64 GetNativeWowTebAddr(void)
+static inline UINT64 GetNativeWowTebAddrWin10(void)   
 {
  PTEB teb = NtCurrentTeb();
- if(!teb->WowTebOffset)return 0;  // Not WOW or below Win 7
+ if(!teb->WowTebOffset)return 0;  // Not WOW or below Win10  // From 10.0 and higher
  PBYTE TebX64 = (PBYTE)teb;
  if(long(teb->WowTebOffset) < 0)
   {
@@ -92,6 +92,56 @@ static inline UINT64 GetNativeWowTebAddr(void)
  return UINT64(TebX64);
 }
 //---------------------------------------------------------------------------
+// Returns 'false' if running under native x32 or native x64
+static inline bool IsWow64(void)
+{
+#ifdef _AMD64_
+ return false;
+#else
+ PTEB teb = NtCurrentTeb();
+ return (bool)teb->WOW32Reserved;   // Is it reliable?  Is it always non NULL under Wow64?   // Contains pointer to 'jmp far 33:Addr'
+#endif
+}
+//---------------------------------------------------------------------------
+static int SetSkipThreadReport(HANDLE ThLocalThread)
+{
+ THREAD_BASIC_INFORMATION tinf;
+ ULONG RetLen = 0;
+ HRESULT res  = NtQueryInformationThread(ThLocalThread,ThreadBasicInformation,&tinf,sizeof(THREAD_BASIC_INFORMATION),&RetLen);
+ if(res)return -1; 
+ return SetSkipThreadReport(tinf.TebBaseAddress);  
+} 
+//---------------------------------------------------------------------------
+static int SetSkipThreadReport(PTEB ThTeb)  // See RtlIsCurrentThreadAttachExempt
+{
+ PBYTE TebAddr = (PBYTE)ThTeb;
+ for(int idx=0;idx < 2;idx++)
+  {
+   bool IsTgtTebX32 = (*(PBYTE*)&TebAddr[0x18] == TebAddr);  // NT_TIB
+   bool IsTgtTebX64 = (*(PBYTE*)&TebAddr[0x30] == TebAddr);  // NT_TIB
+   if(!IsTgtTebX32 && !IsTgtTebX64)return -2;
+
+   long WowTebOffset;
+   USHORT* pSameTebFlags;
+   if(IsTgtTebX32)
+    {
+     WowTebOffset  = *(long*)&TebAddr[0x0FDC];
+     pSameTebFlags = (USHORT*)&TebAddr[0x0FCA]; 
+    }
+     else
+      {
+       WowTebOffset  = *(long*)&TebAddr[0x180C];
+       pSameTebFlags = (USHORT*)&TebAddr[0x17EE];  
+      }
+   *pSameTebFlags |= 0x0008;   // SkipThreadAttach
+   *pSameTebFlags &= ~0x0020;  // RanProcessInit   
+   DBGMSG("TEB=%p, pSameTebFlags=%p, IsTgtTebX32=%u, IsTgtTebX64=%u, WowTebOffset=%i", TebAddr, pSameTebFlags, IsTgtTebX32, IsTgtTebX64, WowTebOffset);
+   if(WowTebOffset == 0)break;
+   TebAddr = &TebAddr[WowTebOffset];  // Next WOW TEB
+  }
+ return 0;
+}
+//------------------------------------------------------------------------------------
 static PVOID GetModuleBaseLdr(LPSTR ModName, ULONG* Size=NULL, long* BaseIdx=NULL)  // NOTE: No loader locking used!
 {
  if(!ModName)
@@ -223,34 +273,44 @@ static NTSTATUS NativeDeleteFile(PWSTR FileName)
  return Status;
 }
 //------------------------------------------------------------------------------------
-static HANDLE OpenBeep(void)
+static NTSTATUS OpenDevice(PWSTR DevName, HANDLE* hDev)
 {
- UNICODE_STRING str;
+ UNICODE_STRING DevPathUS;
  OBJECT_ATTRIBUTES attr;
  IO_STATUS_BLOCK iost;
- HANDLE hBeep = NULL;
+ UINT Length = 8;
+ wchar_t DevPath[MAX_PATH] = {'\\','D','e','v','i','c','e','\\'};
+ for(int idx=0;*DevName;DevName++,Length++)DevPath[Length] = *DevName;
+ DevPathUS.Buffer = DevPath;
+ DevPathUS.Length = Length * sizeof(wchar_t);
+ DevPathUS.MaximumLength = DevPathUS.Length + sizeof(wchar_t);   //RtlInitUnicodeString(&str, L"\\Device\\xxx");
 
- RtlInitUnicodeString(&str, L"\\Device\\Beep");
  attr.Length = sizeof(OBJECT_ATTRIBUTES);
  attr.RootDirectory = 0;
- attr.ObjectName = &str;
+ attr.ObjectName = &DevPathUS;
  attr.Attributes = 0;
  attr.SecurityDescriptor = 0;
  attr.SecurityQualityOfService = 0;
- NtCreateFile(&hBeep, GENERIC_READ | GENERIC_WRITE, &attr, &iost, 0, 0, 0, FILE_OPEN, 0, 0, 0);
- return hBeep;
+ return NtCreateFile(hDev, GENERIC_READ | GENERIC_WRITE, &attr, &iost, 0, 0, 0, FILE_OPEN, 0, 0, 0);
 }
 //------------------------------------------------------------------------------------
-static void DoBeep(HANDLE hBeep)
+static HANDLE OpenBeep(void)
+{
+ HANDLE hBeep = NULL;
+ OpenDevice(L"Beep", &hBeep);
+ return hBeep; 
+}
+//------------------------------------------------------------------------------------
+static NTSTATUS DoBeep(HANDLE hBeep, DWORD Freq, DWORD Duration)
 {   
  struct {
   ULONG uFrequency;
   ULONG uDuration;
  } param;
  IO_STATUS_BLOCK iost;
- param.uFrequency = 2500;
- param.uDuration  = 10;
- NtDeviceIoControlFile(hBeep, 0, 0, 0, &iost, 0x00010000, &param, sizeof(param), 0, 0);
+ param.uFrequency = Freq;    // short
+ param.uDuration  = Duration;
+ return NtDeviceIoControlFile(hBeep, 0, 0, 0, &iost, 0x00010000, &param, sizeof(param), 0, 0);
 }
 //------------------------------------------------------------------------------------
 typedef void (_stdcall *PNT_THREAD_PROC)(PVOID ParamA, PVOID ParamB);   // Param may be on stack in x32 vor not  // Exit with NtTerminateThread
@@ -333,7 +393,7 @@ static NTSTATUS NTAPI NativeCreateThread(PVOID ThreadRoutine, PVOID ParamA, PVOI
 #endif
 
  ULONG ThAcc = SYNCHRONIZE|THREAD_GET_CONTEXT|THREAD_SET_CONTEXT|THREAD_QUERY_INFORMATION|THREAD_SET_INFORMATION|THREAD_SUSPEND_RESUME|THREAD_TERMINATE;
- Status = NtCreateThread(ThreadHandle, ThAcc, NULL, ProcessHandle, &ClientId, &Context, (PINITIAL_TEB)&UserStack, CrtSusp);  // The thread starts at specified IP and with specified SP and no return address // End it with NtTerminateThread     
+ Status = NtCreateThread(ThreadHandle, ThAcc, NULL, ProcessHandle, &ClientId, &Context, (PINITIAL_TEB)&UserStack, CrtSusp);  // The thread starts at specified IP and with specified SP and no return address // End it with NtTerminateThread  // CrtSusp must be exactly 1 to suspend     
 #ifndef _AMD64_ 
  if((Status == STATUS_ACCESS_DENIED) && (FixWinTenWow64NtCreateThread() > 0))Status = NtCreateThread(ThreadHandle, ThAcc, NULL, ProcessHandle, &ClientId, &Context, (PINITIAL_TEB)&UserStack, CrtSusp);     // Try to fix Wow64NtCreateThread bug in latest versions of Windows 10   
 #endif
@@ -351,7 +411,7 @@ static int FixWinTenWow64NtCreateThread(void)
 {
  static int LastResult = 0;
  if(LastResult != 0)return LastResult;
- UINT64 NTeb = GetNativeWowTebAddr();
+ UINT64 NTeb = GetNativeWowTebAddrWin10();
  if(!NTeb){LastResult=-1; return LastResult;}    // Not under WOW or an older system
  DBGMSG("Trying to fix Wow64: CurrTeb=%p, NTeb=%p",NtCurrentTeb(),(PVOID)NTeb);
  UINT64 TlsSlot = NTeb + 0x1480 + (sizeof(UINT64) * 10);  // For now in slot 10    // 0x1480 is offset of TlsSlots in x64 TEB
@@ -670,6 +730,76 @@ static int NtFork(bool InheritAll=false)   // RtlCloneUserProcess ?
  NtClose(hThread);
  NtClose(hProcess);
  return (int)cid.UniqueProcess;  //  exit with child's pid
+}
+//------------------------------------------------------------------------------------
+static UINT64 GetObjAddrByHandle(HANDLE hObj, DWORD OwnerProcId)  
+{
+ SIZE_T InfoBufSize = 1048576;
+ NTSTATUS stat = 0;
+ ULONG RetLen  = 0;
+ UINT64 Addr   = 0;
+ PVOID InfoArr = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, InfoBufSize);
+ if(IsWow64())
+  {
+   while(stat = NWOW64E::QuerySystemInformation(SystemExtendedHandleInformation, InfoArr, InfoBufSize, &RetLen) == STATUS_INFO_LENGTH_MISMATCH)InfoArr = HeapReAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,InfoArr,InfoBufSize *= 2);
+   for(ULONG idx = 0;idx < ((NWOW64E::SYSTEM_HANDLE_INFORMATION_EX_64*)InfoArr)->NumberOfHandles;idx++)
+    {
+     NWOW64E::SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX<DWORD64>* HndlInfo = &((NWOW64E::SYSTEM_HANDLE_INFORMATION_EX_64*)InfoArr)->Handles[idx];
+     if(HndlInfo->UniqueProcessId != (UINT64)OwnerProcId)continue;     // Wrong process
+     if(HndlInfo->HandleValue != (UINT64)hObj)continue;     // Wrong Handle
+     Addr = (UINT64)HndlInfo->Object;
+     break;  
+    }
+  }
+ else
+  {
+   while(stat = NtQuerySystemInformation(SystemExtendedHandleInformation, InfoArr, InfoBufSize, &RetLen) == STATUS_INFO_LENGTH_MISMATCH)InfoArr = HeapReAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,InfoArr,InfoBufSize *= 2);
+   for(ULONG idx = 0;idx < ((PSYSTEM_HANDLE_INFORMATION_EX)InfoArr)->NumberOfHandles;idx++)
+    {
+     PSYSTEM_HANDLE_TABLE_ENTRY_INFO_EX HndlInfo = &((PSYSTEM_HANDLE_INFORMATION_EX)InfoArr)->Handles[idx];
+     if(HndlInfo->UniqueProcessId != OwnerProcId)continue;     // Wrong process
+     if(HndlInfo->HandleValue != (ULONG_PTR)hObj)continue;     // Wrong Handle
+     Addr = (ULONG_PTR)HndlInfo->Object;   // Why casting to UINT64 makes this pointer sign extended on x32???  // Is 'void*' actually a signed type?
+     break; 
+    }
+   }
+ if(InfoArr)HeapFree(GetProcessHeap(),0,InfoArr);
+ return Addr;
+}
+//------------------------------------------------------------------------------------
+static UINT64 GeKernelModuleBase(LPSTR ModuleName, ULONG* ImageSize)  
+{
+ SIZE_T InfoBufSize = 1048576;
+ NTSTATUS stat = 0;
+ ULONG RetLen  = 0;
+ UINT64 Addr   = 0;
+ PVOID InfoArr = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, InfoBufSize);
+ if(IsWow64())
+  {
+   while(stat = NWOW64E::QuerySystemInformation(SystemModuleInformation, InfoArr, InfoBufSize, &RetLen) == STATUS_INFO_LENGTH_MISMATCH)InfoArr = HeapReAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,InfoArr,InfoBufSize *= 2);
+   for(ULONG idx = 0;idx < ((NWOW64E::RTL_PROCESS_MODULES_64*)InfoArr)->NumberOfModules;idx++)
+    {
+     NWOW64E::RTL_PROCESS_MODULE_INFORMATION<DWORD64>* HndlInfo = &((NWOW64E::RTL_PROCESS_MODULES_64*)InfoArr)->Modules[idx];
+    // if(HndlInfo->UniqueProcessId != (UINT64)OwnerProcId)continue;     // Wrong process
+    // if(HndlInfo->HandleValue != (UINT64)hObj)continue;     // Wrong Handle
+    // Addr = (UINT64)HndlInfo->Object;
+     break;  
+    }
+  }
+ else
+  {
+   while(stat = NtQuerySystemInformation(SystemModuleInformation, InfoArr, InfoBufSize, &RetLen) == STATUS_INFO_LENGTH_MISMATCH)InfoArr = HeapReAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,InfoArr,InfoBufSize *= 2);
+   for(ULONG idx = 0;idx < ((PRTL_PROCESS_MODULES)InfoArr)->NumberOfModules;idx++)
+    {
+     PRTL_PROCESS_MODULE_INFORMATION HndlInfo = &((PRTL_PROCESS_MODULES)InfoArr)->Modules[idx];
+    // if(HndlInfo->UniqueProcessId != OwnerProcId)continue;     // Wrong process
+    // if(HndlInfo->HandleValue != (ULONG_PTR)hObj)continue;     // Wrong Handle
+    // Addr = (ULONG_PTR)HndlInfo->Object;   // Why casting to UINT64 makes this pointer sign extended on x32???  // Is 'void*' actually a signed type?
+     break; 
+    }
+   }
+ if(InfoArr)HeapFree(GetProcessHeap(),0,InfoArr);
+ return Addr;
 }
 //------------------------------------------------------------------------------------
 

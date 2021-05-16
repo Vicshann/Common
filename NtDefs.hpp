@@ -451,8 +451,49 @@ template <typename T> struct SYSTEM_PROCESS_INFORMATION
     alignas(T) BYTE  Threads[1];      // SYSTEM_THREAD_INFORMATION or SYSTEM_EXTENDED_THREAD_INFORMATION
 };
 
+template <typename T> struct SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX
+{
+    T Object;           // PVOID
+    T UniqueProcessId;  // SIZE_T
+    T HandleValue;      // SIZE_T
+    ULONG GrantedAccess;
+    USHORT CreatorBackTraceIndex;
+    USHORT ObjectTypeIndex;
+    ULONG HandleAttributes;
+    ULONG Reserved;
+};
+
+template <typename T> struct SYSTEM_HANDLE_INFORMATION_EX
+{
+    T NumberOfHandles;   // SIZE_T
+    T Reserved;          // SIZE_T
+    SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX<T> Handles[1];
+};
+
+template <typename T> struct RTL_PROCESS_MODULE_INFORMATION
+{
+    T Section;     // HANDLE
+    T MappedBase;  // PVOID
+    T ImageBase;   // PVOID
+    ULONG ImageSize;
+    ULONG Flags;
+    USHORT LoadOrderIndex;
+    USHORT InitOrderIndex;
+    USHORT LoadCount;
+    USHORT OffsetToFileName;
+    UCHAR FullPathName[256];
+};
+
+template <typename T> struct RTL_PROCESS_MODULES
+{
+    ULONG NumberOfModules;
+    alignas(T) RTL_PROCESS_MODULE_INFORMATION<T> Modules[1];
+};
+
 typedef SYSTEM_PROCESS_INFORMATION<DWORD64> SYSTEM_PROCESS_INFORMATION_64;              
 typedef SYSTEM_THREAD_INFORMATION<DWORD64> SYSTEM_THREAD_INFORMATION_64;
 typedef SYSTEM_EXTENDED_THREAD_INFORMATION<DWORD64> SYSTEM_EXTENDED_THREAD_INFORMATION_64;
+typedef SYSTEM_HANDLE_INFORMATION_EX<DWORD64> SYSTEM_HANDLE_INFORMATION_EX_64;
+typedef RTL_PROCESS_MODULES<DWORD64> RTL_PROCESS_MODULES_64;
 
 #pragma pack(pop)

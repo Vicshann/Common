@@ -137,7 +137,7 @@ char* ftoa_simple(double num, size_t afterpoint, char *buf, size_t len, size_t* 
    if(fpartd <  0)fpartd = num - (--ipart);   // (double)(--ipart)  // Fix rounding up, don`t touch FPU rounding modes   
    if(fpartd >= 1)fpartd = num - (++ipart);   // (double)(++ipart)  // Fix rounding down              // Results in ipart 0x8000000000000001 if INF
 
-   unsigned long long fpart = unsigned long long(fpartd * uExp10[DAfter]);  // After 15 digit loses some precision    // Results 0x8000000000000000 if NAN or INF
+   unsigned long long fpart = (unsigned long long)(fpartd * uExp10[DAfter]);  // After 15 digit loses some precision    // Results 0x8000000000000000 if NAN or INF
    if(SpecialMsk == fpart)       // Is these check are not FPU specific?
     {
      if(ipart == SpecialMsk) // NAN

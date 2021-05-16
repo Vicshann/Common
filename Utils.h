@@ -213,7 +213,11 @@ HGLOBAL _stdcall GetResource(HMODULE Module, LPSTR ResName, LPSTR ResType, PUINT
 UINT __stdcall SaveMemoryToFile(LPSTR FileName, DWORD ProcessID, DWORD Address, DWORD BlockSize, BYTE ErrorByte);
 int _stdcall RedirectExports(HMODULE ModFrom, HMODULE ModTo);
 int _stdcall ConvertToUTF8(PWSTR Src, LPSTR Dest, UINT DestLen);
-long  _stdcall GetProcessPath(LPSTR ProcNameOrID, LPSTR PathBuffer, long BufferLngth);
+long _stdcall NormalizeDrivePath(PWSTR PathBuffer, long BufferLength);
+//long  _stdcall GetProcessPath(LPSTR ProcNameOrID, LPSTR PathBuffer, long BufferLngth);
+long  _stdcall GetProcessPath(PWSTR ProcNameOrID, PWSTR PathBuffer, long BufferLength, bool Norm=true);
+long  _stdcall GetProcessPathById(DWORD ProcID, PWSTR PathBuffer, long BufferLength, bool Norm);
+long  _stdcall GetProcessPathNoAdmin(PWSTR ProcNameOrID, PWSTR PathBuffer, long BufferLength);
 UINT _stdcall GetRandomValue(UINT MinVal, UINT MaxVal);
 HMODULE _stdcall FindModuleByExpName(LPSTR ModuleName);
 //bool _stdcall AssignFilePath(LPSTR DstPath, LPSTR BasePath, LPSTR FilePath);     // Template
@@ -223,6 +227,7 @@ int _stdcall BinaryPackToBlobStr(LPSTR ApLibPath, LPSTR SrcBinPath, LPSTR OutBin
 UINT _stdcall NextItemASN1(PBYTE DataPtr, PBYTE* Body, PBYTE Type, UINT* Size);
 int _stdcall FormatDateForHttp(SYSTEMTIME* st, LPSTR DateStr);
 bool _stdcall IsWow64(void);
+BOOL _stdcall ForceProcessSingleCore(HANDLE hProcess);
 int __stdcall SetProcessPrivilegeState(bool bEnable, LPSTR PrName, HANDLE hProcess=GetCurrentProcess());
 char* ftoa_simple(double num, size_t afterpoint, char *buf, size_t len, size_t* size);
 int _stdcall FormatToBuffer(char* format, char* buffer, UINT maxlen, va_list va);
@@ -404,6 +409,26 @@ INLINE bool IsAligned(T ptr)
 
 
 */
+__declspec(noinline) PVOID _fastcall FixExportRedir(PVOID ThisLibBase, PVOID ExpProcAddr, PWSTR LibPath);
+#if defined(_AMD64_)
+// NOTE: Arguments number is limited!!!!!
+// NOTE: Not going to be tail optimized('jmp rax')!
+#define APIWRAPPER(LibPathName,NameAPI) extern "C" _declspec(dllexport) void __cdecl NameAPI(PVOID ParA, PVOID ParB, PVOID ParC, PVOID ParD, PVOID ParE, PVOID ParF, PVOID ParG, PVOID ParH, PVOID ParI, PVOID ParJ, PVOID ParK, PVOID ParL) \
+{ \
+ static void* Address = NULL; \
+ if(!Address)Address = FixExportRedir(ThisLibBase, & NameAPI, LibPathName); \
+ ((void (__cdecl *)(...))(Address))(ParA, ParB, ParC, ParD, ParE, ParF, ParG, ParH, ParI, ParJ, ParK, ParL); \
+}
+#else
+// Only 'cdecl' can be exported without name mangling  
+#define APIWRAPPER(LibPathName,NameAPI) extern "C" _declspec(dllexport, naked) void __fastcall NameAPI(PVOID ParA, PVOID ParB, ...) \
+{ \
+ static void* Address = NULL; \
+ if(!Address)Address = FixExportRedir(ThisLibBase, & NameAPI, LibPathName); \
+ __asm jmp [Address]  \
+}
+#endif
+//====================================================================================
 
 static inline __int64  _fastcall SysTimeToTime64(UINT64 SysTime)   // C++Builder fails 64bit consts!!!
 {
@@ -522,6 +547,27 @@ template<typename T> bool _stdcall IsPathLink(T Name)
  return false;
 }
 //---------------------------------------------------------------------------
+// 'buf' is for storage only, DO NOT expect result to be at beginning of it
+template<typename T, typename S> S DecNumToStrS(T Val, S buf, UINT* Len=0)     
+{
+ if(Val == 0){if(Len)*Len = 1; *buf = '0'; buf[1] = 0; return buf;}
+ bool isNeg = (Val < 0);
+ if(isNeg) Val = -Val;       // warning C4146: unary minus operator applied to unsigned type, result still unsigned
+ buf  = &buf[20];
+ *buf = 0;
+ S end = buf;
+ for(buf--;Val;buf--)
+  {
+   *buf  = (Val % 10) + '0';
+   Val  /= 10;
+  }
+ if(isNeg)*buf = '-';
+   else buf++;
+ if(Len)*Len = end-buf;     // A counted string
+  else buf[end-buf] = 0;    // A null terminated string
+ return buf;
+} 
+//---------------------------------------------------------------------------
 // No Streams support!
 template<typename T, typename O> O _fastcall DecNumToStrU(T Val, O buf, int* Len)     // A/W char string and Signed/Unsigned output by constexpr
 {
@@ -531,7 +577,7 @@ template<typename T, typename O> O _fastcall DecNumToStrU(T Val, O buf, int* Len
  O end = buf;
  for(buf--;Val;buf--)
   {
-   *buf  = (Val % 10) + '0';
+   *buf  = (Val % 10) + '0';  // NOTE: Ensure that this is optimized to a single DIV operation with remainder preservation
    Val  /= 10;
   }
  buf++;
@@ -863,27 +909,6 @@ template<typename T> int HexStrToByteArray(PBYTE Buffer, T SrcStr, UINT HexByteC
  return true;
 } */
 //---------------------------------------------------------------------------
-// 'buf' is for storage only, DO NOT expect result to be at beginning of it
-template<typename T, typename S> S DecNumToStrS(T Val, S buf, UINT* Len=0)     
-{
- if(Val == 0){if(Len)*Len = 1; *buf = '0'; buf[1] = 0; return buf;}
- bool isNeg = (Val < 0);
- if(isNeg) Val = -Val;       // warning C4146: unary minus operator applied to unsigned type, result still unsigned
- buf  = &buf[20];
- *buf = 0;
- S end = buf;
- for(buf--;Val;buf--)
-  {
-   *buf  = (Val % 10) + '0';
-   Val  /= 10;
-  }
- if(isNeg)*buf = '-';
-   else buf++;
- if(Len)*Len = end-buf;     // A counted string
-  else buf[end-buf] = 0;    // A null terminated string
- return buf;
-} 
-//---------------------------------------------------------------------------
 inline BYTE EncryptByteWithCtr(BYTE Val, BYTE Key, UINT ctr){return ((Val ^ Key)+(BYTE)(ctr * (UINT)Key));}
 inline BYTE DecryptByteWithCtr(BYTE Val, BYTE Key, UINT ctr){return ((Val - (BYTE)(ctr * (UINT)Key)) ^ Key);}
 inline void EncryptStrSimple(LPSTR SrcStr, LPSTR DstStr, BYTE Key, UINT Size=0)
@@ -998,6 +1023,50 @@ template<typename S> int RegDeleteKeyRecursive(HKEY hKeyRoot, S lpSubKey)
    else lResult = RegDeleteKeyA(hKeyRoot, lpSubKey);
  if(lResult == ERROR_SUCCESS)return 0;
  return -2;
+}
+//------------------------------------------------------------------------------------
+// 0: AABBCCDDEEFFGGHH <7,>7 (S-1)  AABBCCDD <3,>3 (S-1)  AABB <1,>1 (S-1)  AA
+// 1: HHBBCCDDEEFFGGAA <5,>5 (S-3)  DDBBCCAA <1,>1 (S-3)  BBAA
+// 2: HHGGCCDDEEFFBBAA <3,>3 (S-5)  DDCCBBAA
+// 3: HHGGFFDDEECCBBAA <1,>1 (S-7)
+// 4: HHGGFFEEDDCCBBAA
+template<typename T> constexpr __forceinline static T RevByteOrder(T Value)   // Can be used at compile time
+{
+ if constexpr (sizeof(T) > 1)
+  {
+   T Result = ((Value & 0xFF) << ((sizeof(T)-1)*8)) | ((Value >> ((sizeof(T)-1)*8)) & 0xFF);  // Exchange edge 1
+   if constexpr (sizeof(T) > 2) 
+    {
+     Result |= ((Value & 0xFF00) << ((sizeof(T)-3)*8)) | ((Value >> ((sizeof(T)-3)*8)) & 0xFF00); // Exchange edge 2
+     if constexpr (sizeof(T) > 4)
+      {
+       Result |= ((Value & 0xFF0000) << ((sizeof(T)-5)*8)) | ((Value >> ((sizeof(T)-5)*8)) & 0xFF0000); // Exchange edge 3
+       Result |= ((Value & 0xFF000000) << ((sizeof(T)-7)*8)) | ((Value >> ((sizeof(T)-7)*8)) & 0xFF000000); // Exchange edge 4
+      }
+    }
+   return Result;
+  }
+ return Value;
+}
+//------------------------------------------------------------------------------------
+// MSVC:
+//unsigned short _byteswap_ushort(unsigned short value);
+//unsigned long _byteswap_ulong(unsigned long value);
+//unsigned __int64 _byteswap_uint64(unsigned __int64 value);
+// GCC:
+//int32_t __builtin_bswap32 (int32_t x)
+//int64_t __builtin_bswap64 (int64_t x)
+//
+template<typename T> constexpr __forceinline static T SwapBytes(T Value)  // Unsafe with optimizations?  // https://mklimenko.github.io/english/2018/08/22/robust-endian-swap/
+{
+ union {T val; UINT8 raw[sizeof(T)];} src, dst;
+ src.val = Value;
+ for(int idx=0,ridx=sizeof(T)-1;idx < sizeof(T)lidx++,ridx--)dst.raw[idx] = src.raw[ridx]; // Lets hope it will be optimized to bswap 
+ return dst.val;
+// uint8_t* SrcBytes = (uint8_t*)&Value;
+// uint8_t  DstBytes[sizeof(T)];
+// for(int idx=0;idx < sizeof(T);idx++)DstBytes[idx] = SrcBytes[(sizeof(T)-1)-idx];
+// return *(T*)&DstBytes;
 }
 //------------------------------------------------------------------------------------
 

@@ -21,30 +21,6 @@
 // TODO: If hooking a function that is imported by this module, update ImportRecord to point to OrigProc
 // https://software.intel.com/sites/landingpage/IntrinsicsGuide/#techs=SSE2
 //---------------------------------------------------------------------------
-#if defined(_AMD64_)
-// Must be optimized to 'jmp rax' at the end  // NOTE: Arguments number is limited!!!!!
-// LOGMSG("Calling: %p, %s, %s",Address,#NameAPI,LibPathName);  
-#define APIWRAPPER(LibPathName,NameAPI) extern "C" _declspec(dllexport) void __cdecl NameAPI(PVOID ParA, PVOID ParB, PVOID ParC, PVOID ParD, PVOID ParE, PVOID ParF, PVOID ParG, PVOID ParH, PVOID ParIF, PVOID ParJ, PVOID ParK, PVOID ParL) \
-{ \
- static void* Address; \
- if(!Address)Address = GetProcAddress((sizeof(*LibPathName)==2)?(LoadLibraryW((PWSTR)LibPathName)):(LoadLibraryA((LPSTR)LibPathName)),#NameAPI); \
- if(Address)((DWORD (__cdecl *)(...))(Address))(ParA, ParB, ParC, ParD, ParE, ParF, ParG, ParH, ParIF, ParJ, ParK, ParL); \
-}
-
-#else
-
-/* DBGMSG("Name: %s",#NameAPI);   */
-#define APIWRAPPER(LibPathName,NameAPI) extern "C" _declspec(dllexport) _declspec(naked) void __cdecl NameAPI(void) \
-{ \
- static void* Address; \
- DBGMSG("Name: %s",#NameAPI); \
- if(!Address)Address = GetProcAddress((sizeof(*LibPathName)==2)?(LoadLibraryW((PWSTR)LibPathName)):(LoadLibraryA((LPSTR)LibPathName)),#NameAPI); \
- __asm mov EAX, [Address] \
- __asm jmp EAX \
-}
-
-#endif
-//====================================================================================
 #define ADDROFFSET(addr,offset) ((addr)+(offset))
 
 #ifndef _REV_DW

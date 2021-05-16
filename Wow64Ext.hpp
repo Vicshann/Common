@@ -471,18 +471,18 @@ static DWORD64 _stdcall GetProcAddressSimpleX64(DWORD64 modBase, char* ProcName)
 //------------------------------------------------------------------------------------------------------------
 static DWORD64 _stdcall GetProcAddress64(DWORD64 hModule, char* funcName)
 {
- static DWORD64 _LdrGetProcedureAddress = 0;
- if(0 == _LdrGetProcedureAddress)
+ static DWORD64 xproc = 0;
+ if(!xproc)
   {
-   _LdrGetProcedureAddress = GetProcAddressSimpleX64(getNTDLL64(), "LdrGetProcedureAddress");
-   if(0 == _LdrGetProcedureAddress)return 0;
+   xproc = GetProcAddressSimpleX64(getNTDLL64(), "LdrGetProcedureAddress");
+   if(!xproc)return 0;
   }
  _UNICODE_STRING_T<DWORD64> fName = { 0 };
  fName.Buffer = (DWORD64)funcName;
  fName.Length = (WORD)strlen(funcName);
  fName.MaximumLength = fName.Length + 1;
  DWORD64 funcRet = 0;
- X64Call(_LdrGetProcedureAddress, 4, (DWORD64)hModule, (DWORD64)&fName, (DWORD64)0, (DWORD64)&funcRet);
+ X64Call(xproc, 4, (DWORD64)hModule, (DWORD64)&fName, (DWORD64)0, (DWORD64)&funcRet);
  return funcRet;
 }
 //------------------------------------------------------------------------------------------------------------

@@ -1081,6 +1081,7 @@ int ProcessRequestDbg(SMsgHdr* Req)
      SIZE_T StackSize = 0x10000;
      NtAllocateVirtualMemory(NtCurrentProcess, &StackBase, 0, &StackSize, MEM_COMMIT, PAGE_READWRITE);
      NTSTATUS stat = NNTDLL::NativeCreateThread(&CDbgClient::DbgBreakThread, this, this, NtCurrentProcess, TRUE, &StackBase, &StackSize, &ThreadHandle, NULL);  // HANDLE ThreadHandle = CreateThread(NULL,0,&CDbgClient::DbgBreakThread,this,CREATE_SUSPENDED,&this->DbgBrkThID);  // Just to do int3
+     NNTDLL::SetSkipThreadReport(ThreadHandle);
      DBGMSG("DebugBreakThread: Addr=%p, StackBase=%p, StackSize=%08X",&CDbgClient::DbgBreakThread,StackBase,StackSize);
 	 if(ThreadHandle)
       {
@@ -1513,8 +1514,12 @@ static NTSTATUS CreateIpcThread(PHANDLE pThHndl, PVOID Param, BOOL Suspended)
  PVOID  StackBase = NULL; 
  SIZE_T StackSize = 0x10000;    // Should be enough
  NtAllocateVirtualMemory(NtCurrentProcess, &StackBase, 0, &StackSize, MEM_COMMIT, PAGE_READWRITE);
- DBGMSG("Param=%p",Param);                                                                     
- return NNTDLL::NativeCreateThread(&CDbgClient::IPCQueueThread, Param, Param, NtCurrentProcess, Suspended, &StackBase, &StackSize, pThHndl, NULL);   
+ DBGMSG("Param=%p",Param);  
+ NTSTATUS stat = NNTDLL::NativeCreateThread(&CDbgClient::IPCQueueThread, Param, Param, NtCurrentProcess, TRUE, &StackBase, &StackSize, pThHndl, NULL);  
+ if(stat)return stat;
+ NNTDLL::SetSkipThreadReport(*pThHndl);
+ if(!Suspended)NtResumeThread(*pThHndl, NULL);                                                         
+ return 0; 
 }
 //------------------------------------------------------------------------------------
 CDbgClient(PVOID pCallerMod=NULL)
@@ -1732,8 +1737,13 @@ int Report_CREATE_PROCESS_DEBUG_EVENT(TEB* pMainThTeb)    // NOTE: Opening a pro
  if(!this->IsActive())return -9;  
  wchar_t Path[600];
  HMODULE  hMod = (HMODULE)NtCurrentTeb()->ProcessEnvironmentBlock->ImageBaseAddress;        // NNTDLL::GetModuleBaseLdr(NULL);  
- UINT PathSize = NNTDLL::GetMappedFilePath(NtCurrentProcess, hMod, Path, sizeof(Path));     // Get from mapping, avoid accessing an unlocked loader    
- if(!PathSize){DBGMSG("No name for mapped %p, continuing!", hMod); return -8;}
+ long PathSize = NNTDLL::GetMappedFilePath(NtCurrentProcess, hMod, Path, sizeof(Path));     // Get it from mapping, avoid accessing an unlocked loader    
+ if(!PathSize)
+  {
+   DBGMSG("No name for mapped %p, trying LDR!", hMod);       // It may be unmapped during self unpacking
+   PathSize = NNTDLL::GetModuleNameLdr(hMod, Path, countof(Path), true);
+   if(PathSize <= 0){DBGMSG("No name in LDR found for %p, aborting!", hMod); return -8;}
+  }
 
  this->ThList.Lock();
  UINT ThreadID = (UINT)pMainThTeb->ClientId.UniqueThread;
@@ -1844,7 +1854,12 @@ int Report_LOAD_DLL_DEBUG_INFO(TEB* pThTeb, PVOID DllBase, bool CheckForDups=fal
  if(!this->IsActive())return -9;
  wchar_t Path[600];
  UINT PathSize = NNTDLL::GetMappedFilePath(NtCurrentProcess, DllBase, Path, sizeof(Path)); // Get from mapping, avoid accessing an unlocked loader   
- if(!PathSize){DBGMSG("No name for mapped %p, skipping!", DllBase); return -8;}
+ if(!PathSize)
+  {
+   DBGMSG("No name for mapped %p, trying LDR!", DllBase);        // It may be unmapped during self unpacking
+   PathSize = NNTDLL::GetModuleNameLdr(DllBase, Path, countof(Path), true);
+   if(PathSize <= 0){DBGMSG("No name in LDR found for %p, aborting!", DllBase); return -8;}
+  }
               
  this->ThList.Lock();
  UINT ThreadID = (UINT)pThTeb->ClientId.UniqueThread;

@@ -332,7 +332,7 @@ struct SPatchRec   // Must be initialized statically!   // Derive from it to sav
  UINT BrdLo;
  UINT BrdHi;
  UINT PatchCnt;
- PBYTE ScBuf;
+ PBYTE ScpBuf;
  SPatchRec** Patches;
  CSigScan<> SigList;
 
@@ -350,7 +350,7 @@ CSigPatch(void)
    for(UINT ctr=0;ctr < this->PatchCnt;ctr++)HeapFree(GetProcessHeap(),0,this->Patches[ctr]); 
    HeapFree(GetProcessHeap(),0,this->Patches);      // TODO: MiniRTL malloc/free ?
   }
- if(this->ScBuf)HeapFree(GetProcessHeap(),0,this->ScBuf); 
+ if(this->ScpBuf)HeapFree(GetProcessHeap(),0,this->ScpBuf); 
 }
 //---------------------------------------------------------------------------
 UINT GetPatchCount(void){return this->PatchCnt;}
@@ -412,10 +412,11 @@ PVOID AddCodeBlock(UINT PatchIdx, PVOID Data, UINT Size, long Offset=0)
  return &Blk->Data;
 }
 //--------------------------------------------------------------------------- 
-int ApplyPatches(PVOID Data, SIZE_T Size, long Step=1, UINT Flags=0)        // bool Force=false, bool ProtMem=false     // TODO: Patch by a specified name only, or by names list (including all bound?)
+int ApplyPatches(PVOID Data, SIZE_T Size, long Step=1, UINT Flags=0)        // bool Force=false, bool ProtMem=false     // TODO: Patch by a specified name only, or by names list (including all bound?)  // TODO: Pow2 step and use step per signature value
 {
  if(!this->Patches || !this->PatchCnt){LOGMSG("No patches loaded!"); return -1;}
  if((this->BrdLo+this->BrdHi) > Size){LOGMSG("No data in range!"); return -2;}
+ DBGMSG("PatchCnt: %u", this->PatchCnt); 
  PBYTE AddrLo = &((PBYTE)Data)[this->BrdLo]; 
  PBYTE AddrHi = &((PBYTE)Data)[Size - this->BrdHi]; 
  UINT  Total  = this->SigList.FindSignatures(AddrLo, AddrHi, Step, Flags & prSkipUnread);
@@ -433,8 +434,8 @@ int ApplyPatches(PVOID Data, SIZE_T Size, long Step=1, UINT Flags=0)        // b
       }
        else PAddr = (PBYTE)this->SigList.GetSigAddr(Patch->SigIdx, ACtr, nullptr);   // By signature
     
-     LOGMSG("Record %p [%p]: %s",PAddr,(PAddr-(PBYTE)Data),&Patch->Name);
-     if(!PAddr)break;  // Not found
+     LOGMSG("SigMatchRec %u-%u-%i: %p [%p]: %s",ctr,ACtr,Patch->SigIdx,PAddr,(PAddr-(PBYTE)Data),&Patch->Name);
+     if(!PAddr)break;  // Not found (No patches for this signature)
      SCodeBlk* Blk = (SCodeBlk*)&Patch->Data;
      for(UINT Idx=0;Idx < Patch->CodeBlkNum;Idx++)   // CodeBlkNum may be 0 if this is just a bound point
       {
@@ -456,10 +457,10 @@ int LoadPatchScript(LPSTR Script, UINT ScriptSize=0)          // TODO: SigMCtr
 {
  enum EParState {psNone, psComment, psBordNum, psOffsNum, psCodeBlk, psPatchName, psSigIndex, psSigCount, psPatchBase, psPatchData, psPatchSig};
 
- if(this->ScBuf)HeapFree(GetProcessHeap(),0,this->ScBuf); 
+ if(this->ScpBuf)HeapFree(GetProcessHeap(),0,this->ScpBuf); 
  if(!ScriptSize)ScriptSize = lstrlenA(Script);
- this->ScBuf = (PBYTE)HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,ScriptSize+256); 
- memcpy(this->ScBuf, Script, ScriptSize);
+ this->ScpBuf = (PBYTE)HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,ScriptSize+256); 
+ memcpy(this->ScpBuf, Script, ScriptSize);
 
  int  State     = psNone;
  int  CurPatch  = -1;
@@ -470,15 +471,15 @@ int LoadPatchScript(LPSTR Script, UINT ScriptSize=0)          // TODO: SigMCtr
  UINT SigCtr    = -1;
  UINT Bord[2]   = {0,0};  // +, -
  BYTE Name[64];
- for(;;)
+ for(PBYTE ScBuf = this->ScpBuf;;)
   {
    while(*ScBuf && (*ScBuf <= ' '))ScBuf++;   // Skips any empty lines
    if(!*ScBuf)break;
-   switch(State)   // Not fully checks for a Buffer Overflow!
+   switch(State)   // Not fully checks for a Buffer Overflow!  // TODO: Replace states with flags to trase multiple expected tokens
     {
      case psNone:    // New line  
        if(*ScBuf == ';')State = psComment;
-       else if(*ScBuf == '"')State = psPatchName;
+       else if(*ScBuf == '"')State = psPatchName;      // BAD: Name is mandatory!
        else if((*ScBuf == '+')||(*ScBuf == '-'))State = (PatchMode)?(psOffsNum):(psBordNum);
       break;
      case psComment:

@@ -18,7 +18,7 @@
 #include <Windows.h>
 #include <intrin.h>
 #include <emmintrin.h>        // for _mm_storeu_si128
-#include "ntdll.h"
+#include "ThirdParty\NTDLL\ntdll.h"
 
 #include "Utils.h"
 
@@ -26,21 +26,22 @@ extern char* _cdecl gcvt(double f, size_t ndigit, char* buf);
 
 struct NCMN
 {
-template<typename T> inline static long  AddrToRelAddr(T CmdAddr, UINT CmdLen, T TgtAddr){return -((CmdAddr + CmdLen) - TgtAddr);}
-template<typename T> inline static T     RelAddrToAddr(T CmdAddr, UINT CmdLen, long TgtOffset){return ((CmdAddr + CmdLen) + TgtOffset);}
+template<typename T> inline static long  AddrToRelAddr(T CmdAddr, UINT CmdLen, T TgtAddr){return -((CmdAddr + CmdLen) - TgtAddr);}        // x86 only?
+template<typename T> inline static T     RelAddrToAddr(T CmdAddr, UINT CmdLen, long TgtOffset){return ((CmdAddr + CmdLen) + TgtOffset);}  // x86 only?
 
-template <typename T> inline static T RotL(T Value, unsigned char Shift){return (Value << Shift) | (Value >> ((sizeof(T) * 8U) - Shift));}
-template <typename T> inline static T RotR(T Value, unsigned char Shift){return (Value >> Shift) | (Value << ((sizeof(T) * 8U) - Shift));}
+template <typename T> constexpr inline static T RotL(T Value, unsigned int Shift){constexpr unsigned int MaxBits = sizeof(T) * 8U; return (Value << Shift) | (Value << ((MaxBits - Shift)&(MaxBits-1)));}
+template <typename T> constexpr inline static T RotR(T Value, unsigned int Shift){constexpr unsigned int MaxBits = sizeof(T) * 8U; return (Value >> Shift) | (Value << ((MaxBits - Shift)&(MaxBits-1)));}
 
-template<typename N, typename M> inline static M NumToPerc(N Num, M MaxVal){return (((Num)*100)/(MaxVal));}
-template<typename P, typename M> inline static M PercToNum(P Per, M MaxVal){return (((Per)*(MaxVal))/100);}                         
+template<typename N, typename M> inline static M NumToPerc(N Num, M MaxVal){return (((Num)*100)/(MaxVal));}               // NOTE: Can overflow!
+template<typename P, typename M> inline static M PercToNum(P Per, M MaxVal){return (((Per)*(MaxVal))/100);}               // NOTE: Can overflow!          
 
-template<class N, class M> inline static M AlignFrwd(N Value, M Alignment){return ((((Value)/(Alignment))+((bool)((Value)%(Alignment))))*(Alignment));}
-template<class N, class M> inline static M AlignBkwd(N Value, M Alignment){return (((Value)/(Alignment))*(Alignment));}
+template<class N, class M> constexpr __forceinline static M AlignFrwd(N Value, M Alignment){return (Value/Alignment)+(bool(Value%Alignment)*Alignment);}    // NOTE: Slow but works with any Alignment value
+template<class N, class M> constexpr __forceinline static M AlignBkwd(N Value, M Alignment){return (Value/Alignment)*Alignment;}                            // NOTE: Slow but works with any Alignment value
 
 // 2,4,8,16,...
-template<typename N> inline static N AlignP2Frwd(N Value, unsigned int Alignment){return (Value+(Alignment-1)) & ~(Alignment-1);}
-template<typename N> inline static N AlignP2Bkwd(N Value, unsigned int Alignment){return Value & ~(Alignment-1);}
+template<typename N> constexpr __forceinline static bool IsPowerOf2(N Value){return Value && !(Value & (Value - 1));}
+template<typename N> constexpr __forceinline static N AlignP2Frwd(N Value, unsigned int Alignment){return (Value+((N)Alignment-1)) & ~((N)Alignment-1);}    // NOTE: Result is incorrect if Alignment is not power of 2
+template<typename N> constexpr __forceinline static N AlignP2Bkwd(N Value, unsigned int Alignment){return Value & ~((N)Alignment-1);}                    // NOTE: Result is incorrect if Alignment is not power of 2
 
 //---------------------------------------------------------------------------
 #include "UTF.hpp"
@@ -62,9 +63,9 @@ template<typename N> inline static N AlignP2Bkwd(N Value, unsigned int Alignment
 //#include "Base64.hpp"
 #include "BaseP2.hpp"
 
-#ifndef _AMD64_
-#include "wow64ext.hpp"
-#endif
+//#ifndef _AMD64_
+#include "wow64ext.hpp"    // Must be present even in X64 builds
+//#endif
 };
 //---------------------------------------------------------------------------
 

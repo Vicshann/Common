@@ -25,13 +25,14 @@ static const SIZE_T RemThModMarker = 0x0F;
 #define DBGMSG(msg,...)
 #endif
                               
-enum EMapFlf {mfNone, mfInjVAl=0x00100000,mfInjMap=0x00200000,mfInjAtom=0x00400000,mfInjWnd=0x00800000,  mfRunUAPC=0x01000000,mfRunRMTH=0x02000000,mfRunThHij=0x04000000,mfRawRMTH=0x08000000,  mfRawMod=0x10000000,mfX64Mod=0x20000000,mfResSyscall=0x40000000};  // These must not conflict with PE::EFixMod
+enum EMapFlf {mfNone, mfInjVAl=0x00100000,mfInjMap=0x00200000,mfInjAtom=0x00400000,mfInjWnd=0x00800000,  mfRunUAPC=0x01000000,mfRunRMTH=0x02000000,mfRunThHij=0x04000000,mfRawRMTH=0x08000000,  mfRawMod=0x10000000,mfX64Mod=0x20000000,mfResSyscall=0x40000000,mfNoThreadReport=0x80000000};  // These must not conflict with PE::EFixMod
 //------------------------------------------------------------------------------------
-static HANDLE OpenRemoteProcess(DWORD ProcessID, UINT Flags, bool Suspend=false)
+static HANDLE OpenRemoteProcess(DWORD ProcessID, UINT Flags, bool Suspend=false, DWORD ExtraFlags=0)
 {
- DWORD FVals = PROCESS_VM_OPERATION|PROCESS_QUERY_INFORMATION;
+ DWORD FVals = PROCESS_VM_OPERATION|PROCESS_QUERY_INFORMATION|ExtraFlags;
  if(Flags & mfRunRMTH)FVals |= PROCESS_CREATE_THREAD;
  if(Flags & mfInjVAl)FVals |= PROCESS_VM_WRITE;
+ if(Flags & mfNoThreadReport)FVals |= PROCESS_VM_READ|PROCESS_VM_WRITE;    // Do not report created threads to DllMains and TLS callbacks by setting SkipThreadAttach in TEB->SameTebFlags
  if(Suspend)FVals |= PROCESS_SUSPEND_RESUME;
  HANDLE hResHndl = NULL;             
  CLIENT_ID CliID;
@@ -54,14 +55,14 @@ static bool UnMapRemoteMemory(HANDLE hProcess, PVOID BaseAddr)
  return (STATUS_SUCCESS == NtUnmapViewOfSection(hProcess, BaseAddr));
 }
 //------------------------------------------------------------------------------------
-private: static int PrepareRawModule(PBYTE LocalBase, PBYTE RemoteBase, PVOID NtDllBase, SIZE_T ModASize, SIZE_T ModFullSize, UINT Flags, int MaxSecs, SIZE_T* DataSize)
+// Fix relocs and move sections. Resolve NTDLL syscalls but leave other imports unresolved
+private: static int PrepareRawModule(PBYTE LocalBase, PBYTE RemoteBase, PVOID NtDllBase, SIZE_T SysCallBlkOffs, SIZE_T SysCallBlkLen, UINT Flags, int MaxSecs)
 {
  NPEFMT::TFixRelocations<NPEFMT::PECURRENT, 2>(LocalBase, RemoteBase);  // Do this BEFORE ResolveSysCallImports which will overwrite some affected parts
  if(Flags & mfResSyscall)
   {
-   int len = NPEFMT::ResolveSysCallImports<NPEFMT::PECURRENT,false,true>(LocalBase, NtDllBase, &LocalBase[ModFullSize], &RemoteBase[ModFullSize], ModASize-ModFullSize, true);
-   if(len < 0){LOGMSG("Failed to resolve syscalls: %i", len); return -1;}
-   *DataSize = ModFullSize + len + 8;    
+   int len = NPEFMT::ResolveSysCallImports<NPEFMT::PECURRENT,false,true>(LocalBase, NtDllBase, &LocalBase[SysCallBlkOffs], &RemoteBase[SysCallBlkOffs], SysCallBlkLen, true);
+   if(len < 0){LOGMSG("Failed to resolve syscalls: %i", len); return -1;}  
   }
  NPEFMT::DOS_HEADER     *DosHdr = (NPEFMT::DOS_HEADER*)LocalBase;
  NPEFMT::WIN_HEADER<NPEFMT::PECURRENT>  *WinHdr = (NPEFMT::WIN_HEADER<NPEFMT::PECURRENT>*)&LocalBase[DosHdr->OffsetHeaderPE];
@@ -70,49 +71,55 @@ private: static int PrepareRawModule(PBYTE LocalBase, PBYTE RemoteBase, PVOID Nt
  NPEFMT::DATA_DIRECTORY* ExportDir = &WinHdr->OptionalHeader.DataDirectories.ExportTable;
  NPEFMT::DATA_DIRECTORY* ResourDir = &WinHdr->OptionalHeader.DataDirectories.ResourceTable;
  ReloctDir->DirectoryRVA = ReloctDir->DirectorySize = 0;       // Relocs are done
- ImportDir->DirectoryRVA = ImportDir->DirectorySize = 0;       // Imports are resolved (Syscalls only)
+ if(Flags & mfResSyscall)ImportDir->DirectoryRVA = ImportDir->DirectorySize = 0;       // Imports are resolved (Syscalls only)
  ExportDir->DirectoryRVA = ExportDir->DirectorySize = 0;   
  ResourDir->DirectoryRVA = ResourDir->DirectorySize = 0;   
  if((MaxSecs > 0) && (MaxSecs < WinHdr->FileHeader.SectionsNumber))WinHdr->FileHeader.SectionsNumber = MaxSecs;
+
+ UINT SecArrOffs = DosHdr->OffsetHeaderPE+WinHdr->FileHeader.HeaderSizeNT+sizeof(NPEFMT::FILE_HEADER)+sizeof(DWORD);
+ UINT SecsNum    = WinHdr->FileHeader.SectionsNumber;
+ NPEFMT::MoveSections(SecArrOffs, SecsNum, LocalBase);
 
  EncryptModuleParts(LocalBase, NtDllBase, Flags);       // It need to save Flags at least        // GetModuleHandleA("ntdll.dll")
  return 0;
 }
 //------------------------------------------------------------------------------------
 // ModuleData may be raw or already mapped module(If mapped, it must not have an encrypted headers)
+//  MODULE | NTDLL_SYSCALLS | STACK
+//  [      EXEC_RW        ]   [RW ]
 //
-public: static int InjModuleIntoProcessAndExec(HANDLE hProcess, PVOID ModuleData, SIZE_T ModuleSize, UINT Flags, int MaxSecs=-1, PVOID Param=NULL, PVOID Addr=NULL, PVOID NtDllBase=NULL, SIZE_T RawStackSize=0)  // Param is for lpReserved of DllMain when injecting using mfInjUAPC
+public: static int InjModuleIntoProcessAndExec(HANDLE hProcess, PVOID ModuleData, SIZE_T ModuleSize, UINT Flags, int MaxSecs=-1, PVOID Param=NULL, PVOID RemoteAddr=NULL, PVOID NtDllBase=NULL, SIZE_T RawStackSize=0)  // Param is for lpReserved of DllMain when injecting using mfInjUAPC
 {
  if(!ModuleData || !NPEFMT::IsValidPEHeader(ModuleData)){LOGMSG("Bad PE image: ModuleData=%p", ModuleData); return -1;}
- if(!(Flags & mfRawRMTH))RawStackSize = 0;
- if(RawStackSize)RawStackSize = ((RawStackSize + 0xFFFF) & ~0xFFFF);     // Is DEP may react to thread`s stack being in same executable block?
- SIZE_T ExtraSize   = ((Flags & mfResSyscall) && !RawStackSize)?4096:0;      // Align RawStackSize to 64k?  // 4096 for syscall block
- SIZE_T ModFullSize = (NPEFMT::SizeOfSections(ModuleData, MaxSecs, true, false) + 0xFFFF) & ~0xFFFF;   // Only .text(Data merged) and .bss    // (((MapModSize > ModuleSize)?(MapModSize):(ModuleSize)) + 0xFFFF) & ~0xFFFF;   
- UINT   EPOffset    = NPEFMT::GetModuleEntryOffset((PBYTE)ModuleData, Flags & mfRawMod);
- PVOID  RemoteAddr  = Addr;
- SIZE_T ModASize    = ((ModFullSize+RawStackSize+ExtraSize) + 0xFFFF) & ~0xFFFF;    // Stack size must include syscall table if syscall resolving is forces
- PVOID  FlagArg     = NULL;
- PBYTE  Buf         = NULL;  
+ if(!(Flags & mfRawRMTH))RawStackSize = 0;      // No stack block needed
+ if(RawStackSize)RawStackSize = ((RawStackSize + 0xFFFF) & ~0xFFFF);     // Is DEP may react to thread`s stack being in same executable block?    // Expect the entire stack block to be set to RW protection only
+ SIZE_T SyscallsSize = (Flags & mfResSyscall)?4096:0;      // Align RawStackSize to 64k?  // 4096 for syscall block(Is enough?)   // Only syscall imports from NTDLL are resolved
+ SIZE_T ModFullSize  = NPEFMT::SizeOfSections(ModuleData, MaxSecs, true, false);      // Module size after it is mapped and its sections are moved (A raw module may move its own sections)
+ UINT   EPOffset     = NPEFMT::GetModuleEntryOffset((PBYTE)ModuleData, false);  // Flags & mfRawMod
+ SIZE_T ExecBlkSize  = ((ModFullSize+SyscallsSize) + 0xFFFF) & ~0xFFFF;    // Size of a executable memory block
+ SIZE_T ModASize     = ExecBlkSize + RawStackSize;    // Stack size must include syscall table if syscall resolving is forces
+ PVOID  FlagArg      = NULL;
+ PBYTE  Buf          = NULL;  
 
  if(!NtDllBase)NtDllBase = NPEFMT::GetNtDllBaseFast(false);    // Must be clean of any hooks and not a raw file 
  NtAllocateVirtualMemory(NtCurrentProcess,(PVOID*)&Buf,0,&ModASize,MEM_COMMIT,PAGE_EXECUTE_READWRITE);   // Temporary local buffer
  memcpy(Buf,ModuleData,ModuleSize);       // Copy before encryption
  ModuleData = Buf;        // Now points to prepared data
- if(MaxSecs > 0)ModuleSize = NPEFMT::SizeOfSections(ModuleData, MaxSecs, true, (Flags & mfRawMod));       // Only .text(Data merged) and .bss
+ if(MaxSecs > 0)ModuleSize = NPEFMT::SizeOfSections(ModuleData, MaxSecs, true, (Flags & mfRawMod));    
  if(Flags & mfInjVAl)        
   {
    if(NTSTATUS status = NtAllocateVirtualMemory(hProcess,&RemoteAddr,0,&ModASize,MEM_COMMIT,PAGE_EXECUTE_READWRITE)){LOGMSG("NtAllocateVirtualMemory failed(%08X): Size=%08X", status, ModASize); return -6;}     // RemoteAddr = (PBYTE)VirtualAllocEx(hProcess,NULL,ModSize,MEM_COMMIT,PAGE_EXECUTE_READWRITE);
-   if(PrepareRawModule((PBYTE)ModuleData, (PBYTE)RemoteAddr, NtDllBase, ModASize, ModFullSize, Flags, MaxSecs, &ModuleSize) < 0)return -8;
+   if((Flags & mfRawMod) && (PrepareRawModule((PBYTE)ModuleData, (PBYTE)RemoteAddr, NtDllBase, ModFullSize, SyscallsSize, Flags, MaxSecs) < 0))return -8;
    FlagArg = PVOID((SIZE_T)RemoteAddr | ((Flags >> 24) & RemThModMarker));     // Mark base address   // Passed to DllMain as hModule
 #ifndef _AMD64_
    if(RawStackSize)
     {
-     ModuleSize = ModFullSize + RawStackSize;
+     ModuleSize = ExecBlkSize + RawStackSize;
      *(PVOID*)&((PBYTE)ModuleData)[ModuleSize-(sizeof(void*)*4)] = FlagArg;   // 4 Extra reserved args
      *(PVOID*)&((PBYTE)ModuleData)[ModuleSize-(sizeof(void*)*3)] = FlagArg;   // Keep its copy for Win7 WOW64
     }
 #endif
-   if(NTSTATUS status = NtWriteVirtualMemory(hProcess, RemoteAddr, ModuleData, ModuleSize, &ModASize)){LOGMSG("NtWriteVirtualMemory failed(%08X): Size=%08X", status, ModASize); return -7;}
+   if(NTSTATUS status = NtWriteVirtualMemory(hProcess, RemoteAddr, ModuleData, ExecBlkSize, &ModASize)){LOGMSG("NtWriteVirtualMemory failed(%08X): Size=%08X", status, ModASize); return -7;}
   }
  else if(Flags & mfInjMap)
   {
@@ -128,14 +135,15 @@ public: static int InjModuleIntoProcessAndExec(HANDLE hProcess, PVOID ModuleData
    res = NtMapViewOfSection(hSec,NtCurrentProcess,&LocalAddr,0,ModASize,NULL,&ModASize,ViewShare,0,PAGE_EXECUTE_READWRITE);    // Map locally
    NtClose(hSec);
    if(res){LOGMSG("Local MapSection failed: Addr=%p, Size=%08X", LocalAddr, ModASize); return -4;}  
-   if(PrepareRawModule((PBYTE)ModuleData, (PBYTE)RemoteAddr, NtDllBase, ModASize, ModFullSize, Flags, MaxSecs, &ModuleSize) < 0)return -8;
+   if((Flags & mfRawMod) && (PrepareRawModule((PBYTE)ModuleData, (PBYTE)RemoteAddr, NtDllBase, ModFullSize, SyscallsSize, Flags, MaxSecs) < 0))return -8;
    FlagArg = PVOID((SIZE_T)RemoteAddr | ((Flags >> 24) & RemThModMarker));     // Mark base address   // Passed to DllMain as hModule
-   memcpy(LocalAddr,ModuleData,ModuleSize);
+   memcpy(LocalAddr,ModuleData,ExecBlkSize);
 #ifndef _AMD64_
    if(RawStackSize)
     {
-     *(PVOID*)&((PBYTE)LocalAddr)[(ModFullSize + RawStackSize)-(sizeof(void*)*4)] = FlagArg;   // 4 Extra reserved args
-     *(PVOID*)&((PBYTE)LocalAddr)[(ModFullSize + RawStackSize)-(sizeof(void*)*3)] = FlagArg;   // Keep its copy for Win7 WOW64
+     ModuleSize = ExecBlkSize + RawStackSize;
+     *(PVOID*)&((PBYTE)LocalAddr)[ModuleSize-(sizeof(void*)*4)] = FlagArg;   // 4 Extra reserved args
+     *(PVOID*)&((PBYTE)LocalAddr)[ModuleSize-(sizeof(void*)*3)] = FlagArg;   // Keep its copy for Win7 WOW64
     }
 #endif
    NtUnmapViewOfSection(NtCurrentProcess, LocalAddr);
@@ -164,16 +172,23 @@ public: static int InjModuleIntoProcessAndExec(HANDLE hProcess, PVOID ModuleData
      HANDLE hThread  = NULL;
      DWORD  ThreadId = 0;
      DWORD  Status   = 0;
+     BOOL   Suspend  = (Flags & mfNoThreadReport)?CREATE_SUSPENDED:0; 
+
      if(Flags & mfRawRMTH)   // Fails on latest Win 10 for x32 processes 
       {
        PVOID  StackBase = NULL; 
        SIZE_T StackSize = RawStackSize;
-       if(RawStackSize)StackBase = &((PBYTE)RemoteAddr)[ModFullSize];   
-       Status = NNTDLL::NativeCreateThread(RemEntry, FlagArg, FlagArg, hProcess, FALSE, &StackBase, &StackSize, &hThread, &ThreadId);   // On WinXP it receives APC for LdrInitializeThunk before it is suspended?   // WinXP, StartNewProcess: LdrpInitializeProcess:LdrpRunInitializeRoutines:Kernel32EntryPoint:CsrClientConnectToServer fails with 0xC0000142
+       if(RawStackSize)StackBase = &((PBYTE)RemoteAddr)[ExecBlkSize];   // At beginning or end?????????????    // TODO Check atack base at thread start!!!!!!!!!!!!!     + RawStackSize
+       Status = NNTDLL::NativeCreateThread(RemEntry, FlagArg, FlagArg, hProcess, (bool)Suspend, &StackBase, &StackSize, &hThread, &ThreadId);   // On WinXP it receives APC for LdrInitializeThunk before it is suspended?   // WinXP, StartNewProcess: LdrpInitializeProcess:LdrpRunInitializeRoutines:Kernel32EntryPoint:CsrClientConnectToServer fails with 0xC0000142
       }
-       else {hThread = CreateRemoteThread(hProcess,NULL,0,(LPTHREAD_START_ROUTINE)RemEntry,FlagArg,0,&ThreadId); Status = GetLastError();}       // Firefox Quantum: It gets into LdrInitializeThunk but not into specified ThreadProc!!!!
+       else {hThread = CreateRemoteThread(hProcess,NULL,0,(LPTHREAD_START_ROUTINE)RemEntry,FlagArg,Suspend,&ThreadId); Status = GetLastError();}       // Firefox Quantum: It gets into LdrInitializeThunk but not into specified ThreadProc!!!!
      if(!hThread){LOGMSG("Failed to create a remote thread (%08X): RemEntry=%p, FlagArg=%p", Status, RemEntry, FlagArg); return -5;}
      LOGMSG("ThreadId=%u, RawTh=%u, RemEntry=%p, FlagArg=%p", ThreadId, bool(Flags & mfRawRMTH), RemEntry, FlagArg);
+     if(Suspend)
+      {
+       if(SetSkipThreadReport(hProcess, hThread) < 0){LOGMSG("Failed to disable the thread reports!");}
+       NtResumeThread(hThread, NULL);
+      }
 //     NtWaitForSingleObject(hThread, FALSE, NULL);   // WaitForSingleObject(hTh, INFINITE);   // No waiting - the thread may be reused
      NtClose(hThread);
     }
@@ -183,6 +198,50 @@ public: static int InjModuleIntoProcessAndExec(HANDLE hProcess, PVOID ModuleData
     }
   }
  LOGMSG("RemoteAddr: %p", RemoteAddr);
+ return 0;
+}
+//------------------------------------------------------------------------------------
+static int SetSkipThreadReport(HANDLE hProcess, HANDLE hThread)  // See RtlIsCurrentThreadAttachExempt
+{
+ THREAD_BASIC_INFORMATION tinf;
+ ULONG RetLen = 0;
+ HRESULT res  = NtQueryInformationThread(hThread,ThreadBasicInformation,&tinf,sizeof(THREAD_BASIC_INFORMATION),&RetLen);
+ if(res)return -1; 
+
+ SIZE_T ResLen = 0; 
+ PBYTE TebAddr = (PBYTE)tinf.TebBaseAddress;
+ BYTE teb[0x2000];
+ for(int idx=0;idx < 2;idx++)
+  {
+   res = NtReadVirtualMemory(hProcess, TebAddr, &teb, sizeof(teb), &ResLen);   
+   if(res)return -2; 
+
+   bool IsTgtTebX32 = (*(PBYTE*)&teb[0x18] == TebAddr);  // NT_TIB
+   bool IsTgtTebX64 = (*(PBYTE*)&teb[0x30] == TebAddr);  // NT_TIB
+   if(!IsTgtTebX32 && !IsTgtTebX64)return -4;
+
+   long WowTebOffset;
+   USHORT* pSameTebFlags;
+   if(IsTgtTebX32)
+    {
+     WowTebOffset  = *(long*)&teb[0x0FDC];
+     pSameTebFlags = (USHORT*)&teb[0x0FCA]; 
+    }
+     else
+      {
+       WowTebOffset  = *(long*)&teb[0x180C];
+       pSameTebFlags = (USHORT*)&teb[0x17EE];  
+      }
+   *pSameTebFlags |= 0x0008;   // SkipThreadAttach
+   *pSameTebFlags &= ~0x0020;  // RanProcessInit   
+   PBYTE Addr = &TebAddr[(PBYTE)pSameTebFlags - (PBYTE)&teb];
+   LOGMSG("TEB=%p, pSameTebFlags=%p, IsTgtTebX32=%u, IsTgtTebX64=%u, WowTebOffset=%i", TebAddr, pSameTebFlags, IsTgtTebX32, IsTgtTebX64, WowTebOffset);
+   res = NtWriteVirtualMemory(hProcess, Addr, pSameTebFlags, sizeof(USHORT), &ResLen);  
+   if(res)return -5; 
+
+   if(WowTebOffset == 0)break;
+   TebAddr = &TebAddr[WowTebOffset];  // Next WOW TEB
+  }
  return 0;
 }
 //------------------------------------------------------------------------------------

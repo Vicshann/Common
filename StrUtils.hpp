@@ -114,8 +114,8 @@ template<typename D, typename S> static size_t StrCnat(D Dst, S Src)
 template<typename A, typename B> static int _fastcall StrOffsetSC(A StrBase, B StrVal){return StrOffset<ChrOpNone<> >(StrBase, StrVal);}
 template<typename A, typename B> static int _fastcall StrOffsetIC(A StrBase, B StrVal){return StrOffset<ChrOpSiLC<> >(StrBase, StrVal);}
 
-template<typename A> static bool _fastcall CharOffsetSC(A StrVal, wchar_t ChrVal, size_t Offs=0, size_t Len=-1){return ChrOffset<ChrOpNone<>, A>(StrVal, ChrVal, Offs, Len);}   
-template<typename A> static bool _fastcall CharOffsetIC(A StrVal, wchar_t ChrVal, size_t Offs=0, size_t Len=-1){return ChrOffset<ChrOpSiLC<>, A>(StrVal, ChrVal, Offs, Len);}
+template<typename A> static int _fastcall CharOffsetSC(A StrVal, wchar_t ChrVal, size_t Offs=0, size_t Len=-1){return ChrOffset<ChrOpNone<>, A>(StrVal, ChrVal, Offs, Len);}   
+template<typename A> static int _fastcall CharOffsetIC(A StrVal, wchar_t ChrVal, size_t Offs=0, size_t Len=-1){return ChrOffset<ChrOpSiLC<>, A>(StrVal, ChrVal, Offs, Len);}
 
 template<typename A, typename B> static bool _fastcall IsContainSubStrSC(A StrBase, B StrVal){return (StrOffset<ChrOpNone<> >(StrBase, StrVal) >= 0);}
 template<typename A, typename B> static bool _fastcall IsContainSubStrIC(A StrBase, B StrVal){return (StrOffset<ChrOpSiLC<> >(StrBase, StrVal) >= 0);}

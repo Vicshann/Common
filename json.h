@@ -716,7 +716,7 @@ bool Truncate(UINT NewCnt)
       this->EntityToStream<CFileStr>(fstr,Flags,0);
      }
    return 0;
-  }
+  } 
 //--------------
  int FromString(const CMiniStr &str, UINT Flags=coNone, BYTE DecKey=0)
   {

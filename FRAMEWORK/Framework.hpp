@@ -15,22 +15,29 @@
    https://graphics.stanford.edu/~seander/bithacks.html
 
 */
-//----  --------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------
 // Format: 'N'+'Four letters of namespace'
-namespace NFRWK
+// NOTE: You cannot put a 'namespace' inside of a 'class'
+namespace NFWK      // Must be a namespace because we are adding some configs in it
 {
 // NOTE: None of these files should include anything ( Unless it is a collection? )
 // NOTE: Moving out of namespace should be done in the same file if required
+#if !__has_include ("FrameworkCfg.hpp")
+#include "Platforms/DefaultCfg.hpp"
+#endif
 
 #include "Platforms/Common.hpp"
-using namespace NGenericTypes;
+#include "Platforms/CompileTime.hpp"
 #include "Platforms/Platform.hpp"
 //#include "MemUtils.hpp"
 //#include "MemStorage.hpp"
 //#include "StrStorage.hpp"
 //#include "StrPool.hpp"
 
-
+#include "Application.hpp"
 };
-//----  --------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------
+using NFWK::NCTM::operator""_ps;
+
+#include "Platforms/RTL.hpp"    // Must be in global namespace  // Comment this out if you linking with a default Run Time Library
 //#endif

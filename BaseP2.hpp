@@ -228,6 +228,17 @@ static UINT Decode(CMiniStr& Src)
  return len; 
 } 
 //--------------------------------------
+static bool IsCharInDict(BYTE Char)
+{
+ PBYTE Chars = (PBYTE)&Dictionary.dict;
+ if(Char == Padding)return true;
+ for(;*Chars;Chars++)
+  {
+   if(*Chars == Char)return true;
+  }
+ return false;
+}
+//--------------------------------------
 };
 //===========================================================================
 using NBase64 = CBaseP2<btBase64, '=', "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/">;

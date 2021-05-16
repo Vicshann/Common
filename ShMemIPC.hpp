@@ -140,6 +140,7 @@ static inline long CloseOHandle(HANDLE Hndl)
 #else
   return CloseHandle(Hndl);  
 #endif
+ return 0;
 }
 //----------------------------------------------------------------------------
 template<typename A> static ULONG SizeString(A Str)

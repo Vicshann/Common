@@ -643,7 +643,7 @@ static BOOL IsNamesEqualIC(CHAR *NameA, CHAR *NameB)
  return TRUE;
 }
 //------------------------------------------------------------------------------
-template<typename T> static bool TGetModuleSection(PVOID ModuleBase, CHAR *SecName, SECTION_HEADER **ResSec)
+template<typename T> static bool TGetModuleSection(PVOID ModuleBase, char *SecName, SECTION_HEADER **ResSec)
 {
  DOS_HEADER     *DosHdr = (DOS_HEADER*)ModuleBase;
  WIN_HEADER<T>  *WinHdr = (WIN_HEADER<T>*)&((PBYTE)ModuleBase)[DosHdr->OffsetHeaderPE];
@@ -652,7 +652,7 @@ template<typename T> static bool TGetModuleSection(PVOID ModuleBase, CHAR *SecNa
 
  for(UINT ctr = 0;ctr < WinHdr->FileHeader.SectionsNumber;ctr++,CurSec++)
   {
-   if(((SIZE_T)SecName == ctr) || IsSectionNamesEqual((CHAR*)&CurSec->SectionName, SecName))
+   if(((SIZE_T)SecName == ctr) || IsSectionNamesEqual((char*)&CurSec->SectionName, SecName))
     {
      if(ResSec)*ResSec = CurSec;  // NULL for only a presense test
      return true;
@@ -690,7 +690,7 @@ static bool GetModuleSizes(PBYTE ModuleBase, UINT* RawSize, UINT* VirSize)
 }
 //---------------------------------------------------------------------------
 // Works with a Mapped in memory or a Raw file
-static bool GetModuleSection(PVOID ModuleBase, CHAR *SecName, SECTION_HEADER **ResSec)
+static bool GetModuleSection(PVOID ModuleBase, char *SecName, SECTION_HEADER **ResSec)
 {
  if(!IsValidPEHeader(ModuleBase))return false;
  if(IsValidModuleX64(ModuleBase))return TGetModuleSection<PETYPE64>(ModuleBase, SecName, ResSec);
@@ -1133,12 +1133,13 @@ template<typename T> static int TResolveImports(PBYTE ModuleBase, PVOID pLdrLoad
  return 0;
 }
 //--------------------------------------------------------------------------- 
-_declspec(noinline) static UINT MoveSections(UINT SecArrOffs, UINT TotalSecs, PBYTE ModuleBase, PBYTE Headers=NULL, UINT HdrSize=0)  // Must not be any function calls in body of this function
+_declspec(noinline) static UINT MoveSections(UINT SecArrOffs, UINT TotalSecs, PBYTE ModuleBase, PBYTE Headers=NULL, UINT HdrSize=0)  // Must not be any function calls in body of this function (watch for memset optimizations for cycles!)
 {
  if(!Headers || !HdrSize)Headers = ModuleBase;
  SECTION_HEADER *SecArr = (SECTION_HEADER*)&Headers[SecArrOffs];
  PBYTE* pRetAddr = (PBYTE*)_AddressOfReturnAddress();
  UINT RetFix = 0;
+ volatile int MemSetKill = 0;
  for(int ctr = TotalSecs-1;ctr >= 0;ctr--)  // Compatible with any normal linker that keeps sections in order  // All section moved forward
   {
    if(HdrSize && ((PBYTE)&SecArr[ctr] >= &Headers[HdrSize]))SecArr = (SECTION_HEADER*)&ModuleBase[SecArrOffs];   // Continue at original header
@@ -1149,16 +1150,16 @@ _declspec(noinline) static UINT MoveSections(UINT SecArrOffs, UINT TotalSecs, PB
    size_t ALen = Size/sizeof(size_t);
    size_t BLen = Size%sizeof(size_t);
    if(!RetFix && (*pRetAddr >= Src) && (*pRetAddr < &Src[Size]))RetFix = (Dst - Src);  // If RetAddr in current section being moved
-   for(size_t ctr=Size-1;BLen;ctr--,BLen--)((char*)Dst)[ctr] = ((char*)Src)[ctr];  
-   for(size_t ctr=ALen-1;ALen;ctr--,ALen--)((size_t*)Dst)[ctr] = ((size_t*)Src)[ctr];                // Copy of memcpy to avoid an inlining problems
+   for(size_t ctr=Size-1;BLen;ctr--,BLen--,MemSetKill++)((char*)Dst)[ctr] = ((char*)Src)[ctr];  
+   for(size_t ctr=ALen-1;ALen;ctr--,ALen--,MemSetKill++)((size_t*)Dst)[ctr] = ((size_t*)Src)[ctr];                // Copy of memcpy to avoid an inlining problems
    if(CurSec->VirtualSize > CurSec->PhysicalSize)                  // Fill ZERO space
     {
      Dst  = &ModuleBase[CurSec->SectionRva+CurSec->PhysicalSize]; 
      Size = CurSec->VirtualSize - CurSec->PhysicalSize;
      ALen = Size/sizeof(size_t);
      BLen = Size%sizeof(size_t);
-     for(size_t ctr=0;ctr < ALen;ctr++)((size_t*)Dst)[ctr] = 0; 
-     for(size_t ctr=(ALen*sizeof(size_t));ctr < Size;ctr++)((char*)Dst)[ctr] = 0;  
+     for(size_t ctr=0;ctr < ALen;ctr++,MemSetKill++)((size_t*)Dst)[ctr] = 0; 
+     for(size_t ctr=(ALen*sizeof(size_t));ctr < Size;ctr++,MemSetKill++)((char*)Dst)[ctr] = 0;  
     }
   }
  if(RetFix)*pRetAddr += RetFix;

@@ -5,7 +5,7 @@
 
 struct NPTFM
 {
-static uint32 MyProc(uint val){return val+1;}
+//static uint32 MyProc(uint val){return val+1;}
 
 /*extern "C"        // GetPageSize
 {
@@ -16,5 +16,5 @@ PVOID _fastcall AllocMemHL(PVOID Mem, SIZE_T Size, SIZE_T AllocSize, SIZE_T Rese
 bool  _fastcall FreeMemHL(PVOID Mem, SIZE_T Size=0);
 }*/
 };
-//----  --------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------
 

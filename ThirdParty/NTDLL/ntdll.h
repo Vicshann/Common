@@ -8,6 +8,11 @@
 #pragma warning(disable:4005)   // ntstatus.h redefines some macro from WinNT.h
 
 #ifdef __cplusplus
+template<typename T, typename U> constexpr size_t offsetOf(U T::* member)
+{
+    return (char*)&((T*)nullptr->*member) - (char*)nullptr;
+}
+
 extern "C" {
 #endif
 
@@ -325,6 +330,33 @@ typedef struct _PROCESS_SESSION_INFORMATION
 {
     ULONG SessionId;
 } PROCESS_SESSION_INFORMATION, *PPROCESS_SESSION_INFORMATION;
+
+
+typedef struct _PROCESS_DEVICEMAP_INFORMATION {
+    union {
+        struct {
+            HANDLE DirectoryHandle;
+        } Set;
+        struct {
+            ULONG DriveMap;
+            UCHAR DriveType[ 32 ];
+        } Query;
+    };
+} PROCESS_DEVICEMAP_INFORMATION, *PPROCESS_DEVICEMAP_INFORMATION;
+ 
+typedef struct _PROCESS_DEVICEMAP_INFORMATION_EX {
+    union {
+        struct {
+            HANDLE DirectoryHandle;
+        } Set;
+        struct {
+            ULONG DriveMap;
+            UCHAR DriveType[ 32 ];
+        } Query;
+    };
+    ULONG Flags;    // specifies that the query type
+} PROCESS_DEVICEMAP_INFORMATION_EX, *PPROCESS_DEVICEMAP_INFORMATION_EX;
+
 
 // File attribute values
 #define FILE_ATTRIBUTE_READONLY                 0x00000001
@@ -2531,6 +2563,12 @@ typedef struct _FILE_DISPOSITION_INFORMATION {
   BOOLEAN DeleteFile;
 } FILE_DISPOSITION_INFORMATION, *PFILE_DISPOSITION_INFORMATION;
 
+typedef struct _SYSTEM_PROCESS_ID_INFORMATION
+{
+ PVOID ProcessId;           // Input
+ UNICODE_STRING ImageName;  // MaximumLength must be a multiple of two, and Buffer may be required to have 2-byte alignment and to lie wholly in user-mode address space. 
+} SYSTEM_PROCESS_ID_INFORMATION, *PSYSTEM_PROCESS_ID_INFORMATION;
+
 typedef struct _SYSTEM_BASIC_INFORMATION
 {
     ULONG Reserved;
@@ -3299,7 +3337,7 @@ typedef struct _KUSER_SHARED_DATA
 #pragma pack(pop)
 
 #ifdef __cplusplus
-static_assert(FIELD_OFFSET(KUSER_SHARED_DATA, TickCountMultiplier) == 0x4, "Offset check");
+/*static_assert(offsetOf(&KUSER_SHARED_DATA::TickCountMultiplier) == 0x4, "Offset check");
 static_assert(FIELD_OFFSET(KUSER_SHARED_DATA, InterruptTime) == 0x8, "Offset check");
 static_assert(FIELD_OFFSET(KUSER_SHARED_DATA, SystemTime) == 0x14, "Offset check");
 static_assert(FIELD_OFFSET(KUSER_SHARED_DATA, TimeZoneBias) == 0x20, "Offset check");
@@ -3332,7 +3370,7 @@ static_assert(FIELD_OFFSET(KUSER_SHARED_DATA, TestRetInstruction) == 0x2f8, "Off
 static_assert(FIELD_OFFSET(KUSER_SHARED_DATA, SystemCallPad) == 0x310, "Offset check");
 static_assert(FIELD_OFFSET(KUSER_SHARED_DATA, TickCount) == 0x320, "Offset check");
 static_assert(FIELD_OFFSET(KUSER_SHARED_DATA, TickCountQuad) == 0x320, "Offset check");
-static_assert(FIELD_OFFSET(KUSER_SHARED_DATA, XState) == 0x3d8, "Offset check");
+static_assert(FIELD_OFFSET(KUSER_SHARED_DATA, XState) == 0x3d8, "Offset check"); */
 #endif
 
 #if !defined(_KERNEL_MODE) && !defined(KERNELMODE)
@@ -9643,6 +9681,45 @@ TpAlpcUnregisterCompletionList(
 #ifdef __cplusplus
 };
 #endif
+
+//---------------------------------------------------------------------------
+#define CFG_CALL_TARGET_VALID (0x00000001)
+
+
+typedef enum _VIRTUAL_MEMORY_INFORMATION_CLASS {
+    VmPrefetchInformation,
+    VmPagePriorityInformation,
+    VmCfgCallTargetInformation
+} VIRTUAL_MEMORY_INFORMATION_CLASS;
+
+typedef struct _MEMORY_RANGE_ENTRY {
+    PVOID VirtualAddress;
+    SIZE_T NumberOfBytes;
+} MEMORY_RANGE_ENTRY, *PMEMORY_RANGE_ENTRY;
+
+typedef struct _CFG_CALL_TARGET_INFO 
+{
+	ULONG_PTR	Offset;
+	ULONG_PTR	Flags;
+} CFG_CALL_TARGET_INFO, *PCFG_CALL_TARGET_INFO;
+
+typedef struct _VM_INFORMATION
+{
+	DWORD					dwNumberOfOffsets;
+	PVOID					dwMustBeZero;
+	PDWORD					pdwOutput;
+	PCFG_CALL_TARGET_INFO	ptOffsets;
+} VM_INFORMATION, *PVM_INFORMATION;
+
+NTSTATUS
+NTAPI
+NtSetInformationVirtualMemory(
+    _In_ HANDLE ProcessHandle,
+    _In_ VIRTUAL_MEMORY_INFORMATION_CLASS VmInformationClass,
+    _In_ ULONG_PTR NumberOfEntries,
+    _In_reads_(NumberOfEntries) PMEMORY_RANGE_ENTRY VirtualAddresses,
+    _In_reads_bytes_(VmInformationLength) PVOID VmInformation,
+_In_ ULONG VmInformationLength);
 
 //------------------ ntifs.h ------------------------------------------------
 typedef struct _FILE_NAMES_INFORMATION {
