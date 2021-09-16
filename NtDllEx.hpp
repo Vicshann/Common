@@ -204,6 +204,20 @@ static long GetModuleNameLdr(PVOID ModBase, PWSTR ModName, ULONG MaxSize=-1, boo
  return -1;
 }
 //------------------------------------------------------------------------------------
+static NTSTATUS CreateNtObjDirectory(PWSTR ObjDirName, PHANDLE phDirObj)   // Create objects directory with NULL security
+{
+ wchar_t Path[512] = {'\\'}; 
+ UNICODE_STRING ObjectNameUS;
+ SECURITY_DESCRIPTOR  sd = {SECURITY_DESCRIPTOR_REVISION, 0, 4};    // NULL security descriptor: InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION); SetSecurityDescriptorDacl(&sd, TRUE, NULL, FALSE);
+ OBJECT_ATTRIBUTES oattr = { sizeof(OBJECT_ATTRIBUTES), 0, &ObjectNameUS, OBJ_CASE_INSENSITIVE|OBJ_OPENIF, &sd };
+ UINT Length = 1;   
+ for(int idx=0;*ObjDirName;ObjDirName++)Path[Length++] = *ObjDirName;
+ ObjectNameUS.Buffer = Path;
+ ObjectNameUS.Length = Length * sizeof(wchar_t);
+ ObjectNameUS.MaximumLength = ObjectNameUS.Length + sizeof(wchar_t);
+ return NtCreateDirectoryObject(phDirObj, DIRECTORY_ALL_ACCESS, &oattr);
+}
+//----------------------------------------------------------------------------
 static NTSTATUS FileCreateSync(PWSTR FileName, ACCESS_MASK DesiredAccess, ULONG FileAttributes, ULONG ShareAccess, ULONG CreateDisposition, ULONG CreateOptions, PHANDLE FileHandle)
 {
  IO_STATUS_BLOCK iosb = {};
@@ -325,7 +339,7 @@ static NTSTATUS NTAPI NativeCreateThread(PVOID ThreadRoutine, PVOID ParamA, PVOI
  CLIENT_ID ClientId;
  PVOID  LocStackBase = NULL;
  SIZE_T LocStackSize = 0;
-
+                              
  DBGMSG("ProcessHandle=%p, ThreadRoutine=%p, ParamA=%p, ParamB=%p",ProcessHandle,ThreadRoutine,ParamA,ParamB);
  UserStack.FixedStackBase  = NULL;
  UserStack.FixedStackLimit = NULL;
@@ -335,7 +349,7 @@ static NTSTATUS NTAPI NativeCreateThread(PVOID ThreadRoutine, PVOID ParamA, PVOI
   {
    *StackSize = PAGE_SIZE * 256;   // 1Mb
    Status = NtAllocateVirtualMemory(ProcessHandle, StackBase, 0, StackSize, MEM_RESERVE, PAGE_READWRITE);
-   if(!NT_SUCCESS(Status))return Status;
+   if(!NT_SUCCESS(Status)){DBGMSG("AVM Failed 1"); return Status;}
 
    UserStack.ExpandableStackBase   = &((PBYTE)*StackBase)[*StackSize];  
    UserStack.ExpandableStackLimit  = &((PBYTE)*StackBase)[*StackSize - PAGE_SIZE]; 
@@ -344,11 +358,11 @@ static NTSTATUS NTAPI NativeCreateThread(PVOID ThreadRoutine, PVOID ParamA, PVOI
    SIZE_T StackReserve = PAGE_SIZE * 2;
    PVOID ExpandableStackBase = &((PBYTE)UserStack.ExpandableStackBase)[-(PAGE_SIZE * 2)];    
    Status = NtAllocateVirtualMemory(ProcessHandle, &ExpandableStackBase, 0, &StackReserve, MEM_COMMIT, PAGE_READWRITE);
-   if(!NT_SUCCESS(Status))return Status;
+   if(!NT_SUCCESS(Status)){DBGMSG("AVM Failed 2"); return Status;}
    ULONG OldProtect;
    StackReserve = PAGE_SIZE;
    Status = NtProtectVirtualMemory(ProcessHandle, &ExpandableStackBase, &StackReserve, PAGE_READWRITE | PAGE_GUARD, &OldProtect);   //create GUARD page           
-   if(!NT_SUCCESS(Status))return Status;
+   if(!NT_SUCCESS(Status)){DBGMSG("PVM Failed"); return Status;}
   }
    else
     {
@@ -393,11 +407,11 @@ static NTSTATUS NTAPI NativeCreateThread(PVOID ThreadRoutine, PVOID ParamA, PVOI
 #endif
 
  ULONG ThAcc = SYNCHRONIZE|THREAD_GET_CONTEXT|THREAD_SET_CONTEXT|THREAD_QUERY_INFORMATION|THREAD_SET_INFORMATION|THREAD_SUSPEND_RESUME|THREAD_TERMINATE;
- Status = NtCreateThread(ThreadHandle, ThAcc, NULL, ProcessHandle, &ClientId, &Context, (PINITIAL_TEB)&UserStack, CrtSusp);  // The thread starts at specified IP and with specified SP and no return address // End it with NtTerminateThread  // CrtSusp must be exactly 1 to suspend     
+ Status = NtCreateThread(ThreadHandle, ThAcc, nullptr, ProcessHandle, &ClientId, &Context, (PINITIAL_TEB)&UserStack, CrtSusp); // Always returns ACCESS_DENIED for any CFG enabled process? // The thread starts at specified IP and with specified SP and no return address // End it with NtTerminateThread  // CrtSusp must be exactly 1 to suspend     
 #ifndef _AMD64_ 
- if((Status == STATUS_ACCESS_DENIED) && (FixWinTenWow64NtCreateThread() > 0))Status = NtCreateThread(ThreadHandle, ThAcc, NULL, ProcessHandle, &ClientId, &Context, (PINITIAL_TEB)&UserStack, CrtSusp);     // Try to fix Wow64NtCreateThread bug in latest versions of Windows 10   
+ if((Status == STATUS_ACCESS_DENIED) && (FixWinTenWow64NtCreateThread() > 0))Status = NtCreateThread(ThreadHandle, ThAcc, nullptr, ProcessHandle, &ClientId, &Context, (PINITIAL_TEB)&UserStack, CrtSusp);     // Try to fix Wow64NtCreateThread bug in latest versions of Windows 10   
 #endif
- if(!NT_SUCCESS(Status))return Status;	
+ if(!NT_SUCCESS(Status)){DBGMSG("CreateThread Failed"); return Status;}	
  if(ThreadID)*ThreadID = ULONG(ClientId.UniqueThread);              
  return Status;
 }

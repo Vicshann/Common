@@ -646,6 +646,15 @@ bool UpdTraceFlag(UINT Idx, PCONTEXT Ctx)
  return true;
 }
 //------------------------------------------------------------------------------------
+/* The value of registers DR0-DR3 is preserved across all threads
+            31-16         15-14  13  12-10  9-0
+ DR7: ???? ???? ???? ???? ??     ?   ???    ??????????
+      LNRW LNRW LNRW LNRW        G   001    GLGLGLGLGL
+      3333 2222 1111 0000        D          EE33221100
+
+    RW: 0=Exe,1=Wr,2=IO,3=RdWr
+    LN: 0=1,1=2,2=8,3=4
+*/
 bool UpdHardwareBp(UINT Idx, PCONTEXT Ctx)  
 {
  if(!(Ctx->ContextFlags & CONTEXT_DEBUG_REGISTERS) || !this->IsThreadIndexExist(Idx))return false;
@@ -653,8 +662,8 @@ bool UpdHardwareBp(UINT Idx, PCONTEXT Ctx)
  memset((void*)&ThDes->HwBpLst,0,sizeof(ThDes->HwBpLst));  
  for(UINT ctr=0;ctr < 4;ctr++)       // Nothing special for x64?
   {
-   if(!(Ctx->Dr7 & (1ULL << (ctr*2))))continue;       // Skip any not enabled
-   BYTE LCod = (Ctx->Dr7 >> (10+(ctr*4))) & 3;     // Breakpoint size
+   if(!(Ctx->Dr7 & (1ULL << (ctr*2))))continue;       // Skip any not enabled    // Windows uses 'local' breakpoints
+   BYTE LCod = (Ctx->Dr7 >> (18+(ctr*4))) & 3;     // Breakpoint size
    if(LCod & 2)ThDes->HwBpLst[ctr].Size = (LCod & 1)?(4):(8);
      else ThDes->HwBpLst[ctr].Size = LCod+1;
    switch(ctr)
@@ -907,75 +916,7 @@ int ProcessRequestDbg(SMsgHdr* Req)
 // LastMsg = Req->GetBlk()->MsgSeqID;
 
  switch(Req->MsgID)
-  {   
-   case miQueryInformationProcess:
-    {
-     HANDLE ProcessHandle; 
-     PROCESSINFOCLASS ProcessInformationClass; 
-     ULONG ProcessInformationLength; 
-     ULONG   RetLen = 0; 
-     HRESULT Status = STATUS_UNSUCCESSFUL;
-   
-     api.Assign((PBYTE)&Req->Data,Req->DataSize);
-     api.PopArg(ProcessHandle);
-     api.PopArg(ProcessInformationClass);
-     api.PopArg(ProcessInformationLength);  
-     if(ProcessHandle != UintToFakeHandle(this->CurProcID)){DBGMSG("Process HANDLE mismatch: %08X:%08X",ProcessHandle,UintToFakeHandle(this->CurProcID)); apo.PushBlk(ProcessInformationLength);}                                                                           
-       else Status = NtQueryInformationProcess(NtCurrentProcess,ProcessInformationClass,apo.PushBlk(ProcessInformationLength),ProcessInformationLength,&RetLen);   // ULONG or SIZE_T ?
-     apo.PushArg(RetLen);
-     apo.PushArg(Status);
-     DBGMSG("miQueryInformationProcess PutMsg: InfoClass=%u, Status=%08X, Size=%u",ProcessInformationClass,Status,apo.GetLen());
-     this->PutMsg(mtDbgRsp, miQueryInformationProcess, Req->Sequence, apo.GetPtr(), apo.GetLen());      
-    }
-   break;
-   case miQueryInformationThread:
-    {
-     THREADINFOCLASS ThreadInformationClass; 
-     ULONG ThreadInformationLength; 
-     ULONG RetLen = 0;        
-     HRESULT Status = STATUS_UNSUCCESSFUL;
-
-     api.Assign((PBYTE)&Req->Data,Req->DataSize);
-     this->ThList.Lock();
-     UINT   ThIdx        = FakeHandleToUint(api.PopArg<HANDLE>());
-     HANDLE ThreadHandle = this->ThList.GetHandleByIndex(ThIdx);
-     this->ThList.UnLock();    // NOTE: ThreadHandle may become invalid
-     api.PopArg(ThreadInformationClass);
-     api.PopArg(ThreadInformationLength); 
-     if(ThreadHandle)
-      {
-       Status = NtQueryInformationThread(ThreadHandle,ThreadInformationClass,apo.PushBlk(ThreadInformationLength),ThreadInformationLength,&RetLen);    // ULONG or SIZE_T ?
-       if(Status == STATUS_THREAD_IS_TERMINATING)this->ThList.ReportDeadThreadDbgEvt(ThIdx);
-      }
-       else {DBGMSG("Thread handle not found: ThIdx=%i",ThIdx); apo.PushBlk(ThreadInformationLength);}
-     apo.PushArg(RetLen);
-     apo.PushArg(Status);
-     DBGMSG("miQueryInformationThread PutMsg: InfoClass=%u, Status=%08X, Size=%u",ThreadInformationClass,Status,apo.GetLen());
-     this->PutMsg(mtDbgRsp, miQueryInformationThread, Req->Sequence, apo.GetPtr(), apo.GetLen());      
-    }
-   break;     
-   case miQueryVirtualMemory:     // NOTE: x64Dbg will call this for every memory block and avery request/response will move forward in the buffer (In a small buffer some old messages(Thread reports) will be lost)
-    {
-     PVOID BaseAddress;
-     HANDLE ProcessHandle; 
-     MEMORY_INFORMATION_CLASS MemoryInformationClass; 
-     SIZE_T MemoryInformationLength; 
-     SIZE_T RetLen = 0; 
-     HRESULT Status = STATUS_UNSUCCESSFUL;
-        
-     api.Assign((PBYTE)&Req->Data,Req->DataSize);
-     api.PopArg(ProcessHandle);
-     api.PopArg(BaseAddress);
-     api.PopArg(MemoryInformationClass);
-     api.PopArg(MemoryInformationLength);  
-     if(ProcessHandle != UintToFakeHandle(this->CurProcID)){DBGMSG("Process HANDLE mismatch: %08X:%08X",ProcessHandle,UintToFakeHandle(this->CurProcID)); apo.PushBlk(MemoryInformationLength);}                                                                              
-       else Status = NtQueryVirtualMemory(NtCurrentProcess,BaseAddress,MemoryInformationClass,apo.PushBlk(MemoryInformationLength),MemoryInformationLength,&RetLen);
-     apo.PushArg(RetLen);
-     apo.PushArg(Status);
-//     DBGMSG("miQueryVirtualMemory PutMsg: Status=%08X, InfoClass=%u, BaseAddress=%p, Size=%u",Status,MemoryInformationClass,BaseAddress,apo.GetLen()); 
-     this->PutMsg(mtDbgRsp, miQueryVirtualMemory, Req->Sequence, apo.GetPtr(), apo.GetLen());      
-    }
-   break;
+  {  
    case miDebugActiveProcess:
     {
      BOOL  Reslt = TRUE;
@@ -983,7 +924,7 @@ int ProcessRequestDbg(SMsgHdr* Req)
      api.Assign((PBYTE)&Req->Data,Req->DataSize);
      api.PopArg(dwProcessId);
      if(dwProcessId != this->CurProcID){DBGMSG("Process ID mismatch: %08X:%08X",dwProcessId,this->CurProcID); return -1;}  // Allow to fail here?
-     this->DbgAttached = true;
+     this->DbgAttached = true;   
 
      SHM::CGrowArr<PTEB,  128> TebArr;    // NOTE: Stack arrays reserved on stack forever
      SHM::CGrowArr<PBYTE, 128> ModArr;    // 2048
@@ -1059,13 +1000,79 @@ int ProcessRequestDbg(SMsgHdr* Req)
      this->DispatchDebugEvents(true);    // Dispatch any queued debug events
     }
    break;
-
 /*   case miWaitForDebugEvent:     // This is a response only          
     {
 
     }
    break; */
+   case miQueryInformationProcess:
+    {
+     HANDLE ProcessHandle; 
+     PROCESSINFOCLASS ProcessInformationClass; 
+     ULONG ProcessInformationLength; 
+     ULONG   RetLen = 0; 
+     HRESULT Status = STATUS_UNSUCCESSFUL;
+   
+     api.Assign((PBYTE)&Req->Data,Req->DataSize);
+     api.PopArg(ProcessHandle);
+     api.PopArg(ProcessInformationClass);
+     api.PopArg(ProcessInformationLength);  
+     if(ProcessHandle != UintToFakeHandle(this->CurProcID)){DBGMSG("Process HANDLE mismatch: %08X:%08X",ProcessHandle,UintToFakeHandle(this->CurProcID)); apo.PushBlk(ProcessInformationLength);}                                                                           
+       else Status = NtQueryInformationProcess(NtCurrentProcess,ProcessInformationClass,apo.PushBlk(ProcessInformationLength),ProcessInformationLength,&RetLen);   // ULONG or SIZE_T ?
+     apo.PushArg(RetLen);
+     apo.PushArg(Status);
+     DBGMSG("miQueryInformationProcess PutMsg: InfoClass=%u, Status=%08X, Size=%u",ProcessInformationClass,Status,apo.GetLen());
+     this->PutMsg(mtDbgRsp, miQueryInformationProcess, Req->Sequence, apo.GetPtr(), apo.GetLen());      
+    }
+   break;
+   case miQueryInformationThread:
+    {
+     THREADINFOCLASS ThreadInformationClass; 
+     ULONG ThreadInformationLength; 
+     ULONG RetLen = 0;        
+     HRESULT Status = STATUS_UNSUCCESSFUL;
 
+     api.Assign((PBYTE)&Req->Data,Req->DataSize);
+     this->ThList.Lock();
+     UINT   ThIdx        = FakeHandleToUint(api.PopArg<HANDLE>());
+     HANDLE ThreadHandle = this->ThList.GetHandleByIndex(ThIdx);
+     this->ThList.UnLock();    // NOTE: ThreadHandle may become invalid
+     api.PopArg(ThreadInformationClass);
+     api.PopArg(ThreadInformationLength); 
+     if(ThreadHandle)
+      {
+       Status = NtQueryInformationThread(ThreadHandle,ThreadInformationClass,apo.PushBlk(ThreadInformationLength),ThreadInformationLength,&RetLen);    // ULONG or SIZE_T ?
+       if(Status == STATUS_THREAD_IS_TERMINATING)this->ThList.ReportDeadThreadDbgEvt(ThIdx);
+      }
+       else {DBGMSG("Thread handle not found: ThIdx=%i",ThIdx); apo.PushBlk(ThreadInformationLength);}
+     apo.PushArg(RetLen);
+     apo.PushArg(Status);
+     DBGMSG("miQueryInformationThread PutMsg: InfoClass=%u, Status=%08X, Size=%u",ThreadInformationClass,Status,apo.GetLen());
+     this->PutMsg(mtDbgRsp, miQueryInformationThread, Req->Sequence, apo.GetPtr(), apo.GetLen());      
+    }
+   break;     
+   case miQueryVirtualMemory:     // NOTE: x64Dbg will call this for every memory block and avery request/response will move forward in the buffer (In a small buffer some old messages(Thread reports) will be lost)
+    {
+     PVOID BaseAddress;
+     HANDLE ProcessHandle; 
+     MEMORY_INFORMATION_CLASS MemoryInformationClass; 
+     SIZE_T MemoryInformationLength; 
+     SIZE_T RetLen = 0; 
+     HRESULT Status = STATUS_UNSUCCESSFUL;
+        
+     api.Assign((PBYTE)&Req->Data,Req->DataSize);
+     api.PopArg(ProcessHandle);
+     api.PopArg(BaseAddress);
+     api.PopArg(MemoryInformationClass);
+     api.PopArg(MemoryInformationLength);  
+     if(ProcessHandle != UintToFakeHandle(this->CurProcID)){DBGMSG("Process HANDLE mismatch: %08X:%08X",ProcessHandle,UintToFakeHandle(this->CurProcID)); apo.PushBlk(MemoryInformationLength);}                                                                              
+       else Status = NtQueryVirtualMemory(NtCurrentProcess,BaseAddress,MemoryInformationClass,apo.PushBlk(MemoryInformationLength),MemoryInformationLength,&RetLen);
+     apo.PushArg(RetLen);
+     apo.PushArg(Status);
+//     DBGMSG("miQueryVirtualMemory PutMsg: Status=%08X, InfoClass=%u, BaseAddress=%p, Size=%u",Status,MemoryInformationClass,BaseAddress,apo.GetLen()); 
+     this->PutMsg(mtDbgRsp, miQueryVirtualMemory, Req->Sequence, apo.GetPtr(), apo.GetLen());      
+    }
+   break;
    case miDebugBreakProcess:  // Unsafe and unstealthy   // Some debuggers will not read any information about a debuggee unless it breaks somwhere (i.e. WinDbg)
     {                      // All of process`s threads may be in some waiting state and because of that a new thread required
      BOOL   Reslt = FALSE;
@@ -1322,7 +1329,7 @@ int ProcessRequestDbg(SMsgHdr* Req)
      this->PutMsg(mtDbgRsp, miResumeThread, Req->Sequence, apo.GetPtr(), apo.GetLen());     
     }
    break;
-
+         
    default: return -9;
   }
  return 0;
@@ -1490,13 +1497,13 @@ static void _stdcall IPCQueueThread(LPVOID lpThreadParameter)
  DBGMSG("Enter: ThreadId=%u, This=%p", NtCurrentThreadId(), lpThreadParameter);
  CDbgClient* DbgIPC = (CDbgClient*)lpThreadParameter;
  DbgIPC->ClientThID = NtCurrentThreadId();
- DbgIPC->Connect(NtCurrentProcessId(),DbgIPC->IPCSize);       // Create SharedBuffer name for current process, a debugger will connect to it
+// DbgIPC->Connect(NtCurrentProcessId(),DbgIPC->IPCSize);       // Create SharedBuffer name for current process, a debugger will connect to it  // Threads created im my DLL in Untrusted processes always fail at named objects creation with ACCESS_DENIED
  DbgIPC->BreakWrk = false;
  while(!DbgIPC->BreakWrk) 
   {    
    if(SMsgHdr* Cmd = DbgIPC->GetMsg())   // Timeout and still no messages
     {
-//   DBGMSG("MsgType=%04X, MsgID=%04X, DataID=%08X, Sequence=%08X, DataSize=%08X",Cmd->MsgType,Cmd->MsgID,Cmd->DataID,Cmd->Sequence,Cmd->DataSize);   // These Debug messages make it hang!!!
+   DBGMSG("MsgType=%04X, MsgID=%04X, DataID=%08X, Sequence=%08X, DataSize=%08X",Cmd->MsgType,Cmd->MsgID,Cmd->DataID,Cmd->Sequence,Cmd->DataSize);   // These Debug messages make it hang!!!
      if(Cmd->MsgType & mtDbgReq)DbgIPC->ProcessRequestDbg(Cmd);
      if(Cmd->MsgType & mtUsrReq)DbgIPC->ProcessRequestUsr(Cmd); 
     }
@@ -1570,6 +1577,7 @@ bool Start(UINT Size=0, HANDLE hThread=NULL, PVOID IPCThProc=NULL, UINT MainThre
 #ifndef _DEBUG
      NtSetInformationThread(this->hIPCThread, ThreadHideFromDebugger, NULL, NULL);
 #endif
+     this->Connect(NtCurrentProcessId(),this->IPCSize);
      NtResumeThread(this->hIPCThread, NULL); 
     }
      else {DBGMSG("Failed to create IPC thread: %08X", stat);}
@@ -1586,11 +1594,13 @@ bool Start(UINT Size=0, HANDLE hThread=NULL, PVOID IPCThProc=NULL, UINT MainThre
 #ifndef _DEBUG
        NtSetInformationThread(this->hIPCThread, ThreadHideFromDebugger, NULL, NULL);
 #endif
+       this->Connect(NtCurrentProcessId(),this->IPCSize);
        NtResumeThread(this->hIPCThread, NULL);
       }
        else 
         {
          DBGMSG("Reusing the current thread");  
+         this->Connect(NtCurrentProcessId(),this->IPCSize);  
          CDbgClient::IPCQueueThread(Param);
         }
     }
@@ -1667,19 +1677,24 @@ bool HandleException(DWORD ThreadID, PEXCEPTION_RECORD ExceptionRecord, PCONTEXT
  return false;
 } 
 //------------------------------------------------------------------------------------
-bool TryAddCurrThread(void)
+bool TryAddCurrThread(void)    // NOTE: Hangs if no debugger is connected yet!
 {
  DBGMSG("Enter");
  TEB* CurTeb = NtCurrentTeb();
 // if((UINT)CurTeb->ClientId.UniqueThread == this->DbgBrkThID){DBGMSG("Skipping DbgBrk thread"); return false;}
  this->ThList.Lock();
- if(this->ThList.FindThreadIdxInList(NULL, (UINT)CurTeb->ClientId.UniqueThread) < 0)  
+// DBGMSG("State 1");
+ if(this->DbgAttached && (this->ThList.FindThreadIdxInList(NULL, (UINT)CurTeb->ClientId.UniqueThread) < 0))  
   {
+//   DBGMSG("State 2");
    int ThIdx = this->Report_CREATE_THREAD_DEBUG_EVENT(CurTeb, true);     // Reuses the lock
+//   DBGMSG("State 3");
    DBGMSG("Added: ThreadId=%u as %u",(UINT)CurTeb->ClientId.UniqueThread, ThIdx);
    return true;
   }
+// DBGMSG("State 4");
  this->ThList.UnLock();
+ DBGMSG("Exit");
  return false;  // Already in list
 }
 //------------------------------------------------------------------------------------

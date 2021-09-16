@@ -17,16 +17,23 @@
 
 struct NShMem     // TODO: Crossplatform - part of the FRAMEWORK 
 {
+static inline char ObjDirName[] = {"TempNamedObjects"};    // TODO: Generate it
 //===========================================================================
 // 'Global\HelloWorld' => '\BaseNamedObjects\HelloWorld'
 // 'Local\HelloWorld'  => '\Sessions\1\BaseNamedObjects\HelloWorld'
 //
 //----------------------------------------------------------------------------
-static void InitObjAttrForBaseNamedObj(OBJECT_ATTRIBUTES* Attr, UNICODE_STRING* UStr, wchar_t* Buf, LPSTR Name)
+static void InitObjAttrForBaseNamedObj(OBJECT_ATTRIBUTES* Attr, UNICODE_STRING* UStr, wchar_t* Buf, LPSTR Name, LPSTR ObjDirPath)
 {
  UINT Length = 0;
- wchar_t Path[] = {'\\','B','a','s','e','N','a','m','e','d','O','b','j','e','c','t','s','\\'};    // If static then the sring will be in memory as is
- for(;Length < (sizeof(Path)/sizeof(wchar_t));Length++)Buf[Length] = Path[Length];
+ if((*Name != '\\')&&(*Name != '/'))
+  {
+   char Path[] = {'\\','B','a','s','e','N','a','m','e','d','O','b','j','e','c','t','s','\\',0};    // If static then the sring will be in memory as is
+   if(!ObjDirPath)ObjDirPath = Path;     // wchar_t Path[] = {'\\','T','e','m','p','N','a','m','e','d','O','b','j','e','c','t','s','\\'}; //  {'\\','B','a','s','e','N','a','m','e','d','O','b','j','e','c','t','s','\\'};  
+   if((*ObjDirPath != '\\')&&(*ObjDirPath != '/'))Buf[Length++] = '\\';
+   for(;*ObjDirPath;Length++,ObjDirPath++)Buf[Length] = *ObjDirPath;
+   if((Buf[Length-1] != '\\')&&(Buf[Length-1] != '/'))Buf[Length++] = '\\';
+  }
  for(;*Name;Name++,Length++)Buf[Length] = *Name;
  UStr->Buffer = Buf;
  UStr->Length = Length * sizeof(wchar_t);
@@ -40,52 +47,66 @@ static void InitObjAttrForBaseNamedObj(OBJECT_ATTRIBUTES* Attr, UNICODE_STRING* 
 // DBGMSG("%u - '%ls'",Length,Buf);
 }
 //----------------------------------------------------------------------------
-static NTSTATUS MutexCreateA(PHANDLE pHandle, LPSECURITY_ATTRIBUTES lpMutexAttributes, BOOL bInitialOwner, LPSTR lpName)
+static NTSTATUS CreateNtObjDirectory(LPSTR ObjDirName, PHANDLE phDirObj)   // Create objects directory with NULL security
+{
+ wchar_t Path[512] = {'\\'}; 
+ UNICODE_STRING ObjectNameUS;
+ SECURITY_DESCRIPTOR  sd = {SECURITY_DESCRIPTOR_REVISION, 0, 4};    // NULL security descriptor: InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION); SetSecurityDescriptorDacl(&sd, TRUE, NULL, FALSE);
+ OBJECT_ATTRIBUTES oattr = { sizeof(OBJECT_ATTRIBUTES), 0, &ObjectNameUS, OBJ_CASE_INSENSITIVE|OBJ_OPENIF, &sd };
+ UINT Length = 1;   
+ for(int idx=0;*ObjDirName;ObjDirName++)Path[Length++] = *ObjDirName;
+ ObjectNameUS.Buffer = Path;
+ ObjectNameUS.Length = Length * sizeof(wchar_t);
+ ObjectNameUS.MaximumLength = ObjectNameUS.Length + sizeof(wchar_t);
+ return NtCreateDirectoryObject(phDirObj, DIRECTORY_ALL_ACCESS, &oattr);
+}
+//----------------------------------------------------------------------------
+static NTSTATUS MutexCreateA(PHANDLE pHandle, LPSECURITY_ATTRIBUTES lpMutexAttributes, BOOL bInitialOwner, LPSTR lpName, LPSTR lpObjDir)
 {
  OBJECT_ATTRIBUTES oattr = {};       
  UNICODE_STRING ObjPathUS;
  wchar_t Path[256]; 
- InitObjAttrForBaseNamedObj(&oattr, &ObjPathUS, Path, lpName);
+ InitObjAttrForBaseNamedObj(&oattr, &ObjPathUS, Path, lpName, lpObjDir);
  if(lpMutexAttributes)
   {
-   oattr.Attributes = lpMutexAttributes->bInheritHandle ? 2 : 0;;  
+   oattr.Attributes = lpMutexAttributes->bInheritHandle ? 2 : 0;  
    oattr.SecurityDescriptor = lpMutexAttributes->lpSecurityDescriptor;
   }
  oattr.Attributes |= OBJ_OPENIF;   // Open if already exist
  return NtCreateMutant(pHandle, MUTEX_ALL_ACCESS, &oattr, bInitialOwner);
 }
 //----------------------------------------------------------------------------
-static NTSTATUS EventCreateA(PHANDLE pHandle, LPSECURITY_ATTRIBUTES lpEventAttributes, BOOL bManualReset, BOOL bInitialState, LPSTR lpName)
+static NTSTATUS EventCreateA(PHANDLE pHandle, LPSECURITY_ATTRIBUTES lpEventAttributes, BOOL bManualReset, BOOL bInitialState, LPSTR lpName, LPSTR lpObjDir)
 {
  OBJECT_ATTRIBUTES oattr = {};       
  UNICODE_STRING ObjPathUS;
  wchar_t Path[256]; 
- InitObjAttrForBaseNamedObj(&oattr, &ObjPathUS, Path, lpName);
+ InitObjAttrForBaseNamedObj(&oattr, &ObjPathUS, Path, lpName, lpObjDir);
  if(lpEventAttributes)
   {
-   oattr.Attributes = lpEventAttributes->bInheritHandle ? 2 : 0;;  
+   oattr.Attributes = lpEventAttributes->bInheritHandle ? 2 : 0;  
    oattr.SecurityDescriptor = lpEventAttributes->lpSecurityDescriptor;
   }
  oattr.Attributes |= OBJ_OPENIF;   // Open if already exist
  return NtCreateEvent(pHandle, EVENT_ALL_ACCESS, &oattr, bManualReset?NotificationEvent:SynchronizationEvent, bInitialState);
 }
 //----------------------------------------------------------------------------                                        
-static NTSTATUS CreateMemSection(PHANDLE SectionHandle, ACCESS_MASK DesiredAccess, PLARGE_INTEGER MaximumSize, ULONG SectionPageProtection, ULONG AllocationAttributes, LPSTR SecName)
+static NTSTATUS CreateMemSection(PHANDLE SectionHandle, ACCESS_MASK DesiredAccess, PLARGE_INTEGER MaximumSize, ULONG SectionPageProtection, ULONG AllocationAttributes, LPSTR SecName, LPSTR lpObjDir)
 {
  OBJECT_ATTRIBUTES oattr = {};       
  UNICODE_STRING ObjPathUS;
  wchar_t Path[256]; 
- InitObjAttrForBaseNamedObj(&oattr, &ObjPathUS, Path, SecName); 
+ InitObjAttrForBaseNamedObj(&oattr, &ObjPathUS, Path, SecName, lpObjDir); 
  oattr.Attributes |= OBJ_OPENIF;   // Open if already exist
  return NtCreateSection(SectionHandle, DesiredAccess, &oattr, MaximumSize, SectionPageProtection, AllocationAttributes, NULL);
 }
 //---------------------------------------------------------------------------- 
-static NTSTATUS OpenMemSection(PHANDLE SectionHandle, ACCESS_MASK DesiredAccess, LPSTR SecName)
+static NTSTATUS OpenMemSection(PHANDLE SectionHandle, ACCESS_MASK DesiredAccess, LPSTR SecName, LPSTR lpObjDir)
 {
  OBJECT_ATTRIBUTES oattr = {};       
  UNICODE_STRING ObjPathUS;
  wchar_t Path[256]; 
- InitObjAttrForBaseNamedObj(&oattr, &ObjPathUS, Path, SecName); 
+ InitObjAttrForBaseNamedObj(&oattr, &ObjPathUS, Path, SecName, lpObjDir); 
  return NtOpenSection(SectionHandle, DesiredAccess, &oattr);
 }
 //---------------------------------------------------------------------------- 
@@ -668,6 +689,7 @@ struct SMemDescr: public Usr
  HANDLE hNotifyEvt;    // NOTE: Do not rely on Notification Event when used a multiple observers(Set timeout as low as possible and confirm changes by some other means)
  HANDLE hSyncMutex;
  HANDLE hMapFile;
+ HANDLE hDirObj;
  SMemDescr* MemDesc;   // Shared memory buffer
 
 //---------------------------------------------------------
@@ -676,7 +698,7 @@ struct SMemDescr: public Usr
 #ifndef _NTDLL_H
 static ULONG GetObjNamespaceStr(char* DstStr)
 {
- char NameSpace[] = {'G','l','o','b','a','l','\\'};
+ char NameSpace[] = {'G','l','o','b','a','l','\\'};     // NOTE: Incompatible with custom named object directory
  return CopyString(DstStr, NameSpace, sizeof(NameSpace));
 }
 #endif
@@ -738,7 +760,7 @@ static bool IsMappingExist(LPSTR MapName)
  Len += CopyString(&FullPath[Len], MapName); 
 #ifdef _NTDLL_H
  HANDLE hMap = NULL;
- if(OpenMemSection(&hMap, FILE_MAP_ALL_ACCESS, FullPath) < 0)return false;     // Doesn`t exist or access denied
+ if(OpenMemSection(&hMap, FILE_MAP_ALL_ACCESS, FullPath, ObjDirName) < 0)return false;     // Doesn`t exist or access denied
 #else
  HANDLE hMap = OpenFileMappingA(FILE_MAP_ALL_ACCESS, FALSE, FullPath);
  if(!hMap)return false;     // Doesn`t exist or access denied
@@ -759,7 +781,7 @@ static UINT64 GetMappingSize(LPSTR MapName)
  Len += CopyString(&FullPath[Len], MapName); 
 #ifdef _NTDLL_H
  HANDLE hMap = NULL;
- if(OpenMemSection(&hMap, FILE_MAP_ALL_ACCESS, FullPath) < 0)return 0;     // Doesn`t exist or access denied
+ if(OpenMemSection(&hMap, FILE_MAP_ALL_ACCESS, FullPath, ObjDirName) < 0)return 0;     // Doesn`t exist or access denied
 #else
  HANDLE hMap = OpenFileMappingA(FILE_MAP_ALL_ACCESS, FALSE, FullPath);
  if(!hMap)return 0;     // Doesn`t exist or access denied
@@ -781,6 +803,8 @@ int Connect(LPSTR MapName, SIZE_T SizeOfNew)    // Creates or opens a Shared Mem
  if(this->hMapFile){if(this->Disconnect() < 0){DBGMSG("Failed to disconnect!"); return -1;}}
  SizeOfNew = AlignFrwd(SizeOfNew,8);         
  MakeObjName(0, MapName, (LPSTR)&TmpBuf);
+ NTSTATUS status = CreateNtObjDirectory(ObjDirName, &this->hDirObj);      // Create objects directory with NULL security
+ if(status < 0){DBGMSG("CreateNtObjDirectory failed(%08X)", status); return -2;} 
 
 /*SECURITY_ATTRIBUTES security;
 ZeroMemory(&security, sizeof(security));
@@ -794,20 +818,20 @@ ConvertStringSecurityDescriptorToSecurityDescriptor(
 #ifdef _NTDLL_H
  LARGE_INTEGER MaxSize;
  MaxSize.QuadPart = SizeOfNew;  
- NTSTATUS status = CreateMemSection(&this->hMapFile, SECTION_ALL_ACCESS, &MaxSize, PAGE_READWRITE, SEC_COMMIT, (LPSTR)&TmpBuf);
- if(status < 0){DBGMSG("CreateMapping failed(%08X): Size=%08X", status, SizeOfNew); return -2;}   // HANDLE hSec = CreateFileMappingW(INVALID_HANDLE_VALUE,NULL,PAGE_EXECUTE_READWRITE|SEC_COMMIT,0,ModSize,NULL);
+ status = CreateMemSection(&this->hMapFile, SECTION_ALL_ACCESS, &MaxSize, PAGE_READWRITE, SEC_COMMIT, (LPSTR)&TmpBuf, ObjDirName);
+ if(status < 0){DBGMSG("CreateMapping failed(%08X): Size=%08X", status, SizeOfNew); return -3;}   // HANDLE hSec = CreateFileMappingW(INVALID_HANDLE_VALUE,NULL,PAGE_EXECUTE_READWRITE|SEC_COMMIT,0,ModSize,NULL);
  bool CreatedNew = !(STATUS_OBJECT_NAME_EXISTS == status);
  PVOID BaseAddr  = NULL;
  status = NtMapViewOfSection(this->hMapFile,NtCurrentProcess,&BaseAddr,0,SizeOfNew,NULL,&SizeOfNew,ViewShare,0,PAGE_READWRITE);
- if(status){DBGMSG("Failed to map memory: %08X", status); CloseOHandle(this->hMapFile); this->hMapFile = NULL; return -3;}
+ if(status){DBGMSG("Failed to map memory: %08X", status); CloseOHandle(this->hMapFile); this->hMapFile = NULL; return -4;}
  this->MemDesc   = (SMemDescr*)BaseAddr;
 #else
  this->hMapFile   = CreateFileMappingA(INVALID_HANDLE_VALUE,NULL,PAGE_READWRITE,0,SizeOfNew,(LPSTR)&TmpBuf);
 //LocalFree(securityDescriptor.lpSecurityDescriptor);
- if(!this->hMapFile){DBGMSG("CreateMapping failed(%u): Size=%08X", GetLastError(), SizeOfNew); return -2;}
+ if(!this->hMapFile){DBGMSG("CreateMapping failed(%u): Size=%08X", GetLastError(), SizeOfNew); return -5;}
  bool CreatedNew  = !(GetLastError() == ERROR_ALREADY_EXISTS);
  this->MemDesc    = (SMemDescr*)MapViewOfFile(this->hMapFile,FILE_MAP_ALL_ACCESS,0,0,SizeOfNew);  // Real memory pages will be allocated on first access?
- if(!this->MemDesc){DBGMSG("Failed to map memory: %u", GetLastError()); CloseOHandle(this->hMapFile); this->hMapFile = NULL; return -3;}
+ if(!this->MemDesc){DBGMSG("Failed to map memory: %u", GetLastError()); CloseOHandle(this->hMapFile); this->hMapFile = NULL; return -6;}
 #endif
  if(CreatedNew)
   {
@@ -818,13 +842,13 @@ ConvertStringSecurityDescriptorToSecurityDescriptor(
    MakeObjName((ULONG_PTR)this->hMapFile, "N", (LPSTR)&this->MemDesc->NtfEName);  
   }
 #ifdef _NTDLL_H
- NShMem::MutexCreateA(&this->hSyncMutex, NULL, FALSE, (LPSTR)&this->MemDesc->SynMName);  
- NShMem::EventCreateA(&this->hNotifyEvt, NULL, TRUE, FALSE, (LPSTR)&this->MemDesc->NtfEName);
+ NShMem::MutexCreateA(&this->hSyncMutex, NULL, FALSE, (LPSTR)&this->MemDesc->SynMName, ObjDirName);  
+ NShMem::EventCreateA(&this->hNotifyEvt, NULL, TRUE, FALSE, (LPSTR)&this->MemDesc->NtfEName, ObjDirName);
 #else  
  this->hSyncMutex = CreateMutexA(NULL, FALSE, (LPSTR)&this->MemDesc->SynMName);     // Take the names from shared memory 
  this->hNotifyEvt = CreateEventA(NULL, TRUE, FALSE, (LPSTR)&this->MemDesc->NtfEName); 
 #endif
- if(!this->hSyncMutex || !this->hNotifyEvt){DBGMSG("Failed to create sync objects: hSyncMutex=%p(%s), hNotifyEvt=%p(%s)", this->hSyncMutex, &this->MemDesc->SynMName, this->hNotifyEvt, &this->MemDesc->NtfEName); this->Disconnect(); return -4;}
+ if(!this->hSyncMutex || !this->hNotifyEvt){DBGMSG("Failed to create sync objects: hSyncMutex=%p(%s), hNotifyEvt=%p(%s)", this->hSyncMutex, &this->MemDesc->SynMName, this->hNotifyEvt, &this->MemDesc->NtfEName); this->Disconnect(); return -7;}
  DBGMSG("CreatedNew=%u, SizeOfNew=%08X, MemDesc=%p, MMapName='%s', SynMName='%s', NtfEName='%s'", CreatedNew, SizeOfNew, this->MemDesc, &TmpBuf, &this->MemDesc->SynMName, &this->MemDesc->NtfEName);
  return !CreatedNew;  // Created a new shared buffer
 }
@@ -846,6 +870,7 @@ int Disconnect(void)
  this->UnlockBuffer();
  if(this->hSyncMutex)CloseOHandle(this->hSyncMutex);
  this->hSyncMutex = NULL; 
+ if(this->hDirObj)CloseOHandle(this->hDirObj);
  return 0;
 }
 //---------------------------------------------------------
@@ -939,7 +964,8 @@ struct SMsgBlk     // Size is 32 + Data + ValidMrk2    // Always aligned to 16 b
  volatile UINT32 ValidMrk;   // A Opening marker. An Closing marker is after the data  
  volatile BYTE   Data[0];    // Better to be aligned to 8 bytes
 
- static UINT32 FullSize(UINT32 DSize){return AlignFrwd(DSize + sizeof(SMsgBlk) + sizeof(UINT32), 16);}    // After Hdr+Data, at aligned end is UINT32(~ValidMrk)  // Align 16 (SSE compatible)
+ static UINT32 FullSize(UINT32 DSize){
+   return AlignFrwd(DSize + sizeof(SMsgBlk) + sizeof(UINT32), 16);}    // After Hdr+Data, at aligned end is UINT32(~ValidMrk)  // Align 16 (SSE compatible)
  UINT32 FullSize(void){return FullSize(this->DataSize);}   // AlignFrwd(this->DataSize + sizeof(SMsgBlk) + 8,8);}     // All data blocks aligned to 8 bytes    
  bool  IsBroadcast(void){return !this->TargetID;}
 };

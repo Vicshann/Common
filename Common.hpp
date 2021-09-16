@@ -35,7 +35,7 @@ template <typename T> constexpr inline static T RotR(T Value, unsigned int Shift
 template<typename N, typename M> inline static M NumToPerc(N Num, M MaxVal){return (((Num)*100)/(MaxVal));}               // NOTE: Can overflow!
 template<typename P, typename M> inline static M PercToNum(P Per, M MaxVal){return (((Per)*(MaxVal))/100);}               // NOTE: Can overflow!          
 
-template<class N, class M> constexpr __forceinline static M AlignFrwd(N Value, M Alignment){return (Value/Alignment)+(bool(Value%Alignment)*Alignment);}    // NOTE: Slow but works with any Alignment value
+template<class N, class M> constexpr __forceinline static M AlignFrwd(N Value, M Alignment){return ((Value/Alignment)+(bool(Value%Alignment)))*Alignment;}    // NOTE: Slow but works with any Alignment value
 template<class N, class M> constexpr __forceinline static M AlignBkwd(N Value, M Alignment){return (Value/Alignment)*Alignment;}                            // NOTE: Slow but works with any Alignment value
 
 // 2,4,8,16,...

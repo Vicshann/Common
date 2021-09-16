@@ -50,7 +50,7 @@
 #define DBGTXT LOGTXT
 #else   
 #define LOGMSG(msg,...) LogProc(lfLineBreak|lfLogName|lfLogTime|lfLogThID,_PRNM_,msg,__VA_ARGS__)      // TODO: LogSafe or LogFast
-#define LOGTXT(txt,len) LogProc(lfRawTextMsg,(char*)((size_t)len),txt); 
+#define LOGTXT(txt,len) LogProc(lfRawTextMsg,(char*)((size_t)len),txt) 
 #ifdef _DEBUG
 #define DBGMSG LOGMSG
 #define DBGTXT LOGTXT
@@ -224,13 +224,22 @@ HMODULE _stdcall FindModuleByExpName(LPSTR ModuleName);
 HANDLE WINAPI CreateFileX(PVOID lpFileName,DWORD dwDesiredAccess,DWORD dwShareMode,LPSECURITY_ATTRIBUTES lpSecurityAttributes,DWORD dwCreationDisposition,DWORD dwFlagsAndAttributes,HANDLE hTemplateFile);
 void _stdcall ReverseBytes(PBYTE Array, UINT Size);
 int _stdcall BinaryPackToBlobStr(LPSTR ApLibPath, LPSTR SrcBinPath, LPSTR OutBinPath, BYTE Key);
-UINT _stdcall NextItemASN1(PBYTE DataPtr, PBYTE* Body, PBYTE Type, UINT* Size);
+long _stdcall NextItemASN1(PBYTE DataPtr, PBYTE* Body, PBYTE Type, UINT* Size);
+long _stdcall GetTypeFromASN1(PBYTE* DstPtr, PBYTE BufASN1, long LenASN1, UINT ValType, UINT ValIdx);
+void _stdcall DumpBufferASN1(PBYTE BufASN1, long LenASN1, int Depth=0);
 int _stdcall FormatDateForHttp(SYSTEMTIME* st, LPSTR DateStr);
 bool _stdcall IsWow64(void);
 BOOL _stdcall ForceProcessSingleCore(HANDLE hProcess);
 int __stdcall SetProcessPrivilegeState(bool bEnable, LPSTR PrName, HANDLE hProcess=GetCurrentProcess());
 char* ftoa_simple(double num, size_t afterpoint, char *buf, size_t len, size_t* size);
 int _stdcall FormatToBuffer(char* format, char* buffer, UINT maxlen, va_list va);
+int _cdecl PrintFmt(char* buffer, UINT maxlen, char* format, ...);
+bool _stdcall FindFileByMask(LPSTR FileMask);
+int _stdcall CopyFileByMask(LPSTR DstDir, LPSTR FileMask, bool Overwr);
+int _stdcall WriteVmProtectedMemory(HANDLE* hProcess, PVOID TgtAddr, PVOID Data, SIZE_T Size, bool RstProt=true);
+ULONG _stdcall SetProcessUntrusted(HANDLE hProcess);
+NTSTATUS _stdcall CreateUntrustedFolder(PHANDLE phObject, PWSTR ObjectName);
+NTSTATUS _stdcall CreateUntrustedNtObjDir(PHANDLE phObject, PWSTR ObjectName);
 //---------------------------------------------------------------------------
 inline int _cdecl PrintFToBuf(char* format, char* buffer, UINT maxlen, ...)
 {

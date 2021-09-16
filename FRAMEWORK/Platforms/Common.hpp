@@ -33,13 +33,60 @@
 #define  _naked   __attribute__((naked))
 #endif
 
+//#ifdef FWK_DEBUG
+#define STASRT(...) static_assert(__VA_ARGS__)
+//#else
+//#define STASRT(cond,txt)
+//#endif
+
 // These three work at a call site 
 #define SRC_LINE __builtin_LINE()
 #define SRC_FILE __builtin_FILE()        // Full path included
 #define SRC_FUNC __builtin_FUNCTION()    // Only the name itself, no arguments or a return type
 
+// To retrieve a function signature including all argument types
+#if defined(__GNUC__) || (defined(__MWERKS__) && (__MWERKS__ >= 0x3000)) || (defined(__ICC) && (__ICC >= 600)) || defined(__ghs__)
+#define FUNC_SIG __PRETTY_FUNCTION__
+#elif defined(__DMC__) && (__DMC__ >= 0x810)
+#define FUNC_SIG __PRETTY_FUNCTION__
+#elif defined(__FUNCSIG__)   
+#define FUNC_SIG __FUNCSIG__
+#elif (defined(__INTEL_COMPILER) && (__INTEL_COMPILER >= 600)) || (defined(__IBMCPP__) && (__IBMCPP__ >= 500))
+#define FUNC_SIG __FUNCTION__
+#elif defined(__BORLANDC__) && (__BORLANDC__ >= 0x550)
+#define FUNC_SIG __FUNC__
+#else
+#define FUNC_SIG __func__   // Useless, because no types are provided  (Part of C++ 11 standart)
+#endif
+
+
+// NOTE: [no_unique_address] implies that a next member will take that space(Previous too, with some compilers). i.e. If four or less [no_unique_address] are followed by 'int' then the struct size will be 4. 
+//       Add another empty member and another alignment amount will be added to struct size
+//       But ICC behaves differently and allocates space if there are more than one empty member in a sequence.
+#if defined(_MSC_VER)
+#define _NO_UNIQUE_ADDR [[msvc::no_unique_address]]
+#else
+#define _NO_UNIQUE_ADDR [[no_unique_address]]
+#endif
+
+class CEmptyType {};
+using ETYPE = CEmptyType[0];    // This works plain and simple with ICC, GCC, CLANG (You can get a completely empty struct with such members and no annoying padding rules) but MSVC reports an error 'error C2229: struct has an illegal zero-sized array'
+// MSVC: sizeof(ETYPE) : error C2070: 'ETYPE': illegal sizeof operand
+// CLANG: With '--target=x86_64-windows-msvc' you cannot get an empty struct with such members, its size will be at least 1 byte
+
+// Conclusion: [no_unique_address] feature is a mess :(  Forget about it and use ETYPE instead. At least it works somehow and it is predictable.              
 //------------------------------------------------------------------------------------------------------------
-template<typename T> consteval static auto ChangeSign(T Val=0)  // Should be compiled faster than a template specialization?
+template<bool UseTypeA, typename A, typename B> struct TSW;                   // Usage: TSW<MyCompileTimeCondition, MyStructA, MyStructB>::T Val;   // Same as std::conditional
+template<typename A, typename B> struct TSW<true, A, B> {using T = A;};
+template<typename A, typename B> struct TSW<false, A, B> {using T = B;};
+
+template<bool UseTypeA, typename A, typename B> constexpr static auto TypeSwitch(void)       // Usage: struct SMyStruct { decltype(TypeSwitch<MyCompileTimeCondition, MyStructA, MyStructB>()) Val; }
+{                                      
+ if constexpr (UseTypeA) {A val{0}; return val;}
+   else {B val{0}; return val;}
+}
+//------------------------------------------------------------------------------------------------------------
+template<typename T> consteval static auto ChangeTypeSign(T Val=0)  // Should be compiled faster than a template specialization?
 {
  if constexpr (T(-1) < T(0))   // IsSigned
   {
@@ -82,6 +129,7 @@ long long			64
 pointer	    64	    64	    64	    32	    32
 */
 
+// Trying to sort out the whole history of type mess (If some platform does not support any of these, its compiler should implement missing operations)
  using achar  = char;      // Since C++11: u8"Helloto define a UTF-8 string of chars
  using wchar  = wchar_t;   // Different platforms may use different sizes for it
  using charb  = char8_t;   // u8"" // cannot be signed or unsigned
@@ -99,7 +147,7 @@ pointer	    64	    64	    64	    32	    32
  using int64  = signed long long;   // __int64_t
 
  using uint   = decltype(sizeof(void*));   // These 'int' are always platform-friendly (same size as pointer type, replace size_t) // "The result of sizeof and sizeof... is a constant of type std::size_t"
- using sint   = decltype(ChangeSign(sizeof(void*)));
+ using sint   = decltype(ChangeTypeSign(sizeof(void*)));
 
  // Add definitions for floating point types?
 };
@@ -107,70 +155,5 @@ pointer	    64	    64	    64	    32	    32
 using namespace NGenericTypes;   // For 'Framework.hpp'   // You may do the same in your code if you want
 //------------------------------------------------------------------------------------------------------------
 
-/*
-#ifdef __GNUG__
-#define _ISGCC      // GCC, Clang else MSVC  // What else do you need?
 
-#include <x86intrin.h>         // Needed only for SIMD ?
-
-#else     // MSVC assumed
-
-#include <intrin.h>
-
-#endif
-*/
-//#define __forceinline __attribute__((always_inline))    // GCC
-//#define _X64BIT
-/*#define FINLINE __forceinline              // MSVC
-
-
-#ifdef _WIN64
-#define MAXMEMBLK (((UINT32)-1)+1)    // SIZE_T    // 4GB
-#else
-#define MAXMEMBLK (~(((unsigned int)-1) >> 1))    // SIZE_T  // 2GB
-#endif
-*/
-/*
-#include "Platforms\Windows\PlatWin.h"
-
-#include "Platforms\Atomics.hpp"
-
-// <<< Dump here any implementations that should be accessible early and have no personal HPP yet >>>
-
-template<typename T, class U> struct Is_Same_Types {enum { value = 0 };};
-template<typename T> struct Is_Same_Types<T, T> {enum { value = 1 };};
-
-template<typename T> struct Is_Pointer { static const bool value = false; };
-template<typename T> struct Is_Pointer<T*> { static const bool value = true; };
-
-template<typename N> constexpr FINLINE N _fastcall AlignFrwrd(N Value, unsigned int Alignment){return (((Value/Alignment)+((bool)(Value%Alignment)))*Alignment);}
-template<typename N> constexpr FINLINE N _fastcall AlignBkwrd(N Value, unsigned int Alignment){return ((Value/Alignment)*Alignment);}
-template<typename N> constexpr FINLINE N _fastcall AlignFrwrdPow2(N Value, unsigned int Alignment){return (Value + (Alignment-1)) & ~(Alignment-1);}
-template<typename N> constexpr FINLINE N _fastcall AlignBkwrdPow2(N Value, unsigned int Alignment){return (Value & ~(Alignment-1));}
-*/
-//------------------------------------------------------------------------------------------------------------
-template<typename T> constexpr _finline static T SwapBytes(T Value)  // Unsafe with optimizations?
-{
- uint8* SrcBytes = (uint8*)&Value;     // TODO: replace the cast with __builtin_bit_cast
- uint8  DstBytes[sizeof(T)];
- for(uint idx=0;idx < sizeof(T);idx++)DstBytes[idx] = SrcBytes[(sizeof(T)-1)-idx];
- return *(T*)&DstBytes;
-}
-//------------------------------------------------------------------------------------------------------------
-template<typename T> constexpr _finline static int32 AddrToRelAddr(T CmdAddr, unsigned int CmdLen, T TgtAddr){return -((CmdAddr + CmdLen) - TgtAddr);}         // x86 only?
-template<typename T> constexpr _finline static T     RelAddrToAddr(T CmdAddr, unsigned int CmdLen, int32 TgtOffset){return ((CmdAddr + CmdLen) + TgtOffset);}  // x86 only?
-
-template <typename T> constexpr _finline static T RotL(T Value, unsigned int Shift){constexpr unsigned int MaxBits = sizeof(T) * 8U; return (Value << Shift) | (Value << ((MaxBits - Shift)&(MaxBits-1)));}
-template <typename T> constexpr _finline static T RotR(T Value, unsigned int Shift){constexpr unsigned int MaxBits = sizeof(T) * 8U; return (Value >> Shift) | (Value << ((MaxBits - Shift)&(MaxBits-1)));}
-
-template<typename N, typename M> constexpr _finline static M NumToPerc(N Num, M MaxVal){return (((Num)*100)/(MaxVal));}               // NOTE: Can overflow!
-template<typename P, typename M> constexpr _finline static M PercToNum(P Per, M MaxVal){return (((Per)*(MaxVal))/100);}               // NOTE: Can overflow!          
-
-template<class N, class M> constexpr _finline static M AlignFrwd(N Value, M Alignment){return (Value/Alignment)+(bool(Value%Alignment)*Alignment);}    // NOTE: Slow but works with any Alignment value
-template<class N, class M> constexpr _finline static M AlignBkwd(N Value, M Alignment){return (Value/Alignment)*Alignment;}                            // NOTE: Slow but works with any Alignment value
-
-// 2,4,8,16,...
-template<typename N> constexpr _finline static bool IsPowerOf2(N Value){return Value && !(Value & (Value - 1));}
-template<typename N> constexpr _finline static N AlignP2Frwd(N Value, unsigned int Alignment){return (Value+((N)Alignment-1)) & ~((N)Alignment-1);}    // NOTE: Result is incorrect if Alignment is not power of 2
-template<typename N> constexpr _finline static N AlignP2Bkwd(N Value, unsigned int Alignment){return Value & ~((N)Alignment-1);}                       // NOTE: Result is incorrect if Alignment is not power of 2
 //------------------------------------------------------------------------------------------------------------

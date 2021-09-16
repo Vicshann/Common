@@ -568,6 +568,7 @@ bool _stdcall IsLogHandle(HANDLE Hnd)
  return ((Hnd == hLogFile)||(Hnd == hConsOut));
 }
 //---------------------------------------------------------------------------
+// !!! -0.177166 is incorrectly printed with %f!!!
 // OPt: InterprocSync, Reopen/Update log // Depth // Fastcall, Max 3 constant args
 // float pushed as double, char pushed as a signed size_t
 //
@@ -579,7 +580,7 @@ void  _cdecl LogProc(int Flags, char* ProcName, char* Message, ...)
  NTSTATUS Status;
  UINT  MSize = 0;
  char* MPtr  = NULL;
- char TmpBuf[1024*3];   // avoid chkstk
+ char TmpBuf[1024*4];   // avoid chkstk
 
  if(!Message || !LogMode)return;   // NULL text string
  va_start(args,Message);
@@ -639,11 +640,14 @@ void  _cdecl LogProc(int Flags, char* ProcName, char* Message, ...)
    if(!hLogFile)  // NOTE: Without FILE_APPEND_DATA offsets must be specified to NtWriteFile
     {          // (LogMode & lmFileUpd)?FILE_APPEND_DATA:FILE_WRITE_DATA       //           //  LogMode |= lmFileUpd;
      Status = NCMN::NNTDLL::FileCreateSync(LogFilePath, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ|FILE_SHARE_WRITE, (LogMode & lmFileUpd)?FILE_OPEN_IF:FILE_OVERWRITE_IF, FILE_NON_DIRECTORY_FILE, &hLogFile);
-     if(Status)return;
     }
-   LARGE_INTEGER offset = {};
-   IO_STATUS_BLOCK iosb = {};
-   Status = NtWriteFile(hLogFile, NULL, NULL, NULL, &iosb, MPtr, MSize, &offset, NULL);
+     else Status = 0;
+   if(!Status)
+    {
+     LARGE_INTEGER offset = {};
+     IO_STATUS_BLOCK iosb = {};
+     Status = NtWriteFile(hLogFile, NULL, NULL, NULL, &iosb, MPtr, MSize, &offset, NULL);
+    }
   }
  if(LogMode & lmCons)
   {           
@@ -742,6 +746,9 @@ template<typename T> size_t _ntoa(char* buffer, size_t idx, size_t maxlen, T val
 //---------------------------------------------------------------------------
 // TODO: Put this and all num-to-str/str-to-num functions into Format.hpp (mamespace NFMT)
 // TODO: Use a template to generate a type validation string from all passed arguments
+// TODO: Repeated chars
+// TODO: Indexed arg reuse
+//
 int _stdcall FormatToBuffer(char* format, char* buffer, UINT maxlen, va_list va)
 {
  size_t idx = 0U;
@@ -994,6 +1001,15 @@ int _stdcall FormatToBuffer(char* format, char* buffer, UINT maxlen, va_list va)
 Exit:
  buffer[idx] = 0;  // out((char)0, buffer, idx < maxlen ? idx : maxlen - 1U, maxlen);
  return (int)idx;
+}
+//---------------------------------------------------------------------------
+int _cdecl PrintFmt(char* buffer, UINT maxlen, char* format, ...)
+{
+ va_list args;
+ va_start(args,format);
+ int MSize = FormatToBuffer(format, buffer, maxlen, args);
+ va_end(args);
+ return MSize; 
 }
 //---------------------------------------------------------------------------
 void _stdcall SetINIValueInt(LPSTR SectionName, LPSTR ValueName, int Value, LPSTR FileName)
@@ -1402,6 +1418,7 @@ char* _fastcall HexNumToStr(UINT64 Value, int MaxDigits, char* Buffer, bool UpCa
  return Buffer; 
 }
 //---------------------------------------------------------------------------
+// NOTE: VMP somehow meke any VirtualProtect fail to read regions of protected DLLs with CurrentProcess handle // Solution: A patcher class with OpenProcess
 DWORD _stdcall WriteLocalProtectedMemory(PVOID Address, PVOID Data, DWORD DataSize, bool RestoreProt)
 {
  DWORD             Result;
@@ -1418,7 +1435,7 @@ DWORD _stdcall WriteLocalProtectedMemory(PVOID Address, PVOID Data, DWORD DataSi
  while(BlockSize)               // WARNING  BlockSize must be COUNTED TO ZERO !!!
   {  
    CurProtBase = &((BYTE*)Address)[Offset];
-   if(!VirtualQuery(CurProtBase,(MEMORY_BASIC_INFORMATION*)&MemInf,sizeof(MEMORY_BASIC_INFO)))break;    // Rounded to begin of page
+   if(!VirtualQuery(CurProtBase,(MEMORY_BASIC_INFORMATION*)&MemInf,sizeof(MEMORY_BASIC_INFO))){DBGMSG("VirtualQuery fail=%u", GetLastError()); break; }   // Rounded to begin of page
    if(MemInf.RegionSize > BlockSize)ProtSize = BlockSize;   // No Protection loop
 	 else ProtSize = MemInf.RegionSize;
    if((MemInf.Protect==PAGE_READWRITE)||(MemInf.Protect==PAGE_EXECUTE_READWRITE)) // WRITECOPY  changed to READWRITE by writeprocessmemory - DO NOT ALLOW THIS !!!
@@ -1428,10 +1445,10 @@ DWORD _stdcall WriteLocalProtectedMemory(PVOID Address, PVOID Data, DWORD DataSi
 	 }
 	  else
 	   {
-		if(!VirtualProtect(CurProtBase,ProtSize,PAGE_EXECUTE_READWRITE,&PrevProt))break;   // Allow writing
+		if(!VirtualProtect(CurProtBase,ProtSize,PAGE_EXECUTE_READWRITE,&PrevProt)){DBGMSG("VirtualProtect 1 fail=%u, %p, %08X", GetLastError(), CurProtBase, ProtSize); break;}   // Allow writing
 		MoveMemory(CurProtBase,&((BYTE*)Data)[Offset],ProtSize);     // FastMoveMemory
 		Result = ProtSize;
-		if(RestoreProt){if(!VirtualProtect(CurProtBase,ProtSize,PrevProt,&PrevProt))break;}  // Restore protection
+		if(RestoreProt){if(!VirtualProtect(CurProtBase,ProtSize,PrevProt,&PrevProt)){DBGMSG("VirtualProtect 2 fail=%u", GetLastError()); break;} }  // Restore protection
 	   }
    if(Result  != ProtSize)break;
    Offset     += ProtSize;
@@ -1484,6 +1501,37 @@ DWORD _stdcall WriteProtectedMemory(DWORD ProcessID, HANDLE hProcess, PVOID Addr
  if(CloseP)CloseHandle(hProcess);
  return (DataSize-BlockSize); // Bytes written
 }
+//---------------------------------------------------------------------------
+int _stdcall WriteVmProtectedMemory(HANDLE* hProcess, PVOID TgtAddr, PVOID Data, SIZE_T Size, bool RstProt)
+{
+ NTSTATUS stat = 0;
+ if(!*hProcess)
+  {
+   DWORD FVals = PROCESS_VM_OPERATION|PROCESS_QUERY_INFORMATION|PROCESS_VM_READ|PROCESS_VM_WRITE;            
+   CLIENT_ID CliID;
+   OBJECT_ATTRIBUTES ObjAttr;
+   CliID.UniqueThread  = 0;
+   CliID.UniqueProcess = (HANDLE)SIZE_T(NtCurrentProcessId());
+   ObjAttr.Length = sizeof(ObjAttr);
+   ObjAttr.RootDirectory = NULL;  
+   ObjAttr.Attributes = 0;           // bInheritHandle ? 2 : 0;
+   ObjAttr.ObjectName = NULL;
+   ObjAttr.SecurityDescriptor = ObjAttr.SecurityQualityOfService = NULL;
+   stat = NtOpenProcess(hProcess, FVals, &ObjAttr, &CliID);
+   DBGMSG("NtOpenProcess: %08X", stat);
+   if(stat)return -1;
+  }       
+ ULONG OldProtect;
+ PVOID  PAddr = TgtAddr;
+ SIZE_T PSize = Size;
+ stat = NtProtectVirtualMemory(*hProcess, &PAddr, &PSize, PAGE_EXECUTE_READWRITE, &OldProtect);   //create GUARD page                  
+ DBGMSG("ProtStat 1: %08X", stat);
+ if(stat)return -2;
+ stat = NtWriteVirtualMemory(*hProcess, TgtAddr, Data, Size, &Size); 
+ DBGMSG("WrMem: %08X, TAddr=%p", stat,TgtAddr,Size);
+ if(RstProt){stat = NtProtectVirtualMemory(*hProcess, &PAddr, &PSize, OldProtect, &OldProtect); DBGMSG("ProtStat 2: %08X", stat);} 
+ return Size;          
+};
 //---------------------------------------------------------------------------
 int _stdcall SizeOfSignatureData(LPSTR Signature, UINT SigLen) 
 {
@@ -2229,6 +2277,17 @@ bool _stdcall DeleteFolder(LPSTR FolderPath)
  return RemoveDirectory(FolderPath);
 }
 //---------------------------------------------------------------------------
+bool _stdcall FindFileByMask(LPSTR FileMask)
+{
+ WIN32_FIND_DATA fdat;
+ HANDLE hSearch = FindFirstFile(FileMask,&fdat);
+ if(hSearch == INVALID_HANDLE_VALUE)return false;
+ TrimFilePath(FileMask);
+ lstrcatA(FileMask, fdat.cFileName);
+ FindClose(hSearch);
+ return true;
+}
+//------------------------------------------------------------------------------------
 int _stdcall CopyFileByMask(LPSTR DstDir, LPSTR FileMask, bool Overwr)
 {
  WIN32_FIND_DATA fdat;
@@ -2410,7 +2469,7 @@ int _stdcall GetDesktopRefreshRate(void)
 long _stdcall NormalizeDrivePath(PWSTR PathBuffer, long BufferLength)
 {
  wchar_t DrvPath[MAX_PATH];
- PROCESS_DEVICEMAP_INFORMATION MDrives;    // size is 36 for both x32/64
+ PROCESS_DEVICEMAP_INFORMATION_EX MDrives = {0};    // size is 36 for both x32/64
  PWSTR PathSrcPtr = PathBuffer;
  if((PathSrcPtr[0] == '\\') && (PathSrcPtr[7] == '\\') && (PathSrcPtr[1] == 'D') && (PathSrcPtr[6] == 'e'))
   {
@@ -2422,8 +2481,12 @@ long _stdcall NormalizeDrivePath(PWSTR PathBuffer, long BufferLength)
    PathSrcPtr  += 4;
    BufferLength -= 4;
   }
- NTSTATUS stat = NtQueryInformationProcess(NtCurrentProcess, ProcessDeviceMap, &MDrives, sizeof(MDrives), 0);           //DWORD DrvMsk = GetLogicalDrives();	
- if(stat < 0)return -1;
+ NTSTATUS stat = NtQueryInformationProcess(NtCurrentProcess, ProcessDeviceMap, &MDrives, sizeof(PROCESS_DEVICEMAP_INFORMATION), 0);           //DWORD DrvMsk = GetLogicalDrives();	
+ if(stat < 0)
+  {
+   stat = NtQueryInformationProcess(NtCurrentProcess, ProcessDeviceMap, &MDrives, sizeof(PROCESS_DEVICEMAP_INFORMATION_EX), 0);
+   if(stat < 0)return -1;
+  }
  DWORD DrvMsk = MDrives.Query.DriveMap;
  for(wchar_t DrvIdx = 0; DrvMsk; DrvMsk >>= 1, DrvIdx++)
   {
@@ -2881,8 +2944,13 @@ int _stdcall BinaryPackToBlobStr(LPSTR ApLibPath, LPSTR SrcBinPath, LPSTR OutBin
  return 0;
 }
 //------------------------------------------------------------------------------------------------------------
+/* Types:    https://en.wikipedia.org/wiki/X.690
+   0x30 - SEQUENCE (sub tree)
+   0x16 - IA5String
+   0x02 - INTEGER
+*/
 // Returns offset to a next Element
-UINT _stdcall NextItemASN1(PBYTE DataPtr, PBYTE* Body, PBYTE Type, UINT* Size)
+long _stdcall NextItemASN1(PBYTE DataPtr, PBYTE* Body, PBYTE Type, UINT* Size)
 {
  if(!*DataPtr)return 0;    // No more items
  *Body = DataPtr;
@@ -2897,6 +2965,52 @@ UINT _stdcall NextItemASN1(PBYTE DataPtr, PBYTE* Body, PBYTE Type, UINT* Size)
  *Size = Len;
  *Body = DataPtr;
  return Res;
+}
+//------------------------------------------------------------------------------------------------------------
+// NOTE: ASN.1 integers are all signed so you may get an unexpected extra first byte 0 (big endian) to represent a positive number
+long _stdcall GetTypeFromASN1(PBYTE* DstPtr, PBYTE BufASN1, long LenASN1, UINT ValType, UINT ValIdx)  
+{
+ while(LenASN1 > 0)
+  {
+   BYTE  Type = 0;
+   UINT  Size = 0;
+   PBYTE Body = nullptr;
+   long BlkLen = NextItemASN1(BufASN1, &Body, &Type, &Size);
+//   LOGMSG("Type: %02X, %u, %08X",Type, Size, BlkLen);
+   if((BlkLen <= 0) || (Type == 0x05))return 0;   // 05 is NULL (Always terminates a group or may be placed there just for fun?)
+   if((Type == 0x30)||(Type == 0x31)||(Type == 0x04))     // 04:OCTET STRING  is used to store another ASN1 data
+    {
+     long len = GetTypeFromASN1(DstPtr, Body, Size, ValType, ValIdx);
+     if(len != 0)return len;    // Break if found
+    }
+     else if((Type == ValType)&&(ValIdx-- == 0))
+      {
+       *DstPtr = Body;
+       return Size;    
+      }
+   BufASN1 += BlkLen;
+   LenASN1 -= BlkLen;
+  }
+ return 0;   // Not found!
+}
+//------------------------------------------------------------------------------------------------------------
+void _stdcall DumpBufferASN1(PBYTE BufASN1, long LenASN1, int Depth)
+{
+ while(LenASN1 > 0)
+  {
+   BYTE  Type = 0;
+   UINT  Size = 0;
+   PBYTE Body = NULL;
+   long BlkLen = NextItemASN1(BufASN1, &Body, &Type, &Size);
+   LOGMSG("Depth=%u, Type=%02X, Size=%u, BlkLen=%08X",Depth, Type, Size, BlkLen);
+   if((BlkLen <= 0) || (Type == 0x05))return;   // 05 is NULL (Always terminates a group or may be placed there just for fun?)
+   if((Type == 0x30)||(Type == 0x31)||(Type == 0x04))     // 04:OCTET STRING  is used to store another ASN1 data
+    {
+     DumpBufferASN1(Body, Size, Depth+1);
+    }
+   BufASN1 += BlkLen;
+   LenASN1 -= BlkLen;
+  }
 }
 //------------------------------------------------------------------------------------------------------------
 int _stdcall FormatDateForHttp(SYSTEMTIME* st, LPSTR DateStr)
@@ -2985,3 +3099,94 @@ PVOID _stdcall GetProcessImageBase(HANDLE hProcess)   // Requires ntdef header
 }
 
 */
+//------------------------------------------------------------------------------------------------------------
+ULONG _stdcall SetProcessUntrusted(HANDLE hProcess)    // Causes __alloca_probe_16
+{
+ UINT8 TmpSid[MAX_SID_SIZE];
+ TOKEN_MANDATORY_LABEL tml = { { (PSID)&TmpSid, SE_GROUP_INTEGRITY } };
+ ULONG cb = MAX_SID_SIZE;
+ HANDLE hToken;
+ if(!CreateWellKnownSid(WinUntrustedLabelSid, 0, tml.Label.Sid, &cb) || !OpenProcessToken(hProcess, TOKEN_ADJUST_DEFAULT, &hToken))return GetLastError();
+ ULONG dwError = NOERROR;
+ if(!SetTokenInformation(hToken, TokenIntegrityLevel, &tml, sizeof(tml)))dwError = GetLastError();
+ CloseHandle(hToken);
+ return dwError; 
+}
+//------------------------------------------------------------------------------------------------------------
+NTSTATUS _stdcall CreateUntrustedFolder(PHANDLE phObject, PWSTR ObjectName)
+{
+ UINT8 UntrustedSid[MAX_SID_SIZE];
+ ULONG cb = sizeof(UntrustedSid);
+ if(CreateWellKnownSid(WinUntrustedLabelSid, 0, (PSID)&UntrustedSid, &cb))
+  {
+   UINT8 Sacl[MAX_SID_SIZE + sizeof(ACL) + sizeof(ACE_HEADER) + sizeof(ACCESS_MASK)];
+   ULONG cb = sizeof(Sacl);
+   InitializeAcl((PACL)&Sacl, cb, ACL_REVISION);
+   if(AddMandatoryAce((PACL)&Sacl, ACL_REVISION, 0, 0, (PSID)&UntrustedSid))
+    {
+     SECURITY_DESCRIPTOR sd;
+     UNICODE_STRING ObjectNameUS;
+     UINT Length = 11;
+     wchar_t Path[512] = {'\\','?','?','\\','G','l','o','b','a','l','\\'};
+     for(int idx=0;*ObjectName;ObjectName++,Length++)Path[Length] = *ObjectName;
+     //RtlInitUnicodeString(&ObjectNameUS, ObjectName);
+     ObjectNameUS.Buffer = Path;
+     ObjectNameUS.Length = Length * sizeof(wchar_t);
+     ObjectNameUS.MaximumLength = ObjectNameUS.Length + sizeof(wchar_t);
+
+     InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION);
+     SetSecurityDescriptorDacl(&sd, TRUE, NULL, FALSE);
+     SetSecurityDescriptorSacl(&sd, TRUE, (PACL)&Sacl, FALSE);
+     IO_STATUS_BLOCK iosb = {};
+     OBJECT_ATTRIBUTES oattr = { sizeof(OBJECT_ATTRIBUTES), 0, &ObjectNameUS, OBJ_CASE_INSENSITIVE|OBJ_OPENIF, &sd };
+     HANDLE ObjHndl = NULL;
+     NTSTATUS Result = NtCreateFile(&ObjHndl, GENERIC_READ|SYNCHRONIZE, &oattr, &iosb, NULL, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_WRITE|FILE_SHARE_READ, FILE_CREATE, FILE_DIRECTORY_FILE|FILE_SYNCHRONOUS_IO_NONALERT, NULL, 0); // NtCreateDirectoryObject(&ObjHndl, DIRECTORY_ALL_ACCESS, &oa);
+     if(!Result)
+      {
+       if(phObject)*phObject = ObjHndl;
+         else NtClose(ObjHndl);
+      }
+     return Result;
+    }
+ } 
+ return STATUS_UNSUCCESSFUL;
+}
+//------------------------------------------------------------------------------------------------------------
+NTSTATUS _stdcall CreateUntrustedNtObjDir(PHANDLE phObject, PWSTR ObjectName)
+{
+ UINT8 UntrustedSid[MAX_SID_SIZE];
+ ULONG cb = sizeof(UntrustedSid);
+ if(CreateWellKnownSid(WinUntrustedLabelSid, 0, (PSID)&UntrustedSid, &cb))
+  {
+   UINT8 Sacl[MAX_SID_SIZE + sizeof(ACL) + sizeof(ACE_HEADER) + sizeof(ACCESS_MASK)];
+   ULONG cb = sizeof(Sacl);
+   InitializeAcl((PACL)&Sacl, cb, ACL_REVISION);
+   if(AddMandatoryAce((PACL)&Sacl, ACL_REVISION, 0, 0, (PSID)&UntrustedSid))
+    {
+     SECURITY_DESCRIPTOR sd;
+     UNICODE_STRING ObjectNameUS;
+     UINT Length = 1;   // 4
+     wchar_t Path[512] = {'\\'}; // {'\\','?','?','\\'};
+     for(int idx=0;*ObjectName;ObjectName++,Length++)Path[Length] = *ObjectName;
+     //RtlInitUnicodeString(&ObjectNameUS, ObjectName);
+     ObjectNameUS.Buffer = Path;
+     ObjectNameUS.Length = Length * sizeof(wchar_t);
+     ObjectNameUS.MaximumLength = ObjectNameUS.Length + sizeof(wchar_t);
+
+     InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION);
+     SetSecurityDescriptorDacl(&sd, TRUE, NULL, FALSE);
+     SetSecurityDescriptorSacl(&sd, TRUE, (PACL)&Sacl, FALSE);
+     OBJECT_ATTRIBUTES oattr = { sizeof(OBJECT_ATTRIBUTES), 0, &ObjectNameUS, OBJ_CASE_INSENSITIVE|OBJ_OPENIF, &sd };
+     HANDLE ObjHndl = NULL;
+     NTSTATUS Result = NtCreateDirectoryObject(&ObjHndl, DIRECTORY_ALL_ACCESS, &oattr);
+     if(!Result)
+      {
+       if(phObject)*phObject = ObjHndl;
+         else NtClose(ObjHndl);   // NOTE: The directory will be removed after all handles to it are closed
+      }
+     return Result;
+    }
+ }  
+ return STATUS_UNSUCCESSFUL;
+}
+//------------------------------------------------------------------------------------------------------------

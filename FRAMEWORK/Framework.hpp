@@ -27,6 +27,7 @@ namespace NFWK      // Must be a namespace because we are adding some configs in
 #endif
 
 #include "Platforms/Common.hpp"
+#include "Platforms/Utils.hpp"
 #include "Platforms/CompileTime.hpp"
 #include "Platforms/Platform.hpp"
 //#include "MemUtils.hpp"

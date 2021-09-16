@@ -332,7 +332,7 @@ typedef struct _PROCESS_SESSION_INFORMATION
 } PROCESS_SESSION_INFORMATION, *PPROCESS_SESSION_INFORMATION;
 
 
-typedef struct _PROCESS_DEVICEMAP_INFORMATION {
+typedef struct _PROCESS_DEVICEMAP_INFORMATION {      // Invalid since Vista?
     union {
         struct {
             HANDLE DirectoryHandle;

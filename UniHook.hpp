@@ -93,21 +93,24 @@ enum EHookFlg {hfNone,hfFillNop=1,hfFollowJmp=2,hfForceHook=4};       // Restore
 template<typename T, T HProc=0> struct SProcHook        //  'T HProc' will crash the MSVC compiler!    // Declare all members static that the hook struct can be declared temporary on stack (without 'static' cpecifier)?
 {
 #ifdef _AMD64_
- static const unsigned int TrLen = 12;    // 48 B8 11 22 33 00 FF FF FF 0F   movabs rax,FFFFFFF00332211  // jmp rax
+ static const unsigned int TrLenL = 12;    // 48 B8 11 22 33 00 FF FF FF 0F   movabs rax,FFFFFFF00332211  // FF E0   jmp rax     // Longest
+ static const unsigned int TrLenM = 6;     // FF 25 F2 FF FF FF   jmp [rip-14] (Addr is above it, in a padding area)
+ static const unsigned int TrLenS = 6;     // 68 ?? ?? ?? ??   push XXXXXXXX  // C3   retn      // If target addr is in x32 area
+ static const unsigned int TrLenJ = 5;     // E9 XX XX XX XX   // Jmp REL32
 #else
 #ifdef NORELHOOK
- static const unsigned int TrLen = 6;	  // 68 XX XX XX XX  C3  // push Addr; retn
+ static const unsigned int TrLenS = 6;	  // 68 XX XX XX XX  C3  // push Addr; retn
 #else
- static const unsigned int TrLen = 5;	  // E9 XX XX XX XX   // Jmp REL32
+ static const unsigned int TrLenS = 5;	  // E9 XX XX XX XX   // Jmp REL32
 #endif
 #endif
- T     OrigProc;   // Execute stolen code and continue
+ T     OrigProc;   // Execute stolen code and continue    // TODO: Replace with forwarding to StolenCode
  T     HookAddr;   // Hooked function address
- T     HookProc;   // Hook function
+ T     HookProc;   // Hook function      // Helps to prevent code bloat by caching the template argument?
  //PVOID* Import;   // Redirected import of this module (If need to destroy PE header, do it AFTER hooking)
- UINT   HookLen;
- BYTE   OriginCode[16];  // Original code to restore when hook removed    // Size of __m128i 
- BYTE   StolenCode[64];  // A modified stolen code
+ SIZE_T HookLen;
+ BYTE   OriginCode[16];  // Original code to restore when hook is removed    // Size of __m128i 
+ BYTE   StolenCode[64];  // A modified stolen code (Executable buffer)
 //------------------------------------------------------------------------------------
 static int CountNops(PVOID PAddr)
 {
@@ -120,8 +123,13 @@ static bool IsAddrHooked(PVOID PAddr, PVOID Hook)       // Already hooked by thi
 {
  PBYTE Addr = (PBYTE)PAddr;
 #ifdef _AMD64_
- if((Addr[0] != 0x48)||(Addr[1] != 0xB8)||(Addr[10] != 0xFF)&&(Addr[11] != 0xE0))return false;  // Very unprobable to be an original code 
- if(Hook && (*(PVOID*)&Addr[2] != Hook))return false;
+ if((*(PDWORD)Addr == 0xFFF225FF) && (*(PWORD)&Addr[4] == 0xFFFF))return true;  // rel jmp
+ if((Addr[0] == 0x68) && (Addr[5] == 0xC3))return true;   // push, ret
+ if((*(PWORD)&Addr[0] == 0xB848) && (*(PWORD)&Addr[10] == 0xE0FF))       //    (Addr[0] == 0x48)||(Addr[1] == 0xB8)||(Addr[10] == 0xFF)&&(Addr[11] == 0xE0))return false;  // Very unprobable to be an original code 
+  {
+   if(Hook && (*(PVOID*)&Addr[2] == Hook))return true;
+  }
+ return false;
 #else
  if(Addr[0] != 0xE9)return true;   // Not reliable, it may be an original code
  if(Hook && (RelAddrToAddr(Addr,5,*(PDWORD)&Addr[1]) != Hook))return false;     // PDWORD?
@@ -135,8 +143,25 @@ bool SetHookIntr(PBYTE ProcAddr=NULL, UINT Flags=EHookFlg::hfFillNop|EHookFlg::h
 // DBGMSG("Hooking: %p",ProcAddr);
 #ifdef _AMD64_
  NHDE::HDE64 dhde;
+ enum EHT64 {htJmp, htPush, htJmpRel, htJmpRAX};
+ unsigned int TrLen = TrLenL;
+ int HookTypeX64 = htJmpRAX;
+ PBYTE JAddr = (ProcAddr + (SIZE_T)TrLenJ);
+ if(((PBYTE)HookFunc <= (JAddr + 0x7FFFFFFF)) && ((PBYTE)HookFunc >= (JAddr - 0x80000000))){HookTypeX64 = htJmp; TrLen = TrLenJ;}    // In range of a simple Rel32 jump  (+/- 2Gb)
+ else if((SIZE_T)HookFunc <= 0xFFFFFFFF){HookTypeX64 = htPush; TrLen = TrLenS;}      // In x32 area
+   else 
+    {
+     UINT Sc = 1;
+     BYTE Sv = ProcAddr[-1];
+     for(int idx=-2;Sc < 8;Sc++,idx--) // Count same padding bytes (Usually 0xCC)
+      {
+       if(ProcAddr[idx] != Sv)break;
+      }
+     if(Sc == 8){HookTypeX64 = htJmpRel; TrLen = TrLenM; this->StolenCode[sizeof(this->StolenCode)-1] = Sv;}
+    }
 #else
  NHDE::HDE32 dhde;
+ unsigned int TrLen = TrLenS;
 #endif					   
  UINT  CodeLen   = 0;
  this->HookLen   = 0;
@@ -253,8 +278,13 @@ bool SetHookIntr(PBYTE ProcAddr=NULL, UINT Flags=EHookFlg::hfFillNop|EHookFlg::h
  *(PVOID*)&this->HookProc = HookFunc;   // *(PVOID*)&this->HookProc = (PVOID)HookFunc;
  *(PVOID*)&this->HookAddr = (PVOID)ProcAddr;
  *(PVOID*)&this->OrigProc = (PVOID)&StolenCode;
- PVOID  BaseAddress = ProcAddr;
+#ifdef _AMD64_
+ PVOID  BaseAddress = ProcAddr - 8;     // 8 for hook addr on x64 (htJmpRel)
+ SIZE_T RegionSize  = TrLen + 8;
+#else
+ PVOID  BaseAddress = ProcAddr;    
  SIZE_T RegionSize  = TrLen;
+#endif
  ULONG  OldProtect  = 0;	   
  NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, PAGE_EXECUTE_READWRITE, &OldProtect);   // VirtualProtect(ProcAddr,TrLen,PAGE_EXECUTE_READWRITE,&PrevProt);  
  *(__m128i*)&Patch = *(__m128i*)ProcAddr;
@@ -265,15 +295,35 @@ bool SetHookIntr(PBYTE ProcAddr=NULL, UINT Flags=EHookFlg::hfFillNop|EHookFlg::h
  this->StolenCode[CodeLen+1] = 0x25;
  this->StolenCode[CodeLen+2] = this->StolenCode[CodeLen+3] = this->StolenCode[CodeLen+4] = this->StolenCode[CodeLen+5] = 0;
  *((PBYTE*)&this->StolenCode[CodeLen+6]) = ProcAddr + this->HookLen;   // Aligned by HDE to whole command
- Patch[0]  = 0x48;				       // movabs rax,FFFFFFF00332211   // EAX is unused in x64 calling convention  // TODO: Usesome SSE instructions to copy this by one operation
- Patch[1]  = 0xB8;
- *(PVOID*)&Patch[2] = *(PVOID*)&HookFunc;        // NOTE: This was modified to use a single assignment somewhere already!!!!!
- Patch[10] = 0xFF;                     // jmp EAX      // EAX is not preserved!  // Replace with QHalves method if EAX must be preserved  // No relative addresses here for easy overhooking
- Patch[11] = 0xE0;
+ if(HookTypeX64 == htJmpRAX)
+  {
+   Patch[0]  = 0x48;				       // movabs rax,FFFFFFF00332211   // EAX is unused in x64 calling convention  // TODO: Usesome SSE instructions to copy this by one operation
+   Patch[1]  = 0xB8;
+   *(PVOID*)&Patch[2] = *(PVOID*)&HookFunc;        // NOTE: This was modified to use a single assignment somewhere already!!!!!
+   Patch[10] = 0xFF;                     // jmp EAX      // EAX is not preserved!  // Replace with QHalves method if EAX must be preserved  // No relative addresses here for easy overhooking
+   Patch[11] = 0xE0;
+  }
+ else if(HookTypeX64 == htPush)
+  {
+   Patch[0]  = 0x68;   // push
+   *(DWORD*)&Patch[1] = (DWORD)HookFunc;   // Truncating
+   Patch[5]  = 0xC3;   // ret
+  }
+ else if(HookTypeX64 == htJmpRel)
+  {
+   *(PDWORD)&Patch[0] = 0xFFF225FF;    // jmp [rip-14]
+   *(PWORD)&Patch[4]  = 0xFFFF;
+   ((PVOID*)ProcAddr)[-1] = HookFunc;
+  }
+ else if(HookTypeX64 == htJmp)
+  {
+   Patch[0]  = 0xE9;
+   *((PDWORD)&Patch[1]) = AddrToRelAddr(ProcAddr,TrLen,*(PBYTE*)&HookProc);
+  }
 #else
  this->StolenCode[CodeLen] = 0xE9;	   // JMP Rel32
  *((PDWORD)&this->StolenCode[CodeLen+1]) = AddrToRelAddr(&this->StolenCode[CodeLen],TrLen,&ProcAddr[this->HookLen]);
-#ifdef NORELHOOK
+#ifdef NORELHOOK            // In case someone will hook this addr again and is unable to fix spliced rel jumps
  Patch[0] = 0x68;	   // push XXXXXXXX
  *((PDWORD)&Patch[1]) = (DWORD)HookProc;
  Patch[5] = 0xC3;      // ret
@@ -287,7 +337,7 @@ bool SetHookIntr(PBYTE ProcAddr=NULL, UINT Flags=EHookFlg::hfFillNop|EHookFlg::h
 
  BaseAddress = this;
  RegionSize  = sizeof(*this);
- NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, PAGE_EXECUTE_READWRITE, &OldProtect);  // VirtualProtect(this,sizeof(*this),PAGE_EXECUTE_READWRITE,&PrevProt);	 // On some platforms a data sections is not executable!
+ NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, PAGE_EXECUTE_READWRITE, &OldProtect);  // VirtualProtect(this,sizeof(*this),PAGE_EXECUTE_READWRITE,&PrevProt);	 // On some platforms data sections are not executable!
 // FlushInstructionCache(GetCurrentProcess(),ProcAddr,sizeof(this->OriginCode));   // Is it really needed here?   (Just returns 1)
  return true;
 }  
@@ -324,11 +374,24 @@ bool Remove(bool Any=true)     // NOTE: If someone else takes our jump code and 
  if(!this->HookLen)return false;
  if(IsAddrHooked(this->HookAddr, (Any)?(NULL):(this->HookProc)))   // If some other instance is not restored it already // NOTE: Original code will be lost if first instance sees that someone else hooked it here
   {
-   PVOID  BaseAddress = this->HookAddr;
-   SIZE_T RegionSize  = this->HookLen;
+   PBYTE Addr = (PBYTE)this->HookAddr;
+   UINT  Size = sizeof(this->OriginCode);  // Always 16 bytes
+#ifdef _AMD64_
+   Addr -= 8;    // Always on x64
+   Size += 8;
+#endif
+   PVOID  BaseAddress = Addr;
+   SIZE_T RegionSize  = Size;
    ULONG  OldProtect  = 0;
    NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, PAGE_EXECUTE_READWRITE, &OldProtect);  	// VirtualProtect(this->HookAddr,this->HookLen,PAGE_EXECUTE_READWRITE,&PrevProt);				      
-   _mm_storeu_si128((__m128i*)this->HookAddr, *(__m128i*)&this->OriginCode);      // SSE2, single operation            
+   _mm_storeu_si128((__m128i*)this->HookAddr, *(__m128i*)&this->OriginCode);      // SSE2, single operation, unaligned            
+#ifdef _AMD64_
+   if(*(PDWORD)Addr == 0xFFF225FF)    // FF 25 F2 FF FF FF   // Restore addr above rel jmp      
+    {
+     BYTE Sv = this->StolenCode[sizeof(this->StolenCode)-1];
+     for(int ctr=0;ctr < 8;ctr++)Addr[ctr] = Sv;       // Restore padding bytes
+    }
+#endif 
    NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, OldProtect, &OldProtect);   // VirtualProtect(this->HookAddr,this->HookLen,PrevProt,&PrevProt);
 //   FlushInstructionCache(GetCurrentProcess(),this->HookAddr,sizeof(this->OriginCode));    // Is it really needed here? (Just returns 1)
   }
@@ -468,9 +531,9 @@ bool _stdcall SetHook(THookProc ProcBefore, THookProc ProcAfter)
  BYTE PatchBeg[16];
  BYTE PatchEnd[16];
 #ifdef _AMD64_
- BYTE CTempl[] = {0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x41,0x53,0x41,0x52,0x57,0x56,0x55,0x53,0x50,0x41,0x51,0x41,0x50,0x52,0x51,0x48,0xB8,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xFF,0xD0,0x85,0xC0,0x59,0x5A,0x41,0x58,0x41,0x59,0x58,0x5B,0x5D,0x5E,0x5F,0x41,0x5A,0x41,0x5B,0x41,0x5C,0x41,0x5D,0x41,0x5E,0x41,0x5F,0x75,0x01,0xC3}; 
+ BYTE CTempl[] = {0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x41,0x53,0x41,0x52,0x57,0x56,0x55,0x53,0x50,0x41,0x51,0x41,0x50,0x52,0x51,0x48,0xB8,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xFF,0xD0,0x84,0xC0,0x59,0x5A,0x41,0x58,0x41,0x59,0x58,0x5B,0x5D,0x5E,0x5F,0x41,0x5A,0x41,0x5B,0x41,0x5C,0x41,0x5D,0x41,0x5E,0x41,0x5F,0x75,0x01,0xC3}; 
 #else
- BYTE CTempl[] = {0x57,0x56,0x55,0x53,0x50,0x52,0x51,0xFF,0x74,0x24,0x24,0xFF,0x74,0x24,0x24,0xE8,0x00,0x00,0x00,0x00,0x85,0xC0,0x58,0x58,0x59,0x5A,0x58,0x5B,0x5D,0x5E,0x5F,0x75,0x03,0xC2,0x08,0x00};
+ BYTE CTempl[] = {0x57,0x56,0x55,0x53,0x50,0x52,0x51,0xFF,0x74,0x24,0x24,0xFF,0x74,0x24,0x24,0xE8,0x00,0x00,0x00,0x00,0x84,0xC0,0x58,0x58,0x59,0x5A,0x58,0x5B,0x5D,0x5E,0x5F,0x75,0x03,0xC2,0x08,0x00};
 #endif
  memcpy(&PatchBeg, ProcBegPtr, sizeof(PatchBeg));
  memcpy(&PatchEnd, ProcEndPtr, sizeof(PatchEnd));

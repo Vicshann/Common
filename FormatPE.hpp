@@ -643,6 +643,23 @@ static BOOL IsNamesEqualIC(CHAR *NameA, CHAR *NameB)
  return TRUE;
 }
 //------------------------------------------------------------------------------
+static bool GetSectionForAddress(PVOID ModuleBase, PVOID Address, SECTION_HEADER **ResSec)
+{
+ DOS_HEADER     *DosHdr = (DOS_HEADER*)ModuleBase;
+ WIN_HEADER<PECURRENT>  *WinHdr = (WIN_HEADER<PECURRENT>*)&((PBYTE)ModuleBase)[DosHdr->OffsetHeaderPE];
+ UINT            HdrLen = DosHdr->OffsetHeaderPE+WinHdr->FileHeader.HeaderSizeNT+sizeof(FILE_HEADER)+sizeof(DWORD);
+ SECTION_HEADER *CurSec = (SECTION_HEADER*)&((BYTE*)ModuleBase)[HdrLen];
+ for(UINT ctr = 0;ctr < WinHdr->FileHeader.SectionsNumber;ctr++,CurSec++)
+  {
+   if(((PBYTE)Address >= ((PBYTE)ModuleBase + CurSec->SectionRva)) && ((PBYTE)Address < ((PBYTE)ModuleBase + CurSec->SectionRva + CurSec->VirtualSize)))
+    {
+     if(ResSec)*ResSec = CurSec;  // NULL for only a presense test
+     return true;
+    }
+  }
+ return false;
+}
+//---------------------------------------------------------------------------
 template<typename T> static bool TGetModuleSection(PVOID ModuleBase, char *SecName, SECTION_HEADER **ResSec)
 {
  DOS_HEADER     *DosHdr = (DOS_HEADER*)ModuleBase;
@@ -1512,11 +1529,15 @@ static PVOID GetNtDllBaseFast(bool Cache=true)
 // Use ntdll.dll as SrcModule, 42 bytes in StubBuf for each function 
 // Import table must be writable! 
 // StubBuf must be made executable
+// TODO: Use difference to find syscall numbers and build call stub instead copy it
 // Log output should be initially disabled if ResolveSysSrvCallImports called from same module
 template<typename T, bool RawSrcPE=false, bool RawDstPE=false> static int ResolveSysCallImports(PVOID TgtModule, PVOID SrcModule, PBYTE StubBuf, PBYTE AddrBuf, UINT BufSize, bool DestroyImp=true)
 {
  static const int SysCallEntrySize = 42;   // Max encountered is 41 (WOW64, QueryInformationProcess)
- if(!IsValidPEHeader(SrcModule) || !IsValidPEHeader(TgtModule)){DBGMSG("On of modules is invalid!"); return -1;}
+ PVOID  VPBaseAddress = NULL;
+ SIZE_T VPRegionSize  = 0;
+ ULONG  VPOldProtect  = 0;
+ if(!IsValidPEHeader(SrcModule) || !IsValidPEHeader(TgtModule)){DBGMSG("One of modules is invalid!"); return -1;}
  if(IsValidModuleX64(SrcModule) != IsValidModuleX64(TgtModule)){DBGMSG("Modules not match!"); return -2;}
  LPSTR SrcModName = GetExpModuleName(SrcModule, RawSrcPE);
  if(!SrcModName){DBGMSG("No source module name found!"); return -3;}
@@ -1525,6 +1546,14 @@ template<typename T, bool RawSrcPE=false, bool RawDstPE=false> static int Resolv
  UINT DBuffOffs = 0;
  LPSTR ModName = TFindImportTable<T>((PBYTE)TgtModule, SrcModName, &LookUpRec, &AddrRec, RawDstPE);
  if(!ModName)return NULL;   // Find First import entry
+ if constexpr(!RawDstPE)     // Assuming that ALL import related data is in same section!
+  {
+   SECTION_HEADER* ResSec = nullptr;
+   if(!GetSectionForAddress(TgtModule, ModName, &ResSec)){DBGMSG("Failed to find a target SECTION"); return -5;}
+   VPBaseAddress = &((PBYTE)TgtModule)[ResSec->SectionRva];
+   VPRegionSize  = ResSec->VirtualSize;
+   if(NTSTATUS stat = NtProtectVirtualMemory(NtCurrentProcess, &VPBaseAddress, &VPRegionSize, PAGE_READWRITE, &VPOldProtect)){DBGMSG("VP 1 failed: %08X", stat); return -6;} 
+  }
  if(DestroyImp){for(int ctr=0;ModName[ctr];ctr++)ModName[ctr]=0;}
  for(;LookUpRec->Value;DBuffOffs+=SysCallEntrySize,LookUpRec++,AddrRec++)
   {
@@ -1551,6 +1580,10 @@ template<typename T, bool RawSrcPE=false, bool RawDstPE=false> static int Resolv
    DOS_HEADER* DosHdr = (DOS_HEADER*)TgtModule;
    WIN_HEADER<PECURRENT>* WinHdr = (WIN_HEADER<PECURRENT>*)&(((BYTE*)TgtModule)[DosHdr->OffsetHeaderPE]);
    WinHdr->OptionalHeader.DataDirectories.ImportTable.DirectoryRVA = WinHdr->OptionalHeader.DataDirectories.ImportTable.DirectorySize = 0;    // Prevents a normal import resolving again
+  }
+ if constexpr(!RawDstPE)     // Assuming that ALL import related data is in same section!
+  {
+   if(NTSTATUS stat = NtProtectVirtualMemory(NtCurrentProcess, &VPBaseAddress, &VPRegionSize, VPOldProtect, &VPOldProtect)){DBGMSG("VP 2 failed: %08X", stat);} 
   }
  return DBuffOffs;
 }
