@@ -3,7 +3,7 @@
 
 //#include "Common.hpp"
 
-struct NPTFM
+namespace NPTFM    // Can`t be 'struct' if we want that stubs go in the real executable '.text'  section instead of a data section with the same name
 {
 // Anything that may have a different set of system API is put here
 #ifdef PLT_EFI
@@ -11,7 +11,8 @@ struct NPTFM
 #elif  PLT_WEBASM
 
 #elif  PLT_NIX_USR
-
+#include "PlatNIX/PlatNix.hpp"
+#include "PlatNIX/User/Impl.hpp"
 #elif  PLT_NIX_KRN
 
 #elif  PLT_MAC_USR
@@ -19,7 +20,8 @@ struct NPTFM
 #elif  PLT_MAC_KRN
 
 #elif  PLT_WIN_USR
-#include "PlatWIN/PlatWin.h"
+#include "PlatWIN/PlatWin.hpp"
+#include "PlatWIN/UtilsFmtPE.hpp"
 #include "PlatWIN/User/Impl.hpp"
 #elif  PLT_WIN_KRN
 
@@ -43,5 +45,5 @@ PVOID _fastcall AllocMemHL(PVOID Mem, SIZE_T Size, SIZE_T AllocSize, SIZE_T Rese
 bool  _fastcall FreeMemHL(PVOID Mem, SIZE_T Size=0);
 }*/
 };
-//------------------------------------------------------------------------------------------------------------
+//----  --------------------------------------------------------------------------------------------------------
 

@@ -1,0 +1,74 @@
+The first table lists the instruction used to transition to kernel mode,...
+
+arch/ABI   instruction          syscall #   retval Notes
+   ───────────────────────────────────────────────────────────────────
+   arm/OABI   swi NR               -           a1     NR is syscall #
+   arm/EABI   swi 0x0              r7          r0
+   arm64      svc #0               x8          x0
+   blackfin   excpt 0x0            P0          R0
+   i386       int $0x80            eax         eax
+   ia64       break 0x100000       r15         r8     See below
+   mips       syscall              v0          v0     See below
+   parisc     ble 0x100(%sr2, %r0) r20         r28
+   s390       svc 0                r1          r2     See below
+   s390x      svc 0                r1          r2     See below
+   sparc/32   t 0x10               g1          o0
+   sparc/64   t 0x6d               g1          o0
+   x86_64     syscall              rax         rax    See below
+   x32        syscall              rax         rax    See below
+
+The second table shows the registers used to pass the system call arguments.
+
+   arch/ABI      arg1  arg2  arg3  arg4  arg5  arg6  arg7  Notes
+   ──────────────────────────────────────────────────────────────────
+   arm/OABI      a1    a2    a3    a4    v1    v2    v3
+   arm/EABI      r0    r1    r2    r3    r4    r5    r6
+   arm64         x0    x1    x2    x3    x4    x5    -
+   blackfin      R0    R1    R2    R3    R4    R5    -
+   i386          ebx   ecx   edx   esi   edi   ebp   -
+   ia64          out0  out1  out2  out3  out4  out5  -
+   mips/o32      a0    a1    a2    a3    -     -     -     See below
+   mips/n32,64   a0    a1    a2    a3    a4    a5    -
+   parisc        r26   r25   r24   r23   r22   r21   -
+   s390          r2    r3    r4    r5    r6    r7    -
+   s390x         r2    r3    r4    r5    r6    r7    -
+   sparc/32      o0    o1    o2    o3    o4    o5    -
+   sparc/64      o0    o1    o2    o3    o4    o5    -
+   x86_64        rdi   rsi   rdx   r10   r8    r9    -
+   x32           rdi   rsi   rdx   r10   r8    r9    -
+
+/* The Linux/x86-64 kernel expects the system call parameters in
+   registers according to the following table:
+
+    syscall number  rax
+    arg 1       rdi
+    arg 2       rsi
+    arg 3       rdx
+    arg 4       r10
+    arg 5       r8
+    arg 6       r9
+
+    The Linux kernel uses and destroys internally these registers:
+    return address from
+    syscall     rcx
+    eflags from syscall r11
+
+    Normal function call, including calls to the system call stub
+    functions in the libc, get the first six parameters passed in
+    registers and the seventh parameter and later on the stack.  The
+    register use is as follows:
+
+     system call number in the DO_CALL macro
+     arg 1      rdi
+     arg 2      rsi
+     arg 3      rdx
+     arg 4      rcx
+     arg 5      r8
+     arg 6      r9
+
+    We have to take care that the stack is aligned to 16 bytes.  When
+    called the stack is not aligned since the return address has just
+    been pushed.
+
+
+    Syscalls of more than 6 arguments are not supported.  */

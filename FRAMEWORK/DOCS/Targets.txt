@@ -1,0 +1,6 @@
+Linker gnu:
+elf32_x86_64: ELF for x64-32, aka x32 — 32-bit x86-64 binaries
+elf_i386: ELF for i386 — 32-bit i386 binaries
+i386linux: a.out for i386
+i386pep: PE+ for x86-64 — Windows-format 64-bit binaries
+i386pe: PE for i386 — Windows-format 32-bit binaries

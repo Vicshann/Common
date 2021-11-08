@@ -16,9 +16,12 @@
 
 */
 //------------------------------------------------------------------------------------------------------------
+//extern "C" void*  __cdecl memmove(void* _Dst, const void* _Src, size_t _Size);
+//extern "C" void*  __cdecl memset(void* _Dst, int _Val, size_t _Size)
+
 // Format: 'N'+'Four letters of namespace'
 // NOTE: You cannot put a 'namespace' inside of a 'class'
-namespace NFWK      // Must be a namespace because we are adding some configs in it
+namespace NFWK      // Must be a namespace because we are adding some namespaces and configs in it
 {
 // NOTE: None of these files should include anything ( Unless it is a collection? )
 // NOTE: Moving out of namespace should be done in the same file if required
@@ -27,13 +30,24 @@ namespace NFWK      // Must be a namespace because we are adding some configs in
 #endif
 
 #include "Platforms/Common.hpp"
-#include "Platforms/Utils.hpp"
-#include "Platforms/CompileTime.hpp"
+#include "Platforms/CompileTime.hpp"  // May use something from Utils.hpp
+#include "UTF.hpp"
+#include "NumCnv.hpp"
+#include "StrUtils.hpp"
+#include "StrFmt.hpp"
+#include "Platforms/Utils.hpp"        // Anything that doesn`t have a separate HPP and still doesn`t use any of system API
+#include "Platforms/ModFmtELF.hpp"
+#include "Platforms/ModFmtPE.hpp"
+#include "Platforms/POSIX.hpp"
+#include "Platforms/NtDll.hpp"
 #include "Platforms/Platform.hpp"
+#include "Platforms/Misc.hpp"
+
 //#include "MemUtils.hpp"
 //#include "MemStorage.hpp"
 //#include "StrStorage.hpp"
 //#include "StrPool.hpp"
+
 
 #include "Application.hpp"
 };

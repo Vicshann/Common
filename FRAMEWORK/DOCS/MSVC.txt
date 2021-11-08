@@ -1,0 +1,2 @@
+No support because of:
+Zero length arrays are used for some data members(i.e. PE header) and they are not supported on MSVC compilers

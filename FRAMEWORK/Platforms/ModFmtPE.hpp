@@ -57,6 +57,19 @@ enum class ESecFlags: uint32
  MEM_READ                =  0x40000000,  // Section is readable.
  MEM_WRITE               =  0x80000000,  // Section is writeable.
 };
+
+enum class EImgRelBased: uint32
+{
+ ABSOLUTE       = 0,
+ HIGH           = 1,
+ LOW            = 2,
+ HIGHLOW        = 3,
+ HIGHADJ        = 4,
+ MIPS_JMPADDR   = 5,
+ MIPS_JMPADDR16 = 9,
+ IA64_IMM64     = 9,
+ DIR64          = 10,
+};
 //------------------------------------------------------------------------------------------------------------
 #pragma pack( push, 1 )     // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> Check alignment! <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
@@ -201,7 +214,7 @@ struct SSecHdr   // SECTION_HEADER
 {
  char    SectionName[8];        // 00
  uint32  VirtualSize;           // 08
- uint32  SectionRva;            // 0C
+ uint32  VirtualOffset;         // 0C   // SectionRva
  uint32  PhysicalSize;          // 10
  uint32  PhysicalOffset;        // 14
  uint32  PtrToRelocations;      // 18
@@ -296,7 +309,7 @@ template<typename T> _finline static SWinHdr<T>* GetWinHdr(void* Base)
 }
 //------------------------------------------------------------------------------------------------------------
 // NOTE: Do not expect that all PE image pages will be allocated
-static bool IsValidPEHeader(void* Base)
+static bool IsValidHeaderPE(void* Base)
 {
  SDosHdr* DosHdr  = (SDosHdr*)Base;
  if((DosHdr->FlagMZ != SIGN_MZ))return false;
@@ -305,7 +318,7 @@ static bool IsValidPEHeader(void* Base)
  return true;
 }
 //------------------------------------------------------------------------------------------------------------
-static bool IsValidPEHeader(void* Base, uint Size)
+static bool IsValidHeaderPE(void* Base, uint Size)
 {
  if(Size < sizeof(SDosHdr))return false;
  SDosHdr* DosHdr  = (SDosHdr*)Base;
@@ -319,7 +332,7 @@ static bool IsValidPEHeader(void* Base, uint Size)
 static bool IsModuleDLL(void* Base)
 {
  auto WinHdr = GetWinHdr<PECURRENT>(Base); // (SWinHdr<PECURRENT>*)&(((uint8*)Base)[DosHdr->OffsetHeaderPE]);
- return (WinHdr->FileHeader.Flags & 0x2000); // IsDll flag
+ return (WinHdr->FileHeader.Flags & 0x2002) == 0x2002;   // 0x2000=IsDll; 0x0002=IsExecutable
 }
 //------------------------------------------------------------------------------------------------------------
 static bool IsModuleX64(void* Base)
@@ -336,8 +349,8 @@ static uint GetPEImageSize(void* Base)
 //------------------------------------------------------------------------------------------------------------
 static bool IsRvaInSection(SSecHdr* Sec, uint Rva)
 {
- if(Sec->SectionRva > Rva)return false;
- if((Sec->SectionRva+Sec->VirtualSize) <= Rva)return false;
+ if(Sec->VirtualOffset > Rva)return false;
+ if((Sec->VirtualOffset+Sec->VirtualSize) <= Rva)return false;
  return true;
 }
 //------------------------------------------------------------------------------------------------------------
@@ -356,13 +369,13 @@ static uint RvaToFileOffset(void* Base, uint Rva)
  for(uint ctr = 0, total = GetSections(Base, &CurSec);ctr < total;ctr++,CurSec++)
   {
    if(!IsRvaInSection(CurSec, Rva))continue;
-   Rva -= CurSec->SectionRva;
+   Rva -= CurSec->VirtualOffset;
    if(Rva >= CurSec->PhysicalSize)return 0;  // Not present in the file as physical
    return (CurSec->PhysicalOffset + Rva);
   }
  return 0;
 }
-//---------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------
 static uint FileOffsetToRva(void* Base, uint Offset)
 {
  SSecHdr* CurSec = nullptr;
@@ -370,14 +383,14 @@ static uint FileOffsetToRva(void* Base, uint Offset)
   {
    if((Offset >= CurSec->PhysicalOffset)&&(Offset < (CurSec->PhysicalOffset+CurSec->PhysicalSize)))
 	{
-	 return ((Offset-CurSec->PhysicalOffset)+CurSec->SectionRva);
+	 return ((Offset-CurSec->PhysicalOffset)+CurSec->VirtualOffset);
 	}
   }
  return 0;
 }
-//---------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------
 // NOTE: Assumed that section offsets is sequential!
-static uint SizeOfSections(void* Base, uint MaxSecs=-1, bool IncludeHdr=true, bool RawSizes=false)
+static uint SizeOfSections(void* Base, uint MaxSecs=-1, bool RawSize=false)
 {
 // DOS_HEADER     *DosHdr = (DOS_HEADER*)ModuleBase;
  auto WinHdr = GetWinHdr<PECURRENT>(Base); // (WIN_HEADER<PECURRENT>*)&((uint8*)ModuleBase)[DosHdr->OffsetHeaderPE];
@@ -389,15 +402,216 @@ static uint SizeOfSections(void* Base, uint MaxSecs=-1, bool IncludeHdr=true, bo
  if(TotalSecs < MaxSecs)TotalSecs = MaxSecs;
  for(uint ctr=0;ctr < TotalSecs;ctr++)
   {
-   if(!Offs)Offs = RawSizes?(CurSec[ctr].PhysicalOffset):(CurSec[ctr].SectionRva);
-   Size += RawSizes?(AlignFrwd(CurSec[ctr].PhysicalSize, WinHdr->OptionalHeader.FileAlign)):(AlignFrwd(CurSec[ctr].VirtualSize, WinHdr->OptionalHeader.SectionAlign));
+   if(!Offs)Offs = RawSize?(CurSec[ctr].PhysicalOffset):(CurSec[ctr].VirtualOffset);
+   Size += RawSize?(AlignFrwd(CurSec[ctr].PhysicalSize, WinHdr->OptionalHeader.FileAlign)):(AlignFrwd(CurSec[ctr].VirtualSize, WinHdr->OptionalHeader.SectionAlign));
   }                
- if(!Offs)Offs = RawSizes?WinHdr->OptionalHeader.SizeOfHeaders:(AlignFrwd(WinHdr->OptionalHeader.SizeOfHeaders, WinHdr->OptionalHeader.SectionAlign));    
+ if(!Offs)Offs = RawSize?WinHdr->OptionalHeader.SizeOfHeaders:(AlignFrwd(WinHdr->OptionalHeader.SizeOfHeaders, WinHdr->OptionalHeader.SectionAlign));    
  return Offs + Size;
 }
-//---------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------
+static bool GetSectionForAddress(void* Base, void* Address, SSecHdr** ResSec)
+{
+// DOS_HEADER     *DosHdr = (DOS_HEADER*)ModuleBase;
+// WIN_HEADER<PECURRENT>  *WinHdr = (WIN_HEADER<PECURRENT>*)&((PBYTE)ModuleBase)[DosHdr->OffsetHeaderPE];
+// UINT            HdrLen = DosHdr->OffsetHeaderPE+WinHdr->FileHeader.HeaderSizeNT+sizeof(FILE_HEADER)+sizeof(DWORD);
+ SSecHdr* CurSec = nullptr;  //SECTION_HEADER *CurSec = (SECTION_HEADER*)&((BYTE*)ModuleBase)[HdrLen];
+ uint TotalSecs = GetSections(Base, &CurSec);
+ for(uint ctr = 0;ctr < TotalSecs;ctr++,CurSec++)
+  {
+   if(((uint8*)Address >= ((uint8*)Base + CurSec->VirtualOffset)) && ((uint8*)Address < ((uint8*)Base + CurSec->VirtualOffset + CurSec->VirtualSize)))
+    {
+     if(ResSec)*ResSec = CurSec;  // NULL for only a presense test
+     return true;
+    }
+  }
+ return false;
+}
+//------------------------------------------------------------------------------------------------------------
 
-//---------------------------------------------------------------------------
+// TODO: Remove
+static char CharCaseUpper(char Chr)
+{
+ if((Chr > 0x60)&&(Chr < 0x7B))Chr -= 0x20;
+ return Chr;  
+}
+//------------------------------------------------------------------------------
+static bool IsCharsEqualIC(char ChrA, char ChrB)
+{
+ return (CharCaseUpper(ChrA) == CharCaseUpper(ChrB));
+}
+//------------------------------------------------------------------------------
+static bool IsSectionNamesEqual(char *NameA, char *NameB)
+{
+ for(int ctr=0;ctr<8;ctr++)
+  {
+   if(!IsCharsEqualIC(NameA[ctr], NameB[ctr]))return false;
+   if(!NameA[ctr])break; // Both are ZERO
+  }
+ return true;
+}
+//------------------------------------------------------------------------------
+static bool IsNamesEqual(char *NameA, char *NameB)
+{
+ for(;;NameA++,NameB++)
+  {
+   if(*NameA != *NameB)return false;
+   if(!*NameA)break;
+  }
+ return true;
+}
+//------------------------------------------------------------------------------
+static bool IsNamesEqualIC(char *NameA, char *NameB)
+{
+ for(;;NameA++,NameB++)
+  {
+   if(!IsCharsEqualIC(*NameA, *NameB))return false;
+   if(!*NameA)break;
+  }
+ return true;
+}
+//------------------------------------------------------------------------------------------------------------
+// SecName can be an integer section index
+static bool GetModuleSection(void* Base, char *SecName, SSecHdr** ResSec)
+{
+// DOS_HEADER     *DosHdr = (DOS_HEADER*)ModuleBase;
+// WIN_HEADER<T>  *WinHdr = (WIN_HEADER<T>*)&((PBYTE)ModuleBase)[DosHdr->OffsetHeaderPE];
+// UINT            HdrLen = DosHdr->OffsetHeaderPE+WinHdr->FileHeader.HeaderSizeNT+sizeof(FILE_HEADER)+sizeof(DWORD);
+ SSecHdr* CurSec = nullptr;  //SECTION_HEADER *CurSec = (SECTION_HEADER*)&((BYTE*)ModuleBase)[HdrLen];
+ uint TotalSecs = GetSections(Base, &CurSec);
+ for(uint ctr = 0;ctr < TotalSecs;ctr++,CurSec++)
+  {
+   if(((uint)SecName == ctr) || IsSectionNamesEqual((char*)&CurSec->SectionName, SecName))
+    {
+     if(ResSec)*ResSec = CurSec;  // NULL for only a presense test
+     return true;
+    }
+  }
+ return false;
+}
+//------------------------------------------------------------------------------------------------------------
+// Based on a last section size, unaligned
+static uint CalcModuleSize(void* Base, bool RawSize=false)
+{
+ SSecHdr* CurSec = nullptr;
+ uint TotalSecs = GetSections(Base, &CurSec);
+ if(!TotalSecs)return 0;
+ SSecHdr* LstSec = CurSec;
+ if(RawSize)
+  {
+   for(uint ctr = 0;ctr < TotalSecs;ctr++,CurSec++)
+    {
+     if(CurSec->PhysicalOffset > LstSec->PhysicalOffset)LstSec = CurSec; 
+    }
+   return LstSec->PhysicalOffset + LstSec->PhysicalSize;
+  }
+   else
+    {
+     for(uint ctr = 0;ctr < TotalSecs;ctr++,CurSec++)
+      {
+       if(CurSec->VirtualOffset > LstSec->VirtualOffset)LstSec = CurSec; 
+      }
+     return LstSec->VirtualOffset + LstSec->VirtualSize;
+    }
+}
+//------------------------------------------------------------------------------------------------------------
+static uint GetExpectedVSize(void* Base)
+{
+ auto WinHdr = GetWinHdr<PECURRENT>(Base);
+ return WinHdr->OptionalHeader.SizeOfImage;
+}
+//------------------------------------------------------------------------------------------------------------
+static void* GetLoadedModuleEntryPoint(void* Base)
+{
+ if(!IsValidHeaderPE(Base))return nullptr;
+// DOS_HEADER *DosHdr = (DOS_HEADER*)ModuleBase;
+ auto WinHdr = GetWinHdr<PECURRENT>(Base);   //WIN_HEADER<PECURRENT> *WinHdr = (WIN_HEADER<PECURRENT>*)&(((BYTE*)ModuleBase)[DosHdr->OffsetHeaderPE]);
+ if(!WinHdr->OptionalHeader.EntryPointRVA)return nullptr;				  
+ return &((uint8*)Base)[WinHdr->OptionalHeader.EntryPointRVA];
+}
+//------------------------------------------------------------------------------------------------------------
+static uint GetModuleEntryOffset(void* Base, bool Raw)
+{
+// DOS_HEADER     *DosHdr    = (DOS_HEADER*)ModuleBase;
+ auto WinHdr  = GetWinHdr<PECURRENT>(Base);   //(WIN_HEADER<T>*)&ModuleBase[DosHdr->OffsetHeaderPE];
+ if(!WinHdr->OptionalHeader.EntryPointRVA)return 0;	 
+ return (Raw)?(RvaToFileOffset(Base,WinHdr->OptionalHeader.EntryPointRVA)):(WinHdr->OptionalHeader.EntryPointRVA);
+}
+//------------------------------------------------------------------------------------------------------------
+static uint32 CalcChecksumPE(void* Base, uint Size)   // TODO: Rewrite
+{
+// DOS_HEADER *DosHdr = (DOS_HEADER*)ModuleBase;
+ auto WinHdr  = GetWinHdr<PECURRENT>(Base);  //WIN_HEADER<PECURRENT> *WinHdr = (WIN_HEADER<PECURRENT>*)&(((BYTE*)ModuleBase)[DosHdr->OffsetHeaderPE]);
+
+ unsigned long long checksum = 0;
+ unsigned long long top = 0xFFFFFFFF + 1;
+// top++;
+
+ uint32 CSimOffs = (uint8*)&WinHdr->OptionalHeader.FileCheckSum - (uint8*)Base;
+ uint8* DataPtr  = (uint8*)Base;
+ for(uint idx=0;idx < Size;idx += 4)
+  {
+   if(idx == CSimOffs)continue;   //Skip "CheckSum" DWORD		
+   checksum = (checksum & 0xFFFFFFFF) + *(uint32*)&DataPtr[idx] + (checksum >> 32);     // Calculate checksum
+   if(checksum > top)checksum = (checksum & 0xFFFFFFFF) + (checksum >> 32);               // TODO: Without 64bit shift
+  }
+ //Finish checksum
+ checksum  = (checksum & 0xFFFF) + (checksum >> 16);
+ checksum  = checksum + (checksum >> 16);
+ checksum  = checksum & 0xFFFF;
+ checksum += Size;
+ return checksum;
+}
+//------------------------------------------------------------------------------------------------------------
+/*template<typename T, int Raw=0> static bool TFixRelocations(PBYTE ModuleBase, PBYTE TargetBase)   // Possible not fully correct    <<<<<<<<<<<<<<<<<<<<
+{
+ DOS_HEADER     *DosHdr    = (DOS_HEADER*)ModuleBase;
+ WIN_HEADER<T>  *WinHdr    = (WIN_HEADER<T>*)&ModuleBase[DosHdr->OffsetHeaderPE];
+ DATA_DIRECTORY *ReloctDir = &WinHdr->OptionalHeader.DataDirectories.FixUpTable;
+ if(!ReloctDir->DirectoryRVA || !ReloctDir->DirectorySize)return false;
+ SIZE_T ImageBase = TBaseOfImage<T>(ModuleBase);
+ SIZE_T LoadDelta = (SIZE_T)TargetBase - ImageBase;
+ PBYTE  RelocPtr  = (PBYTE)&ModuleBase[(Raw)?(RvaToFileOffset(ModuleBase,ReloctDir->DirectoryRVA)):(ReloctDir->DirectoryRVA)];
+ for(UINT RelOffs=0;RelOffs < ReloctDir->DirectorySize;)
+  {
+   RELOCATION_DESC* CurRelBlk = (RELOCATION_DESC*)&RelocPtr[RelOffs];
+   PBYTE BasePtr = (PBYTE)&ModuleBase[(Raw)?(RvaToFileOffset(ModuleBase,CurRelBlk->BaseRVA)):(CurRelBlk->BaseRVA)];
+   for(UINT RIdx=0,RTotal=CurRelBlk->Count();RIdx < RTotal;RIdx++)
+    {   
+     BYTE Type = CurRelBlk->Records[RIdx].Type;   // NOTE: 'switch()' makes the code Base dependant (Remember Reflective Injection)
+     if(Type == IMAGE_REL_BASED_HIGHLOW)     // x32
+      {
+       PUINT32 Value = (PUINT32)&BasePtr[CurRelBlk->Records[RIdx].Offset];     
+       if(Raw==1)*Value = UINT32(TargetBase + RvaToFileOffset(ModuleBase, (*Value - ImageBase)));    // Direct x32 address      // Resolve to a Raw address
+         else *Value += LoadDelta;           
+      }              
+     else if(Type == IMAGE_REL_BASED_DIR64)  // x64
+      {
+       PUINT64 Value = (PUINT64)&BasePtr[CurRelBlk->Records[RIdx].Offset];     
+       if(Raw==1)*Value = UINT64(TargetBase + RvaToFileOffset(ModuleBase, (*Value - ImageBase)));    // Direct x32 address      // Resolve to a Raw address
+         else *Value += LoadDelta;           
+      }
+//     else if(Type != IMAGE_REL_BASED_ABSOLUTE){DBGMSG("Unsupported reloc type: %u", Type);}    // 11:IMAGE_REL_BASED_HIGH3ADJ(3xWORD) and 4:IMAGE_REL_BASED_HIGHADJ(2xWORD)  // Can`t log if self relocating
+    }
+   RelOffs += CurRelBlk->BlkSize;
+  }
+ return true;
+} */
+//------------------------------------------------------------------------------------------------------------
+static char* GetExpModuleName(void* Base, bool Raw)  // Only if an Export section is present     // TODO: Optional Pointer validation mode
+{ 
+ SDataDir* ExportDir = (IsModuleX64(Base))?(&GetWinHdr<PETYPE64>(Base)->OptionalHeader.DataDirectories.ExportTable):(&GetWinHdr<PETYPE32>(Base)->OptionalHeader.DataDirectories.ExportTable);
+ if(!ExportDir->DirectoryRVA)return nullptr;
+ SExpDir* Export     = (SExpDir*)&((uint8*)Base)[ExportDir->DirectoryRVA];
+ return &((char*)Base)[(Raw)?(RvaToFileOffset(Base,Export->NameRVA)):(Export->NameRVA)];
+}
+//------------------------------------------------------------------------------------------------------------
+static void* ModuleAddressToBase(void* Addr)   // NOTE: Will find a PE header or crash trying:)    // Not all module sections may be present in memory (discarded)
+{
+ uint8* Base = (uint8*)(((size_t)Addr) & ~0xFFFF);   // All modules are 64k aligned by loader
+ while(!IsValidHeaderPE(Base))Base -= 0x10000;  // !MmIsAddressValid(Base) ? IsBadReadPtr(Base,sizeof(DOS_HEADER)) // Why not all pages of ntoskrnl.exe are available on x64?
+ //DBGMSG("Found a module base: %p", Base);
+ return Base;
+}
 
 //------------------------------------------------------------------------------------------------------------
 

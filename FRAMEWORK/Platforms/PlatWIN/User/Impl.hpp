@@ -1,30 +1,17 @@
 
 #pragma once
 
-#include "../ntdll.hpp"
-#include "../ModFmtPE.hpp"
 //============================================================================================================
-struct NTSYSAPI  // All required syscall stubs  
+namespace NTAPI  // All required syscall stubs    // Name 'NTAPI' causes compilation to fail with CLANG in VisualStudio!
 {
-template<class> struct SFuncStub;
-template<class TRet, class... TPar> struct SFuncStub<TRet(TPar...)>      // TODO: Hash function name at construction time (constexpr) with randomization if needed(protection)
-{
- using TFuncPtr = TRet (*)(TPar...);
- static const int StubSize = 32;   // Let it be copyable with __m256 
- uint8 Stub[StubSize];     // TFuncPtr ptr;  // TReturn (*ptr)(TParameter...);
+ static inline SFuncStub<decltype(NT::NtProtectVirtualMemory)> NtProtectVirtualMemory;
 
- _finline TRet operator()(TPar... params){return ((TFuncPtr)&Stub)(params...);}     //return ptr(params...);
-};
-//------------------------------------------------------------------------------------------------------------
-
- SFuncStub<decltype(NT::NtProtectVirtualMemory)> NtProtectVirtualMemory;
- 
 
 };
 //============================================================================================================
-struct NPOSX   // On NIX all syscall stubs will be here   // https://docs.oracle.com/cd/E19048-01/chorus4/806-3328/6jcg1bm05/index.html
+namespace NAPI   // On NIX all syscall stubs will be here   // https://docs.oracle.com/cd/E19048-01/chorus4/806-3328/6jcg1bm05/index.html
 {
-#include "../POSX.hpp"
+//#include "../POSX.hpp"
 
 // >>>>> MEMORY <<<<<
 #include "Impl_Mem.hpp"
@@ -36,12 +23,12 @@ struct NPOSX   // On NIX all syscall stubs will be here   // https://docs.oracle
 #include "Impl_PT.hpp"
 };
 //============================================================================================================
-private:  
-//static inline  decltype(TypeSwitch<IsBigEnd, uint32, uint64>()) Val = 0;   
-//static inline TSW<IsBigEnd, uint32, uint64>::T Val = 0;         
-public:
+//private:
+//static inline  decltype(TypeSwitch<IsBigEnd, uint32, uint64>()) Val = 0;
+//static inline TSW<IsBigEnd, uint32, uint64>::T Val = 0;
+//public:
 //============================================================================================================
-static int Initialize(void)
+static int Initialize(void* DescrPtr)
 {
 // TODO: Validate presence of all required POSX functions implementation?
 // SigWithTmplParam<NTSYSAPI::NtProtectVirtualMemory>();

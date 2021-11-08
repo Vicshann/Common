@@ -1,0 +1,2 @@
+
+-fno-zero-initialized-in-bss  // Do not create .bss section for zero-initialized data, put it in .data section

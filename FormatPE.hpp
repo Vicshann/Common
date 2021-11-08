@@ -581,7 +581,7 @@ static LPSTR GetExpModuleName(PVOID ModuleBase, bool Raw)
  return TGetExpModuleName<PETYPE32>((PBYTE)ModuleBase, Raw);
 }
 //---------------------------------------------------------------------------
-static PVOID ModuleAddressToBase(PVOID Address)  // Not all module sections may present in memory (discarded)
+static PVOID ModuleAddressToBase(PVOID Address)  // Not all module sections may be present in memory (discarded)
 {
  PBYTE Base = (PBYTE)(((ULONG_PTR)Address) & ~0xFFF);   
  while(IsBadReadPtr(Base,sizeof(DOS_HEADER)) || !IsValidPEHeader(Base))Base -= 0x1000;  // !MmIsAddressValid(Base) // Why not all pages of ntoskrnl.exe are available on x64?

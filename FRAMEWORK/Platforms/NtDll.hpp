@@ -2,10 +2,6 @@
 #pragma once
 
 //============================================================================================================
-#ifndef NTAPI
-#define NTAPI __stdcall
-#endif
-
 // Only most useful NTDLL functions will go here for now
 template<typename PHT> struct NNTDLL  // For members: alignas(sizeof(PHT))
 {
@@ -19,7 +15,7 @@ using PULONG   = ULONG*;
 using NTSTATUS = LONG;
 
 // TODO: Allow only SPTR<uint>, SPTR<uint32>, SPTR<uint64>
-static NTSTATUS NTAPI NtProtectVirtualMemory(HANDLE ProcessHandle, PVOID* BaseAddress, PSIZE_T RegionSize, ULONG NewProtect, PULONG OldProtect);
+static NTSTATUS _STDC NtProtectVirtualMemory(HANDLE ProcessHandle, PVOID* BaseAddress, PSIZE_T RegionSize, ULONG NewProtect, PULONG OldProtect);
 
 
 };

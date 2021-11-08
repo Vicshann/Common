@@ -77,11 +77,16 @@ constexpr static unsigned int ctAlignAsPtr(unsigned int Size){return (Size/sizeo
 template <typename T> constexpr inline static T ctRotL(T Value, unsigned int Shift){constexpr unsigned int MaxBits = sizeof(T) * 8U; return (Value << Shift) | (Value << ((MaxBits - Shift)&(MaxBits-1)));}  // Should be moved to Common.hpp
 template <typename T> constexpr inline static T ctRotR(T Value, unsigned int Shift){constexpr unsigned int MaxBits = sizeof(T) * 8U; return (Value >> Shift) | (Value << ((MaxBits - Shift)&(MaxBits-1)));}  // Should be moved to Common.hpp
 
+template <typename T> constexpr __forceinline static T RotL(T Value, unsigned int Shift){constexpr unsigned int MaxBits = sizeof(T) * 8U; return (Value << Shift) | (Value >> ((MaxBits - Shift)&(MaxBits-1)));}
+template <typename T> constexpr __forceinline static T RotR(T Value, unsigned int Shift){constexpr unsigned int MaxBits = sizeof(T) * 8U; return (Value >> Shift) | (Value << ((MaxBits - Shift)&(MaxBits-1)));}
+
 constexpr  __forceinline static int ctStrLen(char const* str, const int offs){return (str[offs])?(ctStrLen(str, offs+1)):(offs);}       // Offset included in result
 constexpr  __forceinline static int ctStrDif(char const* sa, char const* sb, const int offs){return (sa[offs] == sb[offs])?(ctStrDif(sa, sb, offs+1)):(offs);}   // Offset included in result
 template <int N> constexpr __forceinline static char CharAt(char const(&s)[N], int i){return s[i];}     
 template<typename T> constexpr __forceinline static char* CurrFuncSig(void){return ctFUNC; };    // Useless for templates
 template<typename T> constexpr __forceinline static char  CurrFuncSigChr(int Idx){return ctFUNC[Idx]; }; 
+
+
 
 
 // The constantify template is used to make sure that the result of constexpr function will be computed at compile-time instead of run-time
@@ -116,7 +121,7 @@ template <typename C, unsigned int... Idx> struct ctStrHldr<C,ctCplIntList<Idx..
 };
 //------------------------------------------------------------------------------
 
-// Compile-time string encryption class
+// Compile-time string encryption class  [Deprecated for C++20]
 
 template <typename T, unsigned int le,  unsigned int ka,  unsigned int kb, typename IndexList> struct ctCplEncryptedString;
 template <typename C, unsigned int Len, unsigned int Key, unsigned int ExKey, unsigned int... Idx> struct ctCplEncryptedString<C,Len,Key,ExKey,ctCplIntList<Idx...> >
@@ -194,7 +199,7 @@ __forceinline C* Decrypt(void)  // Run-time decryption   // There will be a copy
 }; 
 
 // Compile-time string encryption macro   // TODO: Can user-defined literals help to avoid macros here? RValue refs?
-#ifndef ctDISENCSTR
+/*#ifndef ctDISENCSTR
 // Declare: ctOENCSA("Hello World!", HelloStr);  MyProcA(HelloStr.Decrypt());  MyProcB(HelloStr.Decrypt());
 #define ctOENCSA(Str, Name) NCTM::ctCplEncryptedString<char,  sizeof(Str), ctEncKey, ctEncKeyEx, NCTM::ctCplIndexes<NCTM::ctAlignAsPtr(sizeof(Str))>::Result> Name(Str)   // Str size includes a terminating NULL   
 #define ctOENCSW(Str, Name) NCTM::ctCplEncryptedString<wchar_t, sizeof(Str)/sizeof(wchar_t), ctEncKey, ctEncKeyEx, NCTM::ctCplIndexes<NCTM::ctAlignAsPtr(sizeof(Str))>::Result> Name(Str)   // Str size includes a terminating NULL
@@ -205,7 +210,7 @@ __forceinline C* Decrypt(void)  // Run-time decryption   // There will be a copy
 
 // Single use: MyProc(ctENCSA("Hello World!"));
 #define ctENCSA(Str) (ctCENCSA(Str).Decrypt())   // Str size includes a terminating NULL   
-#define ctENCSW(Str) (ctCENCSW(Str).Decrypt())   // Str size includes a terminating NULL
+#define ctENCSW(Str) (ctCENCSW(Str).Decrypt())   // Str size includes a terminating NULL     
 #else
 #define ctOENCSA(Str, Name) NCTM::ctStrHldr<char, NCTM::ctCplIndexes<sizeof(Str)>::Result> Name(Str)   
 #define ctOENCSW(Str, Name) NCTM::ctStrHldr<wchar_t, NCTM::ctCplIndexes<sizeof(Str)/sizeof(wchar_t)>::Result> Name(Str)   
@@ -214,9 +219,75 @@ __forceinline C* Decrypt(void)  // Run-time decryption   // There will be a copy
 #define ctCENCSW(Str) (Str) NCTM::ctStrHldr<wchar_t, NCTM::ctCplIndexes<sizeof(Str)/sizeof(wchar_t)>::Result>(Str)   
 
 #define ctENCSA(Str) (Str)
-#define ctENCSW(Str) (Str)
-#endif
+#define ctENCSW(Str) (Str)  
+#endif  */
 
+//====================================================================================
+static const bool   IsBigEnd = false;
+static const SIZE_T ExEncKey = 0xD6B4A9C5E2B4C7D3ull;   // TODO: Must be same as a hardware calculated key
+
+static constexpr SIZE_T ctBuildKey = MakeBuildKey();  // NOTE: Data members come before function members so if MakeBuildKey is member of same class then it is considered an undefined function
+
+__forceinline static SIZE_T MakeExKeyPart(void) // Updates ExEncKeyRT // TODO: Hardware counter based
+{
+ return ExEncKey;  // TODO: Must calculate ExEncKey somehow
+}
+//-------------------------------------------------------------------
+// Packs bytes so that their in-memory representation will be same on the current platform
+template<typename T, typename V> constexpr static T RePackElements(V Arr, unsigned int BLeft)
+{
+ using ElType = decltype(Arr[0]);
+ static_assert(sizeof(T) > sizeof(ElType), "Destination type is smaller!");
+ T Result = 0;
+ if constexpr (IsBigEnd)
+ {
+  for(unsigned int ctr = 0; BLeft && (ctr < (sizeof(T) / sizeof(ElType))); ctr++, BLeft--)
+   Result |= (T)Arr[ctr] << ((((sizeof(T) / sizeof(ElType))-1)-ctr) * (8*sizeof(ElType)));
+ }
+ else
+ {
+  for(unsigned int ctr = 0; BLeft && (ctr < (sizeof(T) / sizeof(ElType))); ctr++, BLeft--)
+   Result |= (T)Arr[ctr] << (ctr * (8*sizeof(ElType)));
+ }
+ return Result;
+}
+//----------------------------------------------------------------------
+
+template<typename T, SIZE_T N> struct CEStr
+{
+ static const SIZE_T BytesLen  = sizeof(T) * N;     // Size  (Str including 0)
+ static const SIZE_T ArrSize   = (BytesLen / sizeof(SIZE_T)) + (bool)(BytesLen & (sizeof(SIZE_T) - 1));  // FullSize (Allocated)
+ //static const SIZE_T UniqueKey;
+
+ SIZE_T Array[ArrSize]; // size_t
+                                        // /*for(SIZE_T idx=0,vo=N*sizeof(T);idx < ArrSize;vo=Array[idx],idx++)Array[idx] = ((Array[idx] * N) ^ vo) * (__COUNTER__ * __LINE__);*/
+// _finline ~CEStr() {   }  // Implement stack cleaning on destruction  // <<<<<<<<<<<<< Move this to decrypted string holder
+ consteval CEStr(const T* str, SIZE_T l) { Init(str, N); }  // Must have an useless arg to be different from another constructor
+ consteval CEStr(const T(&str)[N]) { Init(str, N); }
+ consteval void Init(const T* str, SIZE_T len)
+ {
+  //static constexpr SIZE_T UniqueKey = CRC32(str,0); // Makes every string encrypted with an unique key    // How to pass it to 'Decrypt'?
+  for(SIZE_T sidx = 0, didx = 0, xkey = ctBuildKey ^ ExEncKey; sidx < N; didx++, sidx += (sizeof(SIZE_T)/sizeof(T)), xkey = RotL(xkey, 1))Array[didx] = RePackElements<SIZE_T>(&str[sidx], N - sidx) ^ RotR(xkey, -didx & 0x0F); 
+ }
+__forceinline  T* Decrypt(void) const    // const result?
+ {
+  volatile SIZE_T* arr = &const_cast<CEStr<T,N>* >(this)->Array[0];  // NOTE: Without 'volatile' this entire function may be optimized away and strings will be left unencrypted
+//#pragma clang loop unroll(full)  //#pragma unroll  // No effect: it will not unroll unless an optimization mode 1,2 or 3 is enabled
+  for(SIZE_T ctr=0,xkey=RotR(~ctBuildKey ^ MakeExKeyPart(),3);ctr < ArrSize;ctr++, xkey=RotL(xkey, 1))arr[ctr] = (arr[ctr] ^ RotR(~RotL(xkey, 3), -ctr & 0x0F));    // Xor key itself is encrypted
+  return (T*)this->Array;
+ }
+ constexpr __forceinline operator const T* ()  const { return const_cast<CEStr<T,N>* >(this)->Decrypt();}  // constness of 'this' pointer is removed
+// constexpr __forceinline operator const T* ()  const { return (T*)this->Array; }
+ constexpr __forceinline T* Ptr()  const { return (T*)this->Array; }
+ constexpr static __forceinline SIZE_T Size(void){return N-1;}  // In chars, without 0
+};
+#ifndef ctDISENCSTR
+#define ctENCSA(Str) NCTM::CEStr(Str).Decrypt()
+#define ctENCSW(Str) NCTM::CEStr(Str).Decrypt()
+#else
+#define ctENCSA(Str) (Str)
+#define ctENCSW(Str) (Str)
+#endif 
 //====================================================================================
 /*
  G++   __PRETTY_FUNCTION__:  const char* CProp<T, name>::GetName() [with T = float; char* name = 0]     
@@ -279,62 +350,8 @@ template<unsigned N> struct StaticStr        // C++20
 };
 template<unsigned N> StaticStr(char const (&)[N]) -> StaticStr<N - 1>;
 //==============================================================================
-// CRC32 hash: CRC32A("Hello World!")
-// Use polynomial 0x82F63B78 instead of 0xEDB88320 for compatibility with Intel`s hardware CRC32C (SSE 4.2: _mm_crc32_u8) and ARM (ARMv8-A: __crc32d; -march=armv8-a+crc )
-/* English dictionary test:
-| hash         | collisions | polynomial |
-+--------------+------------+------------+
-| crc32b       |     44     | 0x04C11DB7 | RFC 1952;   reversed: 0xEDB88320;  reverse of reciprocal: 0x82608EDB
-| crc32c       |     62     | 0x1EDC6F41 | Castagnoli; reversed: 0x82F63B78;  reverse of reciprocal: 0x8F6E37A0
-| crc32k       |     36     | 0x741B8CD7 | Koopmans;   reversed: 0xEB31D82E;  reverse of reciprocal: 0xBA0DC66B
-| crc32q       |     54     | 0x814141AB | AIXM;       reversed: 0xD5828281;  reverse of reciprocal: 0xC0A0A0D5
-*/
-
-// Recursive instances! Simple but 8 times slower! Makes compilation process very slow!  // Is it better to generate a compile time CRC32 table?
-/*template <UINT32 msk = 0xEDB88320, SIZE_T N, SIZE_T i = 0> constexpr __forceinline static UINT32 CRC32A(const char (&str)[N], UINT32 result = 0xFFFFFFFF)  // Evaluated for each bit   // Only __forceinline can force it to compile time computation
-{
- if constexpr (i >= (N << 3))return ~result;
- else return !str[i >> 3] ? ~result : CRC32A<msk, N, i + 1>(str, (result & 1) != (((unsigned char)str[i >> 3] >> (i & 7)) & 1) ? (result >> 1) ^ msk : result >> 1);
-}  */
- 
-template <UINT32 msk = 0xEDB88320, SIZE_T N, SIZE_T i = 0> constexpr __forceinline static UINT32 CRC32A(const char (&str)[N], UINT32 crc=0xFFFFFFFF)  // Unrolling bit hashing makes compilation speed OK again   // Only __forceinline can force it to compile time computation
-{
-// int bidx = 0;
-// auto ChrCrc = [&](UINT32 val) constexpr -> UINT32 {return ((val & 1) != (((UINT32)str[i] >> bidx++) & 1)) ? (val >> 1) ^ msk : val >> 1; };  // MSVC compiler choked on lambda and failed to inline it after fourth instance of CRC32A 
-// if constexpr (i < (N-1) )return CRC32A<msk, N, i + 1>(str, ChrCrc(ChrCrc(ChrCrc(ChrCrc(ChrCrc(ChrCrc(ChrCrc(ChrCrc(crc)))))))));  
- if constexpr (i < (N-1))   // No way to read str[i] into a const value? // N-1: Skip 1 null char (Always 1, by C++ standard?)
-  {
-   crc = ((crc & 1) != (((UINT32)str[i] >> 0) & 1)) ? (crc >> 1) ^ msk : crc >> 1;
-   crc = ((crc & 1) != (((UINT32)str[i] >> 1) & 1)) ? (crc >> 1) ^ msk : crc >> 1;
-   crc = ((crc & 1) != (((UINT32)str[i] >> 2) & 1)) ? (crc >> 1) ^ msk : crc >> 1;
-   crc = ((crc & 1) != (((UINT32)str[i] >> 3) & 1)) ? (crc >> 1) ^ msk : crc >> 1;
-   crc = ((crc & 1) != (((UINT32)str[i] >> 4) & 1)) ? (crc >> 1) ^ msk : crc >> 1;
-   crc = ((crc & 1) != (((UINT32)str[i] >> 5) & 1)) ? (crc >> 1) ^ msk : crc >> 1;
-   crc = ((crc & 1) != (((UINT32)str[i] >> 6) & 1)) ? (crc >> 1) ^ msk : crc >> 1;
-   crc = ((crc & 1) != (((UINT32)str[i] >> 7) & 1)) ? (crc >> 1) ^ msk : crc >> 1;
-   return CRC32A<msk, N, i + 1>(str, crc);
-  }
- else return ~crc;   
-}
-
-// Because 'msk' is template param it is impossible to encrypt it  // Is it OK to leave it in a executable as is or petter pass it as the function argument(right after decryption)?
-template <UINT32 msk = 0xEDB88320> __forceinline static UINT32 CRC32(char* Text, UINT32 crc = 0xFFFFFFFF)   // Should it be here or moved to some other unit?  // Useful for some small injected pieces of code which do some string search
-{
- UINT32 Val;
- for(SIZE_T i=0;Val=Text[i];i++) 
-  {        
-   crc = crc ^ Val;
-   for(SIZE_T j=8;j;j--)crc = (crc >> 1) ^ (msk & -(crc & 1)); 
-  }
- return ~crc;
-}
-
-//static_assert(CRC32A("Hello World!") == 0x1C291CA3);
-
-// TODO: CRC64
-//==============================================================================
-
-/*  // TODO: Case sens mode select and WideStr support
+ /*
+// TODO: Case sens mode select and WideStr support
 // Compile-time recursive mod of string hashing algorithm, the actual algorithm was taken from Qt library (this function isn't case sensitive due to ctCplTolower)
 constexpr unsigned char	 ctCplTolower(unsigned char Ch)				   { return (Ch >= 'A' && Ch <= 'Z') ? (Ch - 'A' + 'a') : (Ch); }
 constexpr unsigned int ctCplHashPart3(unsigned char Ch, unsigned int Hash) { return ((Hash << 4) + ctCplTolower(Ch)); }
@@ -347,4 +364,9 @@ constexpr unsigned int ctCplHash(const unsigned char* Str)           { return (*
 */
 //==============================================================================
 };
+
+// ps is embedded packed string or EncryptedString using C++20 (Fast, no index sequences required)
+//template<CTStr str> consteval static const auto operator"" _ps() { return str; }   // must be in a namespace or global scope  // C++20, no inlining required if consteval and MSVC bug is finally fixed   // Examples: auto st = "Hello World!"_ps;  MyProc("Hello World!"_ps);
+//template<CNStr str> consteval static const auto operator"" _es() { return str; }   // must be in a namespace or global scope  // C++20, no inlining required if consteval and MSVC bug is finally fixed   // Examples: auto st = "Hello World!"_ps;  MyProc("Hello World!"_ps);
+
 #pragma warning(pop)

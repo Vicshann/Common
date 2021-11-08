@@ -8,8 +8,8 @@
 
 // template<[template-parameter-list]> using [your-alias] = [original-type];
 
- 
-// MSVC(_MSC_VER), CLANG(__clang__), GCC(__GNUC__), ICC(__INTEL_COMPILER), ICX(__INTEL_LLVM_COMPILER)   
+
+// MSVC(_MSC_VER), CLANG(__clang__), GCC(__GNUC__), ICC(__INTEL_COMPILER), ICX(__INTEL_LLVM_COMPILER)
 //------------------------------------------------------------------------------------------------------------
 
 #ifdef __GNUC__              // CLANG defines it too
@@ -28,9 +28,95 @@
 #ifdef COMP_MSVC                              // __has_cpp_attribute
 #define  _finline __forceinline               // At least '/Ob1' is still required
 #define  _naked __declspec(naked)
+#pragma code_seg(".text")
+#define _codesec _declspec(allocate(".text"))
+#define _codesecn(n) _declspec(allocate(".text"))
 #else
 #define  _finline __attribute__((always_inline))    // __attribute__((flatten)) is also useful
 #define  _naked   __attribute__((naked))
+#define _codesec __attribute__ ((section (".text")))     // NOTE: For PE exe sections any static inline member will go into a separate data section named as '.text'
+#define _codesecn(n) __attribute__ ((section (".text." #n )))   // ELF section format: 'secname.index' goes to secname
+#endif
+
+
+#if defined(__DEBUG)
+#define _DBGBUILD
+#endif
+
+// https://abseil.io/docs/cpp/platforms/macros
+// https://stackoverflow.com/questions/152016/detecting-cpu-architecture-compile-time
+//#if defined(i386) || defined(__i386__) || defined(__i386) || defined(_M_IX86) || defined(__X86__) || defined(_X86_) || defined(__i486__) || defined(__i586__) || defined(__i686__)    // None of those is recognized by CLANG
+#if defined(__arm__) || defined(__aarch64__)
+#define _CPU_ARM
+//#error "Not ARM!"
+#else
+#define _CPU_X86
+#endif
+
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__x86_64__) || defined(_M_X64) || defined(__amd64__) || defined(__amd64)
+#define _ARCH_X64
+#else
+#define _ARCH_X32
+#error "Not x32"
+#endif
+
+//#define _CPU_X86
+//#define _CPU_ARM
+//#define _ARCH_X32
+//#define _ARCH_X64
+
+#if defined(_CPU_X86) && defined(_ARCH_X32)
+#define _STDC  __stdcall
+#else
+#define _STDC       // Not required
+#endif
+
+#if defined(_WIN32) || defined(__WIN32__) || defined(_WIN64) || defined(__WINDOWS__) || defined(__NT__)  // Clang, GCC mode at least   // MSVC: _WIN64 - Defined as 1 when the compilation target is 64-bit ARM (Windows only?)or x64.
+#error "We have Windows!"
+#endif
+
+#ifdef __ANDROID__        // Implies Linux, so check it first
+#error "We have Android"
+#endif
+
+#ifdef __linux__    // Clang, GCC mode at least
+//#error "We have a Linux!"
+#endif
+
+#if defined(unix) || defined(__unix__) || defined(__unix)    // Linux too  // Clang, GCC mode at least
+//#error "We have a Unix!"
+#endif
+
+#if defined(__APPLE__) && defined(__MACH__)    // __APPLE__  // Clang, GCC mode at least
+#error "We have MacOS X"
+#endif
+
+#ifdef __FreeBSD__        // FreeBSD, NetBSD, OpenBSD, DragonFly BSD
+#error "We have a FreeBSD"
+#endif
+
+
+
+#if defined(PLT_WIN_USR) || defined(PLT_WIN_KRN)
+
+#ifdef _CPU_X86
+
+#ifdef _ARCH_X64
+#   define SYSDESCPTR ((void*)__readgsqword(0x60))
+#elif _ARCH_X32
+#   define SYSDESCPTR ((void*)__readfsdword(0x30))
+#else
+    #error "SYSDESCPTR Architecture Unsupported"
+#endif
+
+#elif _CPU_ARM
+    #error "SYSDESCPTR Windows ARM Unsupported"
+#else
+    #error "SYSDESCPTR CPU Unsupported"
+#endif
+
+#else
+#define SYSDESCPTR  &((void**)__builtin_frame_address(0))[1]  // A pointer to 'ELF Auxiliary Vectors'  // First size_t is nullptr for a return addr
 #endif
 
 //#ifdef FWK_DEBUG
@@ -39,17 +125,17 @@
 //#define STASRT(cond,txt)
 //#endif
 
-// These three work at a call site 
+// These three work at a call site
 #define SRC_LINE __builtin_LINE()
 #define SRC_FILE __builtin_FILE()        // Full path included
-#define SRC_FUNC __builtin_FUNCTION()    // Only the name itself, no arguments or a return type
+#define SRC_FUNC __builtin_FUNCTION()    // Only the name itself, no arguments or a return type (like __func__)
 
 // To retrieve a function signature including all argument types
 #if defined(__GNUC__) || (defined(__MWERKS__) && (__MWERKS__ >= 0x3000)) || (defined(__ICC) && (__ICC >= 600)) || defined(__ghs__)
 #define FUNC_SIG __PRETTY_FUNCTION__
 #elif defined(__DMC__) && (__DMC__ >= 0x810)
 #define FUNC_SIG __PRETTY_FUNCTION__
-#elif defined(__FUNCSIG__)   
+#elif defined(__FUNCSIG__)
 #define FUNC_SIG __FUNCSIG__
 #elif (defined(__INTEL_COMPILER) && (__INTEL_COMPILER >= 600)) || (defined(__IBMCPP__) && (__IBMCPP__ >= 500))
 #define FUNC_SIG __FUNCTION__
@@ -60,7 +146,7 @@
 #endif
 
 
-// NOTE: [no_unique_address] implies that a next member will take that space(Previous too, with some compilers). i.e. If four or less [no_unique_address] are followed by 'int' then the struct size will be 4. 
+// NOTE: [no_unique_address] implies that a next member will take that space(Previous too, with some compilers). i.e. If four or less [no_unique_address] are followed by 'int' then the struct size will be 4.
 //       Add another empty member and another alignment amount will be added to struct size
 //       But ICC behaves differently and allocates space if there are more than one empty member in a sequence.
 #if defined(_MSC_VER)
@@ -74,14 +160,14 @@ using ETYPE = CEmptyType[0];    // This works plain and simple with ICC, GCC, CL
 // MSVC: sizeof(ETYPE) : error C2070: 'ETYPE': illegal sizeof operand
 // CLANG: With '--target=x86_64-windows-msvc' you cannot get an empty struct with such members, its size will be at least 1 byte
 
-// Conclusion: [no_unique_address] feature is a mess :(  Forget about it and use ETYPE instead. At least it works somehow and it is predictable.              
+// Conclusion: [no_unique_address] feature is a mess :(  Forget about it and use ETYPE instead. At least it works somehow and it is predictable.
 //------------------------------------------------------------------------------------------------------------
 template<bool UseTypeA, typename A, typename B> struct TSW;                   // Usage: TSW<MyCompileTimeCondition, MyStructA, MyStructB>::T Val;   // Same as std::conditional
 template<typename A, typename B> struct TSW<true, A, B> {using T = A;};
 template<typename A, typename B> struct TSW<false, A, B> {using T = B;};
 
 template<bool UseTypeA, typename A, typename B> constexpr static auto TypeSwitch(void)       // Usage: struct SMyStruct { decltype(TypeSwitch<MyCompileTimeCondition, MyStructA, MyStructB>()) Val; }
-{                                      
+{
  if constexpr (UseTypeA) {A val{0}; return val;}
    else {B val{0}; return val;}
 }
@@ -90,18 +176,18 @@ template<typename T> consteval static auto ChangeTypeSign(T Val=0)  // Should be
 {
  if constexpr (T(-1) < T(0))   // IsSigned
   {
-   if constexpr (1 == sizeof(T))return (unsigned char)Val;  
+   if constexpr (1 == sizeof(T))return (unsigned char)Val;
    else if constexpr (2 == sizeof(T))return (unsigned short)Val;
    else if constexpr (4 == sizeof(T))return (unsigned int)Val;
    else if constexpr (8 == sizeof(T))return (unsigned long long)Val;
   }
    else
     {
-     if constexpr (1 == sizeof(T))return (signed char)Val;    
+     if constexpr (1 == sizeof(T))return (signed char)Val;
      else if constexpr (2 == sizeof(T))return (signed short)Val;
      else if constexpr (4 == sizeof(T))return (signed int)Val;
      else if constexpr (8 == sizeof(T))return (signed long long)Val;
-    }  
+    }
 }
 
 constexpr static bool Is64BitBuild(void){return sizeof(void*) == 8;}   // To be used in constexpr expressions instead of __amd64__ macro
@@ -122,10 +208,10 @@ namespace NGenericTypes   // You should do 'using' for it yourselves if you want
 Datatype	LP64	ILP64	LLP64	ILP32	LP32
 char	    8	    8	    8	    8	    8
 short	    16	    16	    16	    16	    16
-_int32		32			
+_int32		32
 int	        32	    64	    32	    32	    16
 long	    64	    64	    32	    32	    32
-long long			64		
+long long			64
 pointer	    64	    64	    64	    32	    32
 */
 
@@ -149,11 +235,168 @@ pointer	    64	    64	    64	    32	    32
  using uint   = decltype(sizeof(void*));   // These 'int' are always platform-friendly (same size as pointer type, replace size_t) // "The result of sizeof and sizeof... is a constant of type std::size_t"
  using sint   = decltype(ChangeTypeSign(sizeof(void*)));
 
+ using size_t    = uint;  // To write a familiar type convs
+ using ssize_t   = sint;
+ using nullptr_t = decltype(nullptr);
+
+
  // Add definitions for floating point types?
 };
 
 using namespace NGenericTypes;   // For 'Framework.hpp'   // You may do the same in your code if you want
 //------------------------------------------------------------------------------------------------------------
 
+static constexpr unsigned int StkAlign = Is64BitBuild()?8:4;   // X86,ARM
+
+#ifndef va_start
+typedef __builtin_va_list va_list;        // Requires stack alignment by 16
+#if defined __has_builtin    // GCC/CLANG
+#  if __has_builtin (__builtin_va_start)
+#    define va_start(ap, param) __builtin_va_start(ap, param)
+#    define va_end(ap)          __builtin_va_end(ap)
+#    define va_arg(ap, type)    __builtin_va_arg(ap, type)
+#  endif
+#endif
+
+#endif
+//------------------------------------------------------------------------------------------------------------
+static const uint SYSCALLSTUBLEN = 32;       // 16: x64_x86
+
+// NOTE:  Dump here any implementations that should be accessible early and have no personal HPP yet >>>
 
 //------------------------------------------------------------------------------------------------------------
+// Some type traits
+
+template<typename T, typename U> struct SameTypes {enum { value = 0 };};   // Cannot be a member of a local class or a function
+template<typename T> struct SameTypes<T, T> {enum { value = 1 };};
+template<typename A, typename B> constexpr _finline static bool IsSameTypes(A ValA, B ValB)
+{
+ return SameTypes<A, B>::value;
+}
+
+template<typename T> struct Is_Pointer { static const bool value = false; };
+template<typename T> struct Is_Pointer<T*> { static const bool value = true; };
+//------------------------------------------------------------------------------------------------------------
+
+template<typename T> constexpr _finline static T SwapBytes(T Value)  // Unsafe with optimizations?
+{
+ uint8* SrcBytes = (uint8*)&Value;     // TODO: replace the cast with __builtin_bit_cast because it cannot be constexpr if contains a pointer cast
+ uint8  DstBytes[sizeof(T)];
+ for(uint idx=0;idx < sizeof(T);idx++)DstBytes[idx] = SrcBytes[(sizeof(T)-1)-idx];
+ return *(T*)&DstBytes;
+}
+//------------------------------------------------------------------------------------------------------------
+template<typename T> constexpr _finline static int32 AddrToRelAddr(T CmdAddr, unsigned int CmdLen, T TgtAddr){return -((CmdAddr + CmdLen) - TgtAddr);}         // x86 only?
+template<typename T> constexpr _finline static T     RelAddrToAddr(T CmdAddr, unsigned int CmdLen, int32 TgtOffset){return ((CmdAddr + CmdLen) + TgtOffset);}  // x86 only?
+
+template <typename T> constexpr _finline static T RotL(T Value, unsigned int Shift){constexpr unsigned int MaxBits = sizeof(T) * 8U; return (Value << Shift) | (Value >> ((MaxBits - Shift)&(MaxBits-1)));}
+template <typename T> constexpr _finline static T RotR(T Value, unsigned int Shift){constexpr unsigned int MaxBits = sizeof(T) * 8U; return (Value >> Shift) | (Value << ((MaxBits - Shift)&(MaxBits-1)));}
+
+template<typename N, typename M> constexpr _finline static M NumToPerc(N Num, M MaxVal){return (((Num)*100)/(MaxVal));}               // NOTE: Can overflow!
+template<typename P, typename M> constexpr _finline static M PercToNum(P Per, M MaxVal){return (((Per)*(MaxVal))/100);}               // NOTE: Can overflow!
+
+template<class N, class M> constexpr _finline static M AlignFrwd(N Value, M Alignment){return (Value/Alignment)+(bool(Value%Alignment)*Alignment);}    // NOTE: Slow but works with any Alignment value
+template<class N, class M> constexpr _finline static M AlignBkwd(N Value, M Alignment){return (Value/Alignment)*Alignment;}                            // NOTE: Slow but works with any Alignment value
+
+// 2,4,8,16,...
+template<typename N> constexpr _finline static bool IsPowerOf2(N Value){return Value && !(Value & (Value - 1));}
+template<typename N> constexpr _finline static N AlignP2Frwd(N Value, unsigned int Alignment){return (Value+((N)Alignment-1)) & ~((N)Alignment-1);}    // NOTE: Result is incorrect if Alignment is not power of 2
+template<typename N> constexpr _finline static N AlignP2Bkwd(N Value, unsigned int Alignment){return Value & ~((N)Alignment-1);}                       // NOTE: Result is incorrect if Alignment is not power of 2
+//------------------------------------------------------------------------------------------------------------
+
+template<typename T> consteval size_t countof(T& a){return (sizeof(T) / sizeof(*a));}         // Not for array classes or pointers!  // 'a[0]' ?
+
+
+//------------------------------------------------------------------------------------------------------------
+// The pointer proxy to use inside of a platform dependant structures (i.e. NTDLL)
+template<typename T, typename H=uint> struct alignas(H) SPTR
+{
+ STASRT(SameTypes<H, uint>::value || SameTypes<H, uint32>::value || SameTypes<H, uint64>::value, "Unsupported pointer type!");
+ H Value;
+ _finline SPTR(H v){this->Value = v;}
+ _finline SPTR(T* v){this->Value = (H)v;}
+ _finline SPTR(int v){this->Value = (H)v;}    // For '0' values
+ _finline SPTR(unsigned int v){this->Value = (H)v;}    // For '0' values
+ _finline SPTR(long long v){this->Value = (H)v;}    // For '0' values
+ _finline SPTR(unsigned long long v){this->Value = (H)v;}    // For '0' values
+ _finline SPTR(const char* v){this->Value = (H)v;}
+ _finline SPTR(nullptr_t v){this->Value = (H)v;}    // For 'nullptr' values
+
+ _finline void operator= (H val){this->Value = val;}
+ _finline void operator= (T* val){this->Value = (H)val;}    // May truncate or extend the pointer
+ _finline void operator= (SPTR<T,H> val){this->Value = val.Value;}
+ _finline operator T* (void){return (T*)this->Value;}    // Must be convertible to current pointer type
+ _finline operator H (void){return this->Value;}    // Raw value
+};
+//using SPTRN  = SPTR<uint>;
+//using SPTR32 = SPTR<uint32>;
+//using SPTR64 = SPTR<uint64>;
+//------------------------------------------------------------------------------------------------------------
+template<class> struct SFuncStub;
+template<class TRet, class... TPar> struct SFuncStub<TRet(TPar...)>
+{
+ using TFuncPtr = TRet (*)(TPar...);
+ static const int ArgNum   = sizeof...(TPar);
+ static const int StubSize = SYSCALLSTUBLEN;   // Let it be copyable with __m256
+ static const int StubFill = 0xFF;
+ uint8 Stub[StubSize];     // TFuncPtr ptr;  // TReturn (*ptr)(TParameter...);
+ consteval SFuncStub(void) {for(int ctr=0;ctr < StubSize;ctr++)Stub[ctr]=StubFill;}  // TODO: Fill with random if PROTECT is enabled?
+ _finline TRet operator()(TPar... params){return ((TFuncPtr)&Stub)(params...);}     //return ptr(params...);
+};
+//------------------------------------------------------------------------------------------------------------
+
+
+
+//---------------------------------------------------------------------------
+
+static void*  __cdecl memcpy(void* _Dst, const void* _Src, size_t _Size)
+{
+ size_t ALen = _Size/sizeof(size_t);
+ size_t BLen = _Size%sizeof(size_t);
+ for(size_t ctr=0;ctr < ALen;ctr++)((size_t*)_Dst)[ctr] = ((size_t*)_Src)[ctr];
+ for(size_t ctr=(ALen*sizeof(size_t));ctr < _Size;ctr++)((char*)_Dst)[ctr] = ((char*)_Src)[ctr];
+ return _Dst;
+}
+//------------------------------------------------------------------------------------------------------------
+static void*  __cdecl memmove(void* _Dst, const void* _Src, size_t _Size)
+{
+ if((char*)_Dst <= (char*)_Src)return memcpy(_Dst,_Src,_Size);
+ size_t ALen = _Size/sizeof(size_t);
+ size_t BLen = _Size%sizeof(size_t);
+ for(size_t ctr=_Size-1;BLen > 0;ctr--,BLen--)((char*)_Dst)[ctr] = ((char*)_Src)[ctr];
+ for(size_t ctr=ALen-1;ALen > 0;ctr--,ALen--) ((size_t*)_Dst)[ctr] = ((size_t*)_Src)[ctr];
+ return _Dst;
+}
+//---------------------------------------------------------------------------
+static void*  __cdecl memset(void* _Dst, int _Val, size_t _Size)      // TODO: Aligned, SSE by MACRO
+{
+ size_t ALen = _Size/sizeof(size_t);
+ size_t BLen = _Size%sizeof(size_t);
+ size_t DVal =_Val & 0xFF;               // Bad and incorrect For x32: '(size_t)_Val * 0x0101010101010101;'         // Multiply by 0x0101010101010101 to copy the lowest byte into all other bytes
+ if(DVal)
+  {
+   DVal = _Val | (_Val << 8) | (_Val << 16) | (_Val << 24);
+#ifdef _AMD64_
+   DVal |= DVal << 32;
+#endif
+  }
+ for(size_t ctr=0;ctr < ALen;ctr++)((size_t*)_Dst)[ctr] = DVal;
+ for(size_t ctr=(ALen*sizeof(size_t));ctr < _Size;ctr++)((char*)_Dst)[ctr] = DVal;
+ return _Dst;
+}
+//---------------------------------------------------------------------------
+static int __cdecl memcmp(const void* _Buf1, const void* _Buf2, size_t _Size) // '(*((ULONG**)&_Buf1))++;'
+{
+ unsigned char* BufA = (unsigned char*)_Buf1;
+ unsigned char* BufB = (unsigned char*)_Buf2;
+ for(;_Size >= sizeof(size_t); _Size-=sizeof(size_t), BufA+=sizeof(size_t), BufB+=sizeof(size_t))  // Enters here only if Size >= sizeof(ULONG)
+  {
+   if(*((size_t*)BufA) != *((size_t*)BufB))break;  // Have to break and continue as bytes because return value must be INT  // return (*((intptr_t*)BufA) - *((intptr_t*)BufB));  //  // TODO: Move everything to multiplatform FRAMEWORK
+  }
+ for(;_Size > 0; _Size--, BufA++, BufB++)  // Enters here only if Size > 0
+  {
+   if(*((unsigned char*)BufA) != *((unsigned char*)BufB)){return ((int)*BufA - (int)*BufB);}
+  }
+ return 0;
+}
+//---------------------------------------------------------------------------
