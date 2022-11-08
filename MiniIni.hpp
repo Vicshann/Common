@@ -15,11 +15,8 @@
   WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. 
 */
 
-#ifndef MINIINIH
-#define MINIINIH
 
-
-#include <Windows.h>
+//#include <Windows.h>
 //#include "MiniString.h"
 
 
@@ -54,7 +51,7 @@ static void TrimSpaces(LPSTR& Str, int& Len)
  for(;Len && (Str[Len-1] == ' ');Len--);
 }
 //----------------------------------------------------------------------------
-// Keep offsets of SecName, ValName, Value  for updating and keeping a comments 
+// Keep offsets of SecName, ValName, Value  for updating and keeping comments 
 // Note: Duplicates allowed
 // Note: No names copying from a source string!
 int AddValue(LPSTR SecName, LPSTR ValName, LPSTR Value, int SecNamLen, int ValNamLen, int ValStrLen)
@@ -68,9 +65,10 @@ int AddValue(LPSTR SecName, LPSTR ValName, LPSTR Value, int SecNamLen, int ValNa
  if(this->Secs)
   {  
    SSecRec* LstSec;
-   for(LstSec = this->Secs;LstSec;LstSec=LstSec->Next)
+   for(LstSec = this->Secs;;LstSec=LstSec->Next)
     {
-     if((SecNamLen == LstSec->Len) && (memcmp(SecName,LstSec->Name,SecNamLen)==0)){CurSec = LstSec;break;}
+     if((SecNamLen == LstSec->Len) && (memcmp(SecName,LstSec->Name,SecNamLen)==0)){CurSec = LstSec;break;}    // Found a section by name
+     if(!LstSec->Next)break;
     }
    if(!CurSec)LstSec->Next = CurSec = (SSecRec*)HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,sizeof(SSecRec));  // Big fragmentation but no preallocation 
   }
@@ -161,12 +159,12 @@ ReEnter:
       this->State = stExpValBeg;
      continue;
      case stExpValBeg:
-      if(*Str  < ' ')break;
-      ValBeg = Str;
+      if(!*Str)break;    // Values may be empty: 'Val='
+      ValBeg = Str--;    // Decrement in case the value is empty
       this->State = stExpValEnd;
      continue;
      case stExpValEnd:
-      if(*Str  >= ' ')continue;
+      if(*Str  >= ' ')continue;      // Tabs is not allowed in values?
       ValEnd = Str;            
       if(this->AddValue(SecBeg, ValNamBeg, ValBeg, SecEnd-SecBeg, ValNamEnd-ValNamBeg, ValEnd-ValBeg) < 0)return false;
       this->State = stExpValNameBeg;
@@ -181,7 +179,7 @@ int GetValue(LPSTR SecName, LPSTR ValName, LPSTR Buffer, UINT BufLen)
 {
  UINT SecNamLen = lstrlen(SecName);
  UINT ValNamLen = lstrlen(ValName);
- for(SSecRec* CurSec = this->Secs;CurSec;)
+ for(SSecRec* CurSec = this->Secs;CurSec;CurSec=CurSec->Next)
   {
    if((SecNamLen != CurSec->Len) || (memcmp(SecName,CurSec->Name,SecNamLen)!=0))continue;
    for(SValRec* CurRec = CurSec->Recs;CurRec;CurRec=CurRec->Next)
@@ -191,13 +189,10 @@ int GetValue(LPSTR SecName, LPSTR ValName, LPSTR Buffer, UINT BufLen)
      lstrcpyn(Buffer,CurRec->Value,BufLen+1);
      return BufLen;
     }
-   SSecRec* DelSec = CurSec;
-   CurSec = CurSec->Next;
-   HeapFree(GetProcessHeap(),0,DelSec);
   }
  return -1;
 }
 //----------------------------------------------------------------------------
 };
 //----------------------------------------------------------------------------
-#endif
+

@@ -61,14 +61,32 @@
 #endif  
 #define OUTMSG(msg,...) LogProc(lfLineBreak,0,msg,__VA_ARGS__)  
 
+#define LOGFAL(msg,...) LogProc(lfLineBreak|lfLogName|lfLogTime|lfLogThID|lfLogLevel|llLogVFail,_PRNM_,msg,__VA_ARGS__)
+#define LOGERR(msg,...) LogProc(lfLineBreak|lfLogName|lfLogTime|lfLogThID|lfLogLevel|llLogVError,_PRNM_,msg,__VA_ARGS__)
+#define LOGWRN(msg,...) LogProc(lfLineBreak|lfLogName|lfLogTime|lfLogThID|lfLogLevel|llLogVWarning,_PRNM_,msg,__VA_ARGS__)
+#define LOGNTE(msg,...) LogProc(lfLineBreak|lfLogName|lfLogTime|lfLogThID|lfLogLevel|llLogVNote,_PRNM_,msg,__VA_ARGS__)
+#define LOGINF(msg,...) LogProc(lfLineBreak|lfLogName|lfLogTime|lfLogThID|lfLogLevel|llLogVInfo,_PRNM_,msg,__VA_ARGS__)
+#define LOGDBG(msg,...) LogProc(lfLineBreak|lfLogName|lfLogTime|lfLogThID|lfLogLevel|llLogVDebug,_PRNM_,msg,__VA_ARGS__)
+#define LOGTRC(msg,...) LogProc(lfLineBreak|lfLogName|lfLogTime|lfLogThID|lfLogLevel|llLogVTrace,_PRNM_,msg,__VA_ARGS__)
+
+
 #define FOREGROUND_YELLOW (FOREGROUND_RED|FOREGROUND_GREEN)
 
 
 enum ELogModes {lmNone=0,lmFile=0x01,lmCons=0x02,lmProc=0x04,lmFileUpd=0x08};
-enum ELogFlags {lfNone=0,lfLineBreak=0x01,lfLogName=0x02,lfLogTime=0x04,lfLogThID=0x08,lfLogMsgIdx=0x10,lfRawTextMsg=0x20};
+enum ELogFlags {lfNone=0,lfLineBreak=0x0100,lfLogName=0x0200,lfLogTime=0x0400,lfLogThID=0x0800,lfLogMsgIdx=0x1000,lfRawTextMsg=0x2000,lfLogLevel=0x4000,  
+                llLogVFail=1,     // A thread or application itself is unable to continue
+                llLogVError=2,    // Some operation failed but application will continue to operate
+                llLogVWarning=3,  // Something unexpected has happened that may require attention but operation can continue
+                llLogVNote=4,     // Some operational shoose has been made and an user must be informed about it
+                llLogVInfo=5,     // Additional comments about current operation, hints and suggestions
+                llLogVDebug=6,    // Everything that may be required to diagnose a problem during execution
+                llLogVTrace=7     // Log every step of operation or some complicated algorithm
+               };
 void   _cdecl LogProc(int Flags, char* ProcName, char* Message, ...);
-extern void (_cdecl *pLogProc)(LPSTR, UINT);
+extern void (_cdecl *pLogProc)(LPSTR, UINT, UINT);
 extern int  LogMode;
+extern int  MaxLogLevel;
 extern wchar_t LogFilePath[MAX_PATH];
 
 #ifdef __BORLANDC__
@@ -185,6 +203,7 @@ int   _stdcall ByteArrayToHexStr(PBYTE Buffer, LPSTR DstStr, UINT ByteCnt, bool 
 //UINT  _stdcall TrimFilePath(LPSTR FullPath);
 //void _stdcall CreateDirectoryPath(LPSTR Path);
 //void _stdcall CreateDirectoryPathW(PWSTR Path);
+PVOID _stdcall GetRealModuleBase(PVOID AddrInModule);
 SIZE_T _stdcall GetRealModuleSize(PVOID ModuleBase);
 SIZE_T _stdcall CopyValidModuleMem(PVOID ModuleBase, PVOID DstAddr, SIZE_T DstSize);
 __int64   _stdcall GetTime64(bool Local=false);
@@ -578,7 +597,7 @@ template<typename T, typename S> S DecNumToStrS(T Val, S buf, UINT* Len=0)
 } 
 //---------------------------------------------------------------------------
 // No Streams support!
-template<typename T, typename O> O _fastcall DecNumToStrU(T Val, O buf, int* Len)     // A/W char string and Signed/Unsigned output by constexpr
+template<typename T, typename O> O _fastcall DecNumToStrU(T Val, O buf, UINT* Len)     // A/W char string and Signed/Unsigned output by constexpr
 {
  if(Val == 0){if(Len)*Len = 1; *buf = '0'; buf[1] = 0; return buf;}
  buf  = &buf[20];
@@ -595,7 +614,7 @@ template<typename T, typename O> O _fastcall DecNumToStrU(T Val, O buf, int* Len
  return buf;     // Optionally move?
 }
 //--------------------------------------------------------------------------- 
-template<typename O, typename T> O _fastcall DecStrToNum(T Str, long* Size=nullptr)
+template<typename O, typename T> O _fastcall DecStrToNum(T Str, long* Size=nullptr)     // TODO: Ignore spaces(Optional?)
 {
  O x = 0;
  T Old = Str;
@@ -612,7 +631,7 @@ template<typename O, typename T> O _fastcall HexStrToNum(T Str, long* Size=nullp
  O x = 0;
  T Old = Str;
  for(long chv;(chv=CharToHex(*Str++)) >= 0;)x = (x<<4) + chv;  // (<<4) avoids call to __llmul which is big
- if(Size)*Size = (char*)Str - (char*)Old - 1;               // Constexpr?
+ if(Size)*Size = (char*)Str - (char*)Old - 1;               // Constexpr?   // In bytes????????????????????
  return x;
 }
 //---------------------------------------------------------------------------
@@ -704,6 +723,21 @@ template<typename T> T IncrementFileName(T FileName)
    if(!IsFileExists(FileName))break;
   }
  return FileName;
+}
+//---------------------------------------------------------------------------
+// Return is negative if there is more elements
+template<typename T> int SplitBySep(T Str, T* PtrArr, UINT Cnt, char Sep)
+{
+ int Total = 0;
+ PtrArr[Total++] = Str;
+ for(char v=0;v=*Str;Str++)
+  {
+   if(v != Sep)continue;
+   if(Total >= (int)Cnt)return -Total;
+   PtrArr[Total++] = &Str[1];
+   *Str = 0;
+  }
+ return Total;
 }
 //---------------------------------------------------------------------------
 /*template<typename T> T GetCmdLineBegin(T CmdLine)
@@ -889,12 +923,12 @@ template<typename T, typename S> S ConvertToHexStr(T Value, int MaxDigits, S Num
  return NumBuf; 
 }
 //---------------------------------------------------------------------------
-template<typename T> int HexStrToByteArray(PBYTE Buffer, T SrcStr, UINT HexByteCnt=-1)
+template<typename T> int HexStrToByteArray(PBYTE Buffer, T SrcStr, UINT HexByteCnt=-1, unsigned char SkipUntil=0x20)
 {
  UINT ctr = 0;
  for(UINT len = 0;(SrcStr[len]&&SrcStr[len+1])&&(ctr < HexByteCnt);len++)   // If it would be possible to make an unmodified defaults to disappear from compilation...
   {
-   if(SrcStr[len] <= 0x20)continue;   // Skip spaces and line delimitters
+   if(SrcStr[len] <= SkipUntil)continue;   // Skip spaces and line delimitters
    int ByteHi  = CharToHex(SrcStr[len]);
    int ByteLo  = CharToHex(SrcStr[len+1]);
    if((ByteHi  < 0)||(ByteLo < 0))return ctr;  // Not a HEX char
@@ -949,8 +983,8 @@ template<typename S> UINT BinDataToCArray(S& OutStrm, PBYTE BinPtr, UINT SizeInB
  BYTE Line[512];
  int  idx=0;
  while((idx < 4)&&!(ESize & (1 << idx)))idx++;
- wsprintfA((LPSTR)&Line,"unsigned long BSize%s = %u;\r\nunsigned %s %s[] = {\r\n",Name,SizeInBytes,TypeArr[idx],Name);    // ByteSize required if a element size is more than a byte
- OutStrm += (LPSTR)&Line;
+ int len = wsprintfA((LPSTR)&Line,"unsigned long BSize%s = %u;\r\nunsigned %s %s[] = {\r\n",Name,SizeInBytes,TypeArr[idx],Name);    // ByteSize required if a element size is more than a byte
+ OutStrm.Append((char*)&Line, len); 
  UINT ElemSize = ESize*sizeof(WORD);  
  while(SizeInBytes > 0)
   {       
@@ -974,9 +1008,9 @@ template<typename S> UINT BinDataToCArray(S& OutStrm, PBYTE BinPtr, UINT SizeInB
    Line[Offs++] = '\r';
    Line[Offs++] = '\n';
    Line[Offs++] = 0;
-   OutStrm += (char*)&Line;
+   OutStrm.Append((char*)&Line, Offs);  // += (char*)&Line;
   }
- OutStrm += "};\r\n";
+ OutStrm.Append((char*)"};\r\n", 4);  // += "};\r\n";
  return OutStrm.Length();
 }
 //---------------------------------------------------------------------------
@@ -1211,44 +1245,54 @@ public:
  T* Data(void){return this->AData;}
  T* c_data(void){return this->AData;}   // For name compatibility in a templates
  UINT Count(void){return (this->Size() / sizeof(T));}
- UINT Size(void){return ((this->AData)?(((size_t*)this->AData)[-1]):(0));}
+ UINT Size(void) const {return ((this->AData)?(((size_t*)this->AData)[-1]):(0));}
  UINT Length(void){return this->Size();}
+
 //----------------------------------------------------------
- bool Add(T* Elems, UINT Cnt)
+ void Clear(void){this->Resize(0);}
+//----------------------------------------------------------
+ void TakeFrom(CArr<T>& arr)
   {
-   return this->Append(Elems, Cnt * sizeof(T));
+   this->Resize(0);
+   this->AData = arr.AData;
+   arr.AData = nullptr;
   }
 //----------------------------------------------------------
- bool Assign(void* Bytes, UINT Len)     // In Bytes
+ bool Assign(void* Items, UINT Cnt)     // In Bytes
   {
-   if(!this->Resize(Len))return false;
-   if(Bytes)memcpy(this->AData, Bytes, Len);
+   size_t NewLen = Cnt * sizeof(T);
+   if(!this->SetLength(NewLen))return false;
+   if(Items)memcpy(this->AData, Items, NewLen);
    return true;
   }
 //----------------------------------------------------------
- bool Append(void* Bytes, UINT Len)     // In Bytes
+ bool Append(void* Items, UINT Cnt)     // In Bytes
   {
-   UINT OldSize = this->Size();
-   if(!this->Resize(OldSize+Len))return false;
-   if(Bytes)memcpy(&((PBYTE)this->AData)[OldSize], Bytes, Len);
+   size_t OldSize = this->Size();
+   size_t NewLen  = Cnt * sizeof(T);
+   if(!this->SetLength(OldSize+NewLen))return false; 
+   if(Items)memcpy(&((PBYTE)this->AData)[OldSize], Items, NewLen);
    return true;
   }
 //----------------------------------------------------------
- CArr<T>& operator += (const char* str){this->Append((void*)str, lstrlenA(str)); return *this;}
+ //CArr<T>& operator += (const char* str){this->Append((void*)str, lstrlenA(str)); return *this;}
 //----------------------
- CArr<T>& operator += (const wchar_t* str){this->Append((void*)str, lstrlenW(str)); return *this;}
+ //CArr<T>& operator += (const wchar_t* str){this->Append((void*)str, lstrlenW(str)); return *this;}
+//----------------------
+ CArr<T>& operator += (const CArr<T>& arr){this->Append(arr.AData, arr.Size()); return *this;}
 //----------------------------------------------------------
  bool Resize(UINT Cnt)   // In Elements
  {
   return this->SetLength(Cnt*sizeof(T));
  }
- bool SetLength(UINT Len)    // In bytes!
+ bool SetLength(size_t Len)    // In bytes!
   {
   HANDLE hHeap = GetProcessHeap();
   size_t* Ptr = (size_t*)this->AData;
   if(Len && Ptr)Ptr = (size_t*)HeapReAlloc(hHeap,HEAP_ZERO_MEMORY,&Ptr[-1],Len+sizeof(size_t));
-	else if(!Ptr)Ptr = (size_t*)HeapAlloc(hHeap,HEAP_ZERO_MEMORY,Len+sizeof(size_t));
-	  else if(!Len && Ptr){HeapFree(hHeap,0,&Ptr[-1]); this->AData=NULL; return false;}
+	else if(!Ptr && Len)Ptr = (size_t*)HeapAlloc(hHeap,HEAP_ZERO_MEMORY,Len+sizeof(size_t));
+	  else if(!Len && Ptr){HeapFree(hHeap,0,&Ptr[-1]); this->AData=nullptr; return false;}
+        else return true;
   if(!Ptr)return false;
   *Ptr = Len;
   this->AData = (T*)(++Ptr);
@@ -1270,16 +1314,19 @@ public:
    return (Result / sizeof(T));
   }
 //----------------------------------------------------------
- UINT ToFile(PVOID FileName)       // TODO: Bool Append    // From - To
+ UINT ToFile(PVOID FileName, SIZE_T Length=0, SIZE_T Offset=0)       // TODO: Bool Append    // From - To
   {
    HANDLE hFile;
-   UINT SavLen = this->Size();
-   if(!SavLen)return 0;   
+   SIZE_T DataSize = this->Size();
+   if(Offset >= DataSize)return 0;  // Beyond the data
+   if(!Length)Length = DataSize; 
+   if((Offset+Length) > DataSize)Length = (DataSize - Offset); 
+   if(!Length)return 0;   
    if(!((PBYTE)FileName)[1])hFile = CreateFileW((PWSTR)FileName,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
      else hFile = CreateFileA((LPSTR)FileName,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
    if(hFile == INVALID_HANDLE_VALUE)return 0;
    DWORD Result = 0;
-   WriteFile(hFile,this->AData,SavLen,&Result,NULL);
+   WriteFile(hFile, &((PBYTE)this->AData)[Offset], Length, &Result, NULL);
    CloseHandle(hFile);
    return (Result / sizeof(T));
   }

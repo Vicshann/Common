@@ -39,16 +39,9 @@ struct _LIST_ENTRY_T
 template <class T>
 struct _UNICODE_STRING_T
 {
-    union
-    {
-        struct
-        {
-            WORD Length;
-            WORD MaximumLength;
-        };
-        T dummy;
-    };
-    T Buffer;
+ WORD Length;
+ WORD MaximumLength;
+ alignas(T) T Buffer;
 };
 
 template <class T>

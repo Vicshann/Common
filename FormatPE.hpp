@@ -129,8 +129,8 @@ struct DATA_DIRECTORIES_TABLE
  DATA_DIRECTORY LoadConfigDir;    // Load Configuration Directory 0xC8
  DATA_DIRECTORY BoundImportDir;   // Bound(Delayed) Import Dir    0xD0
  DATA_DIRECTORY ImportAddrTable;  // Import Address Table         0xD8
- DATA_DIRECTORY Reserved1;        // Reserved (Must be NULL)      0xE0
- DATA_DIRECTORY Reserved2;        // Reserved (Must be NULL)      0xE8
+ DATA_DIRECTORY DelayImportDir;   //                              0xE0
+ DATA_DIRECTORY DotNetMetaDir;    // .NET metadata directory      0xE8
  DATA_DIRECTORY Reserved3;        // Reserved (Must be NULL)      0xF0
 };
 //---------------------------------------------------------------------------
@@ -299,6 +299,45 @@ struct RESOURCE_DIR
  WORD    NumberOfNamedEntries;
  WORD    NumberOfIdEntries;
  IMAGE_RESOURCE_DIRECTORY_ENTRY DirectoryEntries[];    // Difined in WINNT.H
+};
+//---------------------------------------------------------------------------
+template<typename T> struct TLS_DIR
+{
+ T     StartAddressOfRawData;
+ T     EndAddressOfRawData;
+ T     AddressOfIndex;         // PDWORD
+ T     AddressOfCallBacks;     // PIMAGE_TLS_CALLBACK *;
+ DWORD SizeOfZeroFill;
+ DWORD Characteristics;
+};
+//---------------------------------------------------------------------------
+template<typename T> struct LOAD_CONFIG_DIR
+{
+ DWORD  Size;
+ DWORD  TimeDateStamp;
+ WORD   MajorVersion;
+ WORD   MinorVersion;
+ DWORD  GlobalFlagsClear;
+ DWORD  GlobalFlagsSet;
+ DWORD  CriticalSectionDefaultTimeout;
+ T      DeCommitFreeBlockThreshold;
+ T      DeCommitTotalFreeThreshold;
+ T      LockPrefixTable;
+ T      MaximumAllocationSize;
+ T      VirtualMemoryThreshold;
+ T      ProcessAffinityMask;
+ DWORD  ProcessHeapFlags;
+ WORD   CSDVersion;
+ WORD   DependentLoadFlags;
+ T      EditList;
+ T      SecurityCookie;
+ T      SEHandlerTable;
+ T      SEHandlerCount;
+ T      GuardCFCheckFunctionPointer;
+ T      GuardCFDispatchFunctionPointer;
+ T      GuardCFFunctionTable;
+ T      GuardCFFunctionCount;
+ DWORD  GuardFlags;
 };
 //---------------------------------------------------------------------------
 struct VERSION_INFO   // The only version info?  // VS_VERSION_INFO
@@ -660,10 +699,10 @@ static bool GetSectionForAddress(PVOID ModuleBase, PVOID Address, SECTION_HEADER
  return false;
 }
 //---------------------------------------------------------------------------
-template<typename T> static bool TGetModuleSection(PVOID ModuleBase, char *SecName, SECTION_HEADER **ResSec)
+static bool GetModuleSection(PVOID ModuleBase, char *SecName, SECTION_HEADER **ResSec)
 {
  DOS_HEADER     *DosHdr = (DOS_HEADER*)ModuleBase;
- WIN_HEADER<T>  *WinHdr = (WIN_HEADER<T>*)&((PBYTE)ModuleBase)[DosHdr->OffsetHeaderPE];
+ WIN_HEADER<PECURRENT>  *WinHdr = (WIN_HEADER<PECURRENT>*)&((PBYTE)ModuleBase)[DosHdr->OffsetHeaderPE];    // Size of PE header structure(x32/x64) is not important here
  UINT            HdrLen = DosHdr->OffsetHeaderPE+WinHdr->FileHeader.HeaderSizeNT+sizeof(FILE_HEADER)+sizeof(DWORD);
  SECTION_HEADER *CurSec = (SECTION_HEADER*)&((BYTE*)ModuleBase)[HdrLen];
 
@@ -676,6 +715,17 @@ template<typename T> static bool TGetModuleSection(PVOID ModuleBase, char *SecNa
     }
   }
  return false;
+}
+//---------------------------------------------------------------------------
+static bool GetModuleSection(PVOID ModuleBase, UINT SecIdx, SECTION_HEADER **ResSec)
+{
+ DOS_HEADER     *DosHdr = (DOS_HEADER*)ModuleBase;
+ WIN_HEADER<PECURRENT>  *WinHdr = (WIN_HEADER<PECURRENT>*)&((PBYTE)ModuleBase)[DosHdr->OffsetHeaderPE];        // Size of PE header structure(x32/x64) is not important here
+ UINT            HdrLen = DosHdr->OffsetHeaderPE+WinHdr->FileHeader.HeaderSizeNT+sizeof(FILE_HEADER)+sizeof(DWORD);
+ SECTION_HEADER *CurSec = (SECTION_HEADER*)&((BYTE*)ModuleBase)[HdrLen];
+ if(SecIdx >= WinHdr->FileHeader.SectionsNumber)return false;
+ if(ResSec)*ResSec = &CurSec[SecIdx]; 
+ return true;
 }
 //---------------------------------------------------------------------------
 template<typename T> static UINT TCalcRawModuleSize(PVOID ModuleBase)
@@ -704,14 +754,6 @@ static bool GetModuleSizes(PBYTE ModuleBase, UINT* RawSize, UINT* VirSize)
      else *RawSize = TCalcRawModuleSize<PETYPE32>(ModuleBase);
   }
  return true;
-}
-//---------------------------------------------------------------------------
-// Works with a Mapped in memory or a Raw file
-static bool GetModuleSection(PVOID ModuleBase, char *SecName, SECTION_HEADER **ResSec)
-{
- if(!IsValidPEHeader(ModuleBase))return false;
- if(IsValidModuleX64(ModuleBase))return TGetModuleSection<PETYPE64>(ModuleBase, SecName, ResSec);
- return TGetModuleSection<PETYPE32>(ModuleBase, SecName, ResSec);
 }
 //---------------------------------------------------------------------------
 static PVOID GetLoadedModuleEntryPoint(PVOID ModuleBase)
@@ -1588,7 +1630,156 @@ template<typename T, bool RawSrcPE=false, bool RawDstPE=false> static int Resolv
  return DBuffOffs;
 }
 //------------------------------------------------------------------------------------
+// Calculate aligned offset of reloc of size T which was encountered at byte offset 'Offset'
+template<typename T> static int GetRelocOffset(PBYTE DefDataPtr, PBYTE AltDataPtr, DWORD Offset, T DefBase, T BaseDelta)
+{
+ int StepBk = 2;   // Module loading granularity is 0sx10000 so low 2 bytes is never changed by relocs
+ int TotBk  = sizeof(T)-1;  // 3 or 7
+ DefDataPtr -= StepBk;
+ AltDataPtr -= StepBk;
+ for(;StepBk <= TotBk;StepBk++,Offset--)
+  {
+   T DefVal = *(T*)&DefDataPtr[Offset];
+   T AltVal = *(T*)&AltDataPtr[Offset] - BaseDelta;
+   if(AltVal == DefVal)return StepBk;   // The difference is a relocated value, return its offset
+  }
+ return 0;
+}
+//------------------------------------------------------------------------------------
+// This function rebuilds all relocs
+// If we dumped an uncorrupted and unresolved IAT, entries there are RVA to ORD:Name names table yet and affected by relocs (???)
+// DefModData is updated target
+// NOTE: Expect differences in TlsIndex which is referred by TlsDirectory and security_cookie which is referred by LoadConfigDirectory
+//
+template<typename T> static int RebuildRelocs(PBYTE DefModData, UINT DefModSize, PBYTE AltModData, UINT AltModSize, SIZE_T AltModBase, int SkipSecFirst=0, int SkipSecLast=0, int RelocSecIdx=-1, bool IgnoreMismatch=false, bool LogRecs=false)
+{
+ LOGMSG("Entering...");
+ DOS_HEADER* DosHdr    = (DOS_HEADER*)DefModData;
+ WIN_HEADER<T>* WinHdr = (WIN_HEADER<T>*)&DefModData[DosHdr->OffsetHeaderPE];
+ if((SkipSecFirst+SkipSecLast) >= WinHdr->FileHeader.SectionsNumber)return -1;
+ if(RelocSecIdx < 0)RelocSecIdx = WinHdr->FileHeader.SectionsNumber-(SkipSecLast+1);
+ UINT            HdrLen   = DosHdr->OffsetHeaderPE+WinHdr->FileHeader.HeaderSizeNT+sizeof(FILE_HEADER)+sizeof(DWORD);
+ SECTION_HEADER* SecArr   = (SECTION_HEADER*)&((BYTE*)DefModData)[HdrLen];
+ SECTION_HEADER* RelocSec = &SecArr[RelocSecIdx];   
+ SIZE_T ImageBase = TBaseOfImage<T>(DefModData);
+ SIZE_T LoadDelta = (SIZE_T)AltModBase - ImageBase;
 
+ int LastRASec  = WinHdr->FileHeader.SectionsNumber - RelocSecIdx - 1; // Last section, affected by relocs   
+
+ PBYTE RelocSecBeg = &DefModData[RelocSec->SectionRva];  // File offset or RVA (?)
+ PBYTE RelocSecEnd = RelocSecBeg + RelocSec->PhysicalSize;
+
+ DWORD RelRVATo    = SecArr[LastRASec].SectionRva + SecArr[LastRASec].PhysicalSize;
+ DWORD RelRVAFrom  = SecArr[SkipSecFirst].SectionRva;
+ DWORD LstBlkRVA   = 0;
+ DWORD RelRecIdx   = 0;
+
+ RELOCATION_DESC* RDesc = NULL; 
+ int TotalRelocSize = 0;
+ for(DWORD Offs=RelRVAFrom;Offs < RelRVATo;Offs++)    // Compare all bytes
+  {
+   if(DefModData[Offs] == AltModData[Offs])continue;    // No difference
+   int StepBk = GetRelocOffset<T>(DefModData, AltModData, Offs, ImageBase, LoadDelta);
+   if(StepBk == 0)
+    {
+     LOGMSG("No reloc match for diff at %08X",Offs);     // A difference encountered between dumps which is not caused by relocation!
+     if(IgnoreMismatch)continue;
+     return -2;
+    }    
+   Offs -= StepBk;  // Align to reloc
+   DWORD CurBlkRVA = Offs & 0xFFFFF000;   // 4k per reloc block
+   if(CurBlkRVA != LstBlkRVA)   // Prepare a new reloc block
+    {
+     RelRecIdx = 0;
+     LstBlkRVA = CurBlkRVA;
+     if(RDesc)   // We already had a reloc block
+      {
+       if(RDesc->BlkSize & 3)       // Add a NULL record to keep all records aligned to DWORD
+        {
+         *(PWORD)&RelocSecBeg[RDesc->BlkSize] = 0;   // Add an unused NULL entry
+         RDesc->BlkSize += sizeof(WORD);   // Blocks must be DWORD aligned      
+         if(LogRecs){LOGMSG("   NULL");}
+        }
+       RelocSecBeg += RDesc->BlkSize;
+       TotalRelocSize += RDesc->BlkSize;
+      }
+     RDesc = (RELOCATION_DESC*)RelocSecBeg;
+     RDesc->BaseRVA = CurBlkRVA;
+     RDesc->BlkSize = sizeof(RELOCATION_DESC);
+     if(LogRecs){LOGMSG("New block at %08X: BaseRVA=%08X",RelocSecBeg-DefModData,CurBlkRVA);}
+    }
+   UINT Offset = Offs - LstBlkRVA;       // RVA to reloc block offset
+   UINT RType  = (sizeof(T) == 4)?IMAGE_REL_BASED_HIGHLOW:IMAGE_REL_BASED_DIR64;  
+   if(LogRecs){LOGMSG("   Type=%u, Offs=%04X, RVA=%08X",RType, Offset, RDesc->BaseRVA + Offset);}
+   RDesc->Records[RelRecIdx].Type   = RType;
+   RDesc->Records[RelRecIdx].Offset = Offset;
+   RDesc->BlkSize += sizeof(WORD);
+   RelRecIdx++;
+   Offs += sizeof(T)-1;   //  3;  // sizeof(DWORD)-1
+  }
+ if(RDesc)
+  {
+   if(RDesc->BlkSize & 3)
+    {
+     *(PWORD)&RelocSecBeg[RDesc->BlkSize] = 0;   // Add an unused NULL entry
+     RDesc->BlkSize += sizeof(WORD);   // Blocks must be DWORD aligned  
+     if(LogRecs){LOGMSG("   NULL");}  
+    }
+   TotalRelocSize += RDesc->BlkSize;
+  }
+ LOGMSG("TotalRelocSize: %08X",TotalRelocSize);
+ return TotalRelocSize;
+}
+//------------------------------------------------------------------------------------
+template<typename T> static int LogRelocs(PVOID ModBase, SIZE_T ModSize, int SkipSecFirst=0, int SkipSecLast=0, bool Raw=true)
+{
+ PBYTE DllCopyBase = ModBase;
+ DOS_HEADER* DosHdr       = (DOS_HEADER*)DllCopyBase;
+ WIN_HEADER<T>* WinHdr = (WIN_HEADER<T>*)&DllCopyBase[DosHdr->OffsetHeaderPE];
+ if(RelocSecIdx < 0)RelocSecIdx = WinHdr->FileHeader.SectionsNumber-(SkipSecLast+1);
+ SIZE_T ModuleBase = TBaseOfImage<T>(DllCopyBase);
+ UINT            HdrLen = DosHdr->OffsetHeaderPE+WinHdr->FileHeader.HeaderSizeNT+sizeof(FILE_HEADER)+sizeof(DWORD);
+ SECTION_HEADER* SecArr   = (SECTION_HEADER*)&((BYTE*)DllCopyBase)[HdrLen];
+ SECTION_HEADER* RelocSec = &SecArr[WinHdr->FileHeader.SectionsNumber-(SkipSecLast+1)];   // Skipping 5 protector`s sections at the end
+
+ static const int FirstRASec = SkipSecFirst; // First section, affected by relocs
+ int LastRASec  = WinHdr->FileHeader.SectionsNumber - RelocSecIdx - 1; // Last section, affected by relocs   
+
+ DWORD RelRVATo    = SecArr[LastRASec].SectionRva + SecArr[LastRASec].PhysicalSize;
+ DWORD RelRVAFrom  = SecArr[FirstRASec].SectionRva;
+ 
+ PBYTE RelocSecBeg = &DllCopyBase[(Raw)?(RelocSec->PhysicalOffset):(RelocSec->SectionRva)];  // File offset or RVA
+ PBYTE RelocSecEnd = RelocSecBeg + RelocSec->PhysicalSize;
+
+ SIZE_T RelBase = 0;
+ for(PBYTE BytePtr=RelocSecBeg;BytePtr < RelocSecEnd;)
+  {
+   RELOCATION_DESC* RDesc = (RELOCATION_DESC*)BytePtr;
+   if(!RDesc->BaseRVA && !RDesc->BlkSize){LOGMSG("No more blocks at %08X",(BytePtr-DllCopyBase)); break;}
+   LOGMSG("RelBlk at %08X: BaseRVA=%08X, BlkSize=%08X, Count=%u",(BytePtr-DllCopyBase), RDesc->BaseRVA, RDesc->BlkSize, RDesc->Count());
+   RelBase += RDesc->BaseRVA;
+   for(UINT ctr=0,tot=RDesc->Count();ctr < tot;ctr++)
+    {
+     UINT Type = RDesc->Records[ctr].Type;
+     UINT Offs = RDesc->Records[ctr].Offset;
+     if(!Type && !Offs){OUTMSG("   NULL"); continue;}
+     if(Type == IMAGE_REL_BASED_HIGHLOW)     // x32
+      { 
+       OUTMSG("   Type=%u, Offs=%04X, RVA=%08X",Type, Offs, RDesc->BaseRVA + Offs);   
+      }              
+     else if(Type == IMAGE_REL_BASED_DIR64)  // x64
+      { 
+       OUTMSG("   Type=%u, Offs=%04X, RVA=%08X",Type, Offs, RDesc->BaseRVA + Offs);          
+      }
+     else {OUTMSG("   Type=%u, Offs=%04X",Type, Offs); }
+     
+    }
+   BytePtr += RDesc->BlkSize;
+  }
+ LOGMSG("PE sectons range RVA: %08X - %08X",RelRVAFrom,RelRVATo);
+ return 0;
+}
+//--------------------------------------------------------------------------- 
 /*UINT  _stdcall GetEntryPoint(PVOID Header);
 void  _stdcall SetEntryPoint(PVOID Header, UINT Entry);
 PDWORD _stdcall GetEntryPointOffset(PVOID Header);

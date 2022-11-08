@@ -3,6 +3,7 @@
 
 //============================================================================================================
 // All "members" are placed sequentially in memory but their orded may change
+// It MUST be Namespace, not Struct to keep these in code segment
 namespace NAPI // POSIX API implementation  // https://docs.oracle.com/cd/E19048-01/chorus4/806-3328/6jcg1bm05/index.html
 {
 _codesec  static SFuncStub<decltype(PX::exit)> exit;
@@ -26,7 +27,13 @@ _codesec  static SFuncStub<decltype(PX::rename)> rename;
 _codesec  static SFuncStub<decltype(PX::readlink)> readlink;
 
 _codesec  static SFuncStub<decltype(PX::mprotect)> mprotect;
+#ifdef _ARCH_X32
+_codesec  static SFuncStub<decltype(PX::mmap)> internal_mmap;         // Superseded by mmap2 and should not be used directly
+_codesec  static SFuncStub<decltype(PX::mmap2)> mmap2;
+static void* PXCALL mmap(void* addr, size_t length, int prot, int flags, int fd, size_t offset){return mmap2(addr, length, prot, flags, fd, offset / 4096); } // MMAP2_PAGE_UNIT   // On ia64, the unit for offset is actually the system page size
+#else
 _codesec  static SFuncStub<decltype(PX::mmap)> mmap;
+#endif
 _codesec  static SFuncStub<decltype(PX::munmap)> munmap;
 _codesec  static SFuncStub<decltype(PX::madvise)> madvise;
 
@@ -41,7 +48,7 @@ _codesec  static SFuncStub<decltype(PX::access)> access;
 
 
 // >>>>> MEMORY <<<<<
-//#include "Impl_Mem.hpp"
+#include "Impl_Mem.hpp"
 // >>>>> NETWORK <<<<<
 //#include "Impl_Net.hpp"
 // >>>>> FILE SYSTEM <<<<<
@@ -62,67 +69,11 @@ static void*  TheModBase = nullptr;
 static size_t TheModSize = 0;
 
 
-// Linux shared library initialization, return from initialization to where? Do not terminate if returning from a shared library
-
-// TODO: Detect Android/BSD
-//#pragma code_seg()
-//#pragma section(".text")       // NOTE: Only MSVC allows taking address of an array into its member, CLANG complains 'non-constant-expression cannot be narrowed'
-//volatile static const inline char Data[] = {"HelloBello!"};
-//static inline  decltype(TypeSwitch<IsBigEnd, uint32, uint64>()) Val = 0;
-//static inline TSW<IsBigEnd, uint32, uint64>::T Val = 0;
-// https://stackoverflow.com/questions/46087730/what-happens-if-you-use-the-32-bit-int-0x80-linux-abi-in-64-bit-code
-// https://stackoverflow.com/questions/2535989/what-are-the-calling-conventions-for-unix-linux-system-calls-and-user-space-f
-// https://blog.packagecloud.io/eng/2016/04/05/the-definitive-guide-to-linux-system-calls/
-// https://www.cs.fsu.edu/~langley/CNT5605/2017-Summer/assembly-example/assembly.html
-// https://jumpnowtek.com/shellcode/linux-arm-shellcode-part1.html
-/*
-RAX -> system call number
-RDI -> first argument
-RSI -> second argument
-RDX -> third argument
-R10 -> fourth argument  // Move it from RCX
-R8  -> fifth argument
-R9  -> sixth argument
-*/
-//
-_codesec  static unsigned char syscall_mprotect_X86_X64[] = {0x48,0xB8, 10,0,0,0,0,0,0,0, 0x49,0x89,0xCA, 0x0F,0x05, 0xC3};   // movabs rax, 10; mov r10, rcx; syscall; ret
-//------------------------------------------------------------------------------------------------------------
-static _finline void InitSyscallStub(auto& Stub, uint idx)   // auto stub
-{
-// uint8* Dst = (uint8*)&Stub->Stub;
- memcpy(&Stub.Stub, &syscall_mprotect_X86_X64, sizeof(syscall_mprotect_X86_X64));   //for(uint ctr=0;ctr < sizeof(syscall_mprotect_X86_X64);ctr++)Dst[ctr] = syscall_mprotect_X86_X64[ctr];
- *(uint64*)&((uint8*)&Stub.Stub)[2] = idx;   // Set syscall number: x86_x64
-}
-//------------------------------------------------------------------------------------------------------------
-//
-static void* FindStubsArea(size_t* Size)
-{
- uint8* Entry = (uint8*)&NAPI::exit;
- uint8 Filler = NAPI::exit.StubFill;
- uint  ESize  = NAPI::exit.StubSize;
- uint8* StubsBeg = nullptr;
- uint8* StubsEnd = nullptr;
- uint8* StubsPtr = Entry;
- do
-  {
-   StubsPtr += ESize;
-  }
-   while(!memcmp(StubsPtr, Entry, ESize));
- StubsEnd = StubsPtr;
- do
-  {
-   StubsPtr -= ESize;
-  }
-   while(!memcmp(StubsPtr, Entry, ESize));
- StubsBeg = StubsPtr + ESize;
- *Size  = StubsEnd - StubsBeg;
- return StubsBeg;
-}
 //------------------------------------------------------------------------------------------------------------
 
 static _finline int MakeTblWritable(void* StubsArr, size_t StubsLen, bool state)     // TODO: Unprotect entire '.text' section // Find ELF header
 {
- decltype(PX::mprotect)* pmprotect = ((decltype(PX::mprotect)*)&syscall_mprotect_X86_X64);
+ decltype(PX::mprotect)* pmprotect = ((decltype(PX::mprotect)*)&syscall_mprotect_tmpl);
  StubsLen += ((size_t)StubsArr & (MEMPAGESIZE-1));          // Size don`t have to be page-aligned
  StubsArr  = (void*)((size_t)StubsArr & ~(MEMPAGESIZE-1));  // Addr must be page-aligned
  return pmprotect(StubsArr, StubsLen, PX::PROT_READ|PX::PROT_EXEC | (state?PX::PROT_WRITE:0));
@@ -223,7 +174,7 @@ __attribute__((__force_align_arg_pointer__))  static void LogMsg(const char* for
 //------------------------------------------------------------------------------------------------------------
 
 
-namespace NPRIVATE
+namespace NPDBG
 {
 /*
 Stack layout from startup code:
@@ -242,7 +193,7 @@ static void LogStartupInfo(void)
 {
  // Log command line arguments
  void*  APtr = nullptr;
- char** Args = CLArgs;
+ char** Args = NPRIVATE::CLArgs;
  uint ParIdx = 0;
  LogMsg("CArguments: ");
  for(uint idx=0;(APtr=Args[ParIdx++]);idx++)
@@ -250,20 +201,19 @@ static void LogStartupInfo(void)
    LogMsg("Arg %u: %s",idx,APtr);
   }
  // Log environment variables
- Args = EVVars;
+ Args = NPRIVATE::EVVars;
  LogMsg("EVariables: ");
  while((APtr=Args[ParIdx++]))
   {
    LogMsg("Var: %s",APtr);
   }
  // Log auxilary vector
- for(ELF::SAuxVecRec* Rec=AuxVec;Rec->type != ELF::AT_NULL;Rec++)
+ for(ELF::SAuxVecRec* Rec=NPRIVATE::AuxVec;Rec->type != ELF::AT_NULL;Rec++)
   {
    LogMsg("Aux: Type=%u, Value=%p",Rec->type, (void*)Rec->val);
   }
 }
 //------------------------------------------------------------------------------------------------------------
-
 
 }
 
@@ -273,57 +223,68 @@ static void LogStartupInfo(void)
 //
 static int Initialize(void* DescrPtr)
 {
- NPRIVATE::STInfo = DescrPtr;
- void*  APtr = nullptr;
- char** Args = NPRIVATE::GetArgV();
- uint ParIdx = 0;
-
- NPRIVATE::CLArgs = Args;     // May point to NULL
- do{APtr=Args[ParIdx++];}while(APtr);
- NPRIVATE::EVVars = &Args[ParIdx];
- do{APtr=Args[ParIdx++];}while(APtr);
- NPRIVATE::AuxVec = (ELF::SAuxVecRec*)&Args[ParIdx];
-
  size_t StubsSize = 0;
- void* StubsPtr = NPRIVATE::FindStubsArea(&StubsSize);
+ void* StubsPtr = NAPI::exit.FindStubsArea(&StubsSize);
  if(!StubsPtr || !StubsSize)return -1;
  if(NPRIVATE::MakeTblWritable(StubsPtr, StubsSize, true) < 0)return -2;
 
- NPRIVATE::InitSyscallStub(NAPI::exit, 60);
- NPRIVATE::InitSyscallStub(NAPI::exit_group, 231);
- NPRIVATE::InitSyscallStub(NAPI::open, 2);
- NPRIVATE::InitSyscallStub(NAPI::close, 3);
- NPRIVATE::InitSyscallStub(NAPI::creat, 85);
+ NAPI::exit.Init(NPRIVATE::ESysCNum::exit);
+ NAPI::exit_group.Init(NPRIVATE::ESysCNum::exit_group);
+ NAPI::open.Init(NPRIVATE::ESysCNum::open);
+ NAPI::close.Init(NPRIVATE::ESysCNum::close);
+ NAPI::creat.Init(NPRIVATE::ESysCNum::creat);
 
- NPRIVATE::InitSyscallStub(NAPI::read, 0);
- NPRIVATE::InitSyscallStub(NAPI::readv, 19);
- NPRIVATE::InitSyscallStub(NAPI::write, 1);
- NPRIVATE::InitSyscallStub(NAPI::writev, 20);
+ NAPI::read.Init(NPRIVATE::ESysCNum::read);
+ NAPI::readv.Init(NPRIVATE::ESysCNum::readv);
+ NAPI::write.Init(NPRIVATE::ESysCNum::write);
+ NAPI::writev.Init(NPRIVATE::ESysCNum::writev);
 
- NPRIVATE::InitSyscallStub(NAPI::lseek, 8);
- NPRIVATE::InitSyscallStub(NAPI::mkdir, 83);
- NPRIVATE::InitSyscallStub(NAPI::rmdir, 84);
- NPRIVATE::InitSyscallStub(NAPI::unlink, 87);
- NPRIVATE::InitSyscallStub(NAPI::rename, 82);
- NPRIVATE::InitSyscallStub(NAPI::readlink, 89);
+ NAPI::lseek.Init(NPRIVATE::ESysCNum::lseek);
+ NAPI::mkdir.Init(NPRIVATE::ESysCNum::mkdir);
+ NAPI::rmdir.Init(NPRIVATE::ESysCNum::rmdir);
+ NAPI::unlink.Init(NPRIVATE::ESysCNum::unlink);
+ NAPI::rename.Init(NPRIVATE::ESysCNum::rename);
+ NAPI::readlink.Init(NPRIVATE::ESysCNum::readlink);
 
- NPRIVATE::InitSyscallStub(NAPI::mprotect, 10);
- NPRIVATE::InitSyscallStub(NAPI::mmap, 9);
- NPRIVATE::InitSyscallStub(NAPI::munmap, 11);
- NPRIVATE::InitSyscallStub(NAPI::madvise, 28);
+ NAPI::mprotect.Init(NPRIVATE::ESysCNum::mprotect);
+ NAPI::munmap.Init(NPRIVATE::ESysCNum::munmap);
+ NAPI::madvise.Init(NPRIVATE::ESysCNum::madvise);
 
- NPRIVATE::InitSyscallStub(NAPI::stat, 4);
- NPRIVATE::InitSyscallStub(NAPI::fstat, 5);
- NPRIVATE::InitSyscallStub(NAPI::access, 21);
+ NAPI::stat.Init(NPRIVATE::ESysCNum::stat);
+ NAPI::fstat.Init(NPRIVATE::ESysCNum::fstat);
+ NAPI::access.Init(NPRIVATE::ESysCNum::access);
 
 #ifdef _ARCH_X32
- NPRIVATE::InitSyscallStub(&NAPI::stat64, 195);
- NPRIVATE::InitSyscallStub(&NAPI::fstat64, 197);
- NPRIVATE::InitSyscallStub(&NAPI::llseek, 140);
+ NAPI::stat64.Init(NPRIVATE::ESysCNum::stat64);
+ NAPI::fstat64.Init(NPRIVATE::ESysCNum::fstat64);
+ NAPI::llseek.Init(NPRIVATE::ESysCNum::llseek);
+ NAPI::mmap2.Init(NPRIVATE::ESysCNum::mmap2);
+ NAPI::internal_mmap.Init(NPRIVATE::ESysCNum::mmap);
+#else
+ NAPI::mmap.Init(NPRIVATE::ESysCNum::mmap);
 #endif
 
 
  if(NPRIVATE::MakeTblWritable(StubsPtr, StubsSize, false) < 0)return -3;
+
+ if(!DescrPtr)  // Try to get AUXV from '/proc/self/auxv'
+  {
+
+  }
+ if(DescrPtr)   // It may not be known if we are in a shared library
+  {
+   NPRIVATE::STInfo = DescrPtr;
+   void*  APtr = nullptr;
+   char** Args = NPRIVATE::GetArgV();
+   uint ParIdx = 0;
+
+   NPRIVATE::CLArgs = Args;     // May point to NULL
+   do{APtr=Args[ParIdx++];}while(APtr);
+   NPRIVATE::EVVars = &Args[ParIdx];
+   do{APtr=Args[ParIdx++];}while(APtr);
+   NPRIVATE::AuxVec = (ELF::SAuxVecRec*)&Args[ParIdx];
+  }
+
      // NPRIVATE::LogStartupInfo();
  //int res = ((decltype(PX::mprotect)*)&syscall_mprotect_X86_X64)((void*)((uint)&NAPI::open & ~0xFFF), 0x1000, PX::PROT_READ|PX::PROT_WRITE|PX::PROT_EXEC);  // |PX::EMProt.WRITE|PX::EMProt.EXEC
 // TODO: Validate presence of all required POSX functions implementation?

@@ -1,10 +1,8 @@
 
 #pragma once
  
-#ifndef NetWrkH
-#define NetWrkH
 /*
-  Copyright (c) 2018 Victor Sheinmann, Vicshann@gmail.com
+  Copyright (c) 2022 Victor Sheinmann, Vicshann@gmail.com
 
   Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), 
   to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, 
@@ -20,18 +18,18 @@
 
 #define WIN32_LEAN_AND_MEAN             // Exclude rarely-used stuff from Windows headers
 
-#include <windows.h>
-#include <Winsock2.h>
-#include <Wininet.h>
-#include "ssl.h"
+//#include <windows.h>
+//#include <Winsock2.h>
+//#include <Wininet.h>
+#include "ssl.hpp"
 #ifndef NETWNOGZ
 #include "gzip.h"
 #endif
 //#include "sha.h"
-#include "StrUtils.hpp"
-#include "Utils.h"
-#include "MiniString.h"
-#include "Json.h"
+//#include "StrUtils.hpp"
+//#include "Utils.h"
+//#include "MiniString.h"
+//#include "Json.h"
 
 
 #pragma pack(push,1)
@@ -43,7 +41,7 @@ struct my_tcp_keepalive {
 #pragma pack(pop)
 
 //------------------------------------------------------------------------------------------------------------
-enum ENetReqType {rtNONE, rtGET, rtPOST};
+enum ENetReqType {rtNONE, rtGET, rtPOST, rtHEAD};
 
 /*struct SMsgAddress
 {
@@ -96,7 +94,8 @@ bool SetKeepAlive(BOOL Enable, UINT katime, UINT kaintv)
  kal.onoff = Enable;
  kal.keepalivetime = 10000;
  kal.keepaliveinterval = 1000;                                    
- return (WSAIoctl(this->soc, 0x98000004, &kal, sizeof(my_tcp_keepalive), 0, 0, &BytesRet, 0, 0) != SOCKET_ERROR);    // 0x98000004 = SIO_KEEPALIVE_VALS  // Mstcpip.h
+ //return (WSAIoctl(this->soc, 0x98000004, &kal, sizeof(my_tcp_keepalive), 0, 0, &BytesRet, 0, 0) != SOCKET_ERROR);    // 0x98000004 = SIO_KEEPALIVE_VALS  // Mstcpip.h   // Is it works?  
+ return true;
 }
 //---------------------------------------------------------------------------
 bool IsSocketAlive(void)
@@ -149,8 +148,8 @@ int Connect(LPSTR Url, USHORT port, PCCERT_CONTEXT Cert=NULL)
  memset(&SockAddr,0,sizeof(SockAddr));
  SockAddr.sin_family = AF_INET;
  SockAddr.sin_port   = htons(this->Port);
- SockAddr.sin_addr.S_un.S_addr = this->IPAddr;  
- if(connect(this->soc,(struct sockaddr*)&SockAddr,sizeof(SockAddr))){closesocket(this->soc); LOGMSG("Connect Error: %u",WSAGetLastError()); return -3;}   
+ SockAddr.sin_addr.S_un.S_addr = this->IPAddr; 
+ if(connect(this->soc,(struct sockaddr*)&SockAddr,sizeof(SockAddr))){LOGMSG("Connect Error: %u",WSAGetLastError()); closesocket(this->soc); return -3;}   
  this->SslCert  = Cert;
  if(Cert)
   {
@@ -173,7 +172,7 @@ bool AssignURL(LPSTR Url, USHORT port)
  if(INADDR_NONE == this->IPAddr)
   {
    if(HOSTENT *host=(HOSTENT*)gethostbyname(this->Host.c_str()))this->IPAddr = ((PULONG*)host->h_addr_list)[0][0];
-     else {LOGMSG("Host name resolving Error: %u",WSAGetLastError()); return -1;}
+     else {LOGMSG("Host name resolving Error: %u",WSAGetLastError()); return false;}
   }
  this->Port = port;  
  return true; 
@@ -196,6 +195,34 @@ static void SplitURL(LPSTR Url, CMiniStr& Host, CMiniStr& Path)
    Path = ppage;
   }
    else if(phost)Host = phost;
+}
+//------------------------------------------------------------------------------------------------------------
+static int GetHttpHeaderParam(char* ParName, CMiniStr& Header, CMiniStr& ParVal, bool CaseSens=false)
+{
+ char* StrPtr = Header.c_str();
+ for(int offs=0;;)
+  {
+   int sp = Header.Pos(':', CMiniStr::ComparatorE, offs);
+   if(sp < 0)break;
+   char* sEnd = &StrPtr[sp-1];
+   while(*sEnd == 0x20)sEnd--;
+   char* sBeg = sEnd;
+   while(*sBeg > 0x20)sBeg--;
+   UINT nLen = sEnd - sBeg;
+   sBeg++;
+   bool equal = CaseSens ? NSTR::IsStrEqualSC(ParName, sBeg, nLen) : NSTR::IsStrEqualIC(ParName, sBeg, nLen);   
+   offs = Header.Pos("\r\n", sp);
+   if(offs < 0)break;
+   if(equal)
+    {
+     char* sVal = &StrPtr[sp+1];
+     while(*sVal == 0x20)sVal++;
+     nLen = &StrPtr[offs] - sVal;
+     ParVal.cAssign(sVal, nLen);
+     return nLen;
+    }   
+  }
+ return -1;
 }
 //------------------------------------------------------------------------------------------------------------
 static int ComposeParams(CJSonItem& Params, CMiniStr& OutStr)
@@ -229,16 +256,18 @@ static int ComposeHeader(CJSonItem& Header, CMiniStr& OutStr)
 int ComposeRequest(ENetReqType Type, CMiniStr& Header, CMiniStr& Params, CMiniStr& Data, CMiniStr& ResReq)
 {
  ResReq.Clear(); 
- if(Type == rtGET)
+ if((Type == rtGET) || (Type == rtHEAD))
   {
-   ResReq += "GET " + this->Path;
+   if(Type == rtGET)ResReq += "GET "; 
+     else ResReq += "HEAD "; 
+   ResReq += this->Path;
    if(Params.Length())
     {
      ResReq += "?";
      ResReq += Params;
     }
   }
-   else ResReq += "POST " + this->Path;
+   else {ResReq += "POST "; ResReq += this->Path;}
  ResReq += " HTTP/1.1\r\n";
  ResReq += Header;
  ResReq += "\r\n";
@@ -271,7 +300,7 @@ int GetResponse(CMiniStr& Rsp)
    if(!rval || (rval == SOCKET_ERROR))break;  // WSAETIMEDOUT == WSAGetLastError();
 /*   if(!Total)  // First Block
     {
-     rpos = GetSubStrOffsSimpleIC("200 OK", (CHAR*)Rsp.c_data(), 0, ((rval <= 16)?(rval):(16)));
+     rpos = GetSubStrOffsSimpleIC("200 OK", (CHAR*)Rsp.c_data(), 0, ((rval <= 16)?(rval):(16)));  // May be 206 (partial content)
      if(rpos < 0){LOGMSG("No '200 OK' in HTTP response header(Size=%u)!",rval); return -5;}
      rpos = GetSubStrOffsSimpleIC("\r\n\r\n", (CHAR*)StrRsp.c_data(), 0, ((StrRsp.Length() <= 128)?(StrRsp.Length()):(128)));
      if(rpos < 0){LOGMSG("No content!"); return -7;}      
@@ -290,7 +319,11 @@ static int GetResponseContent(CMiniStr& Rsp, CMiniStr& Content, bool NeedOK=fals
  if(NeedOK)
   {
    int rpos = NSTR::StrOffset<NSTR::ChrOpSiLC<> >((CHAR*)Rsp.c_data(), "200 OK", 0, (epos > 0)?(epos):(Rsp.Length()));
-   if(rpos < 0){LOGMSG("No '200 OK' in HTTP response header(Size=%u)!",Rsp.Length());}
+   if(rpos < 0)
+    {
+     rpos = NSTR::StrOffset<NSTR::ChrOpSiLC<> >((CHAR*)Rsp.c_data(), "206 Partial Content", 0, (epos > 0)?(epos):(Rsp.Length()));
+     if(rpos < 0){LOGMSG("No content success in HTTP response header(Size=%u)!",Rsp.Length());}
+    }
   }
  if(epos < 0){Content = Rsp; return 2;}     // LOGMSG("No content!"); 
  bool GZipd = (NSTR::StrOffset<NSTR::ChrOpSiLC<> >((CHAR*)Rsp.c_data(), "Content-Encoding: gzip", 0, epos) > 0);
@@ -377,4 +410,3 @@ static ULONG netServerDataExchange(SOCKET Soc, CMiniStr* Req, CMiniStr* Rsp, int
 
 };
 //===========================================================================================================
-#endif

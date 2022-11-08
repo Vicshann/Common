@@ -192,14 +192,14 @@ template<typename O, typename T> static O HexStrToNum(T Str, long* Size=nullptr)
  return x;
 }
 //---------------------------------------------------------------------------
-template<typename T> int HexStrToByteArray(uint8* Buffer, T SrcStr, uint HexByteCnt=-1)
+template<typename T> static int HexStrToByteArray(uint8* Buffer, T SrcStr, uint HexByteCnt=-1)
 {
  uint ctr = 0;
  for(uint len = 0;(SrcStr[len]&&SrcStr[len+1])&&(ctr < HexByteCnt);len++)   // If it would be possible to make an unmodified defaults to disappear from compilation...
   {
    if(SrcStr[len] <= 0x20)continue;   // Skip spaces and line delimitters
-   int ByteHi  = CharToHex(SrcStr[len]);
-   int ByteLo  = CharToHex(SrcStr[len+1]);
+   int ByteHi  = HexCharToHalfByte(SrcStr[len]);
+   int ByteLo  = HexCharToHalfByte(SrcStr[len+1]);
    if((ByteHi  < 0)||(ByteLo < 0))return ctr;  // Not a HEX char
    Buffer[ctr] = (ByteHi << 4)|ByteLo;
    ctr++;
@@ -210,7 +210,7 @@ template<typename T> int HexStrToByteArray(uint8* Buffer, T SrcStr, uint HexByte
 //---------------------------------------------------------------------------
 // Return address always points to Number[16-MaxDigits];
 //
-template<typename T, typename S> S ByteArrayToHexStr(T Value, int MaxDigits, S NumBuf, bool UpCase, uint* Len=0)
+template<typename T, typename S> static S ByteArrayToHexStr(T Value, int MaxDigits, S NumBuf, bool UpCase, uint* Len=0)
 {
  const int cmax = sizeof(T)*2;      // Number of byte halves (Digits)
  char  HexNums[] = {'0','1','2','3','4','5','6','7','8','9','A','B','C','D','E','F','0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f'};     // Must be optimized to PlatLen assignments

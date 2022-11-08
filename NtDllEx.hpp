@@ -158,7 +158,7 @@ static PVOID GetModuleBaseLdr(LPSTR ModName, ULONG* Size=NULL, long* BaseIdx=NUL
    return BaseAddr;
   }
  PEB_LDR_DATA* ldr = NtCurrentTeb()->ProcessEnvironmentBlock->Ldr;
- DBGMSG("PEB_LDR_DATA: %p, %s",ldr,ModName);
+// DBGMSG("PEB_LDR_DATA: %p, %s",ldr,ModName);     // TODO: Use only in FULL info mode
  long StartIdx = (BaseIdx)?(*BaseIdx + 1):0;
  long CurrIdx  = 0;
  for(LDR_DATA_TABLE_ENTRY_MO* me = ldr->InMemoryOrderModuleList.Flink;me != (LDR_DATA_TABLE_ENTRY_MO*)&ldr->InMemoryOrderModuleList;CurrIdx++,me = me->InMemoryOrderLinks.Flink)     // Or just use LdrFindEntryForAddress?
@@ -179,7 +179,7 @@ static PVOID GetModuleBaseLdr(LPSTR ModName, ULONG* Size=NULL, long* BaseIdx=NUL
      return me->DllBase;
     }
   }
- DBGMSG("Not found for: %s",ModName);
+// DBGMSG("Not found for: %s",ModName);   // TODO: Use only in FULL info mode
  return NULL;
 }
 //------------------------------------------------------------------------------------
@@ -814,6 +814,16 @@ static UINT64 GeKernelModuleBase(LPSTR ModuleName, ULONG* ImageSize)
    }
  if(InfoArr)HeapFree(GetProcessHeap(),0,InfoArr);
  return Addr;
+}
+//------------------------------------------------------------------------------------
+static SIZE_T IsMemAvailable(PVOID Addr, bool* IsImage=nullptr)      // Helps to skip a Reserved mapping rgions
+{
+ SIZE_T RetLen = 0; 
+ MEMORY_BASIC_INFORMATION minf;                                                                            
+ NTSTATUS Status = NtQueryVirtualMemory(NtCurrentProcess,Addr,MemoryBasicInformation,&minf,sizeof(MEMORY_BASIC_INFORMATION),&RetLen);
+ if(Status || !(minf.State & MEM_COMMIT))return 0;
+ if(IsImage)*IsImage = (minf.Type & MEM_IMAGE);  // (minf.Type & MEM_MAPPED)
+ return minf.RegionSize;
 }
 //------------------------------------------------------------------------------------
 

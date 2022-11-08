@@ -31,7 +31,7 @@ template<typename T=wchar_t> union ChrOpSiUC {static const int Dir=0; static T D
 //   UNRELIABLE !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 // Need to separate?
 //
-template<typename COp=ChrOpNone<>, typename A=wchar_t*, typename B=wchar_t*> _finline static int _finline StrCompare(A StrValA, B StrValB, size_t MaxLen=-1)  // Not exactly standard!  // NOTE: For a case sensitive strings there should be a faster way
+template<typename COp=ChrOpNone<>, typename A=wchar_t*, typename B=wchar_t*> _finline static int StrCompare(A StrValA, B StrValB, size_t MaxLen=-1)  // Not exactly standard!  // NOTE: For a case sensitive strings there should be a faster way
 {
  for(size_t voffs=0;;voffs++,MaxLen--)    // TODO: Do not decrement, precalculate EndOfStr
   {

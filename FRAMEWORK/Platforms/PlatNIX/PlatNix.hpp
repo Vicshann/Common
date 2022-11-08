@@ -8,4 +8,3 @@ static const uint CPUCACHELNE = 64;          // x86/ARM (Most models)
 static const uint PATH_MAX    = 1024;        // Chars in a path name including nul  // 4096
 
 //---------------------------------------------------------------------------
-

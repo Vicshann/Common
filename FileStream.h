@@ -80,7 +80,7 @@ public:
 //----------------------
  LPSTR iAppend(const unsigned long val)
  {
-  int  len = 0;
+  UINT len = 0;
   char Tmpb[64];
   DecNumToStrU(val, Tmpb, &len);
   this->cAppend((LPSTR)&Tmpb,len);

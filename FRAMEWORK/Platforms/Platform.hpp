@@ -1,8 +1,6 @@
 
 #pragma once
 
-//#include "Common.hpp"
-
 namespace NPTFM    // Can`t be 'struct' if we want that stubs go in the real executable '.text'  section instead of a data section with the same name
 {
 // Anything that may have a different set of system API is put here

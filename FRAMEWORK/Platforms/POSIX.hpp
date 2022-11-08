@@ -1,6 +1,7 @@
 
 #pragma once
 
+#define PXCALL __cdecl
 //============================================================================================================
 // https://docs.oracle.com/cd/E19048-01/chorus5/806-6897/auto1/index.html
 // https://docs.oracle.com/cd/E19048-01/chorus4/806-3328/6jcg1bm05/index.html
@@ -9,6 +10,7 @@
 // https://marcin.juszkiewicz.com.pl/download/tables/syscalls.html
 
 // Only most useful POSIX functions will go here for now
+// NOTE: We should be able to use these definitions to call X64 functions from X32 code if necessary ???
 template<typename PHT> struct NPOSIX  // For members: alignas(sizeof(PHT))
 {
  using PVOID    = SPTR<void,  PHT>;
@@ -68,7 +70,7 @@ enum EErrs   // Linux
 	EDOM		= 33	, // Math argument out of domain of func
 	ERANGE		= 34	, // Math result not representable
 	EDEADLK		= 35	, // Resource deadlock would occur
-	ENAMETOOLONG    = 36	, // File name too long
+	ENAMETOOLONG = 36	, // File name too long
 	ENOLCK		= 37	, // No record locks available
 	ENOSYS		= 38	, // Function not implemented
 	ENOTEMPTY	= 39	, // Directory not empty
@@ -214,22 +216,22 @@ enum EMode
 // Terminates the calling process "immediately".  Any open file descriptors belonging to the process are closed.  Any children of the process are inherited by init(1) (or by the nearest "subreaper" process as defined through the use of the prctl(2) PR_SET_CHILD_SUBREAPER operation).  The process's parent is sent a SIGCHLD signal.
 // The value status & 0xFF is returned to the parent process as the process's exit status, and can be collected by the parent using one of the wait(2) family of calls.
 // The raw _exit() system call terminates only the calling thread, and actions such as reparenting child processes or sending SIGCHLD to the parent process are performed only if this is the last thread in the thread group.
-static void exit(int status);
+static void PXCALL exit(int status);
 
 // This system call is equivalent to _exit(2) except that it terminates not only the calling thread, but all threads in the calling process's thread group.
-static void exit_group(int status);
+static void PXCALL exit_group(int status);
 
 // The path parameter points to a path name naming a file. The open function opens a file descriptor for the named file and sets the file status flags according to the value of oflag.
-static int open(PCHAR pathname, int flags, mode_t mode);  // 'open(pathname, O_CREAT|O_WRONLY|O_TRUNC, mode)' is same as call to 'creat'
+static int PXCALL open(PCHAR pathname, int flags, mode_t mode);  // 'open(pathname, O_CREAT|O_WRONLY|O_TRUNC, mode)' is same as call to 'creat'
 
 // Equivalent to: open(path, O_WRONLY|O_CREAT|O_TRUNC, mode)
-static int creat(const char *path, mode_t mode);    // Use it as fallback if a correct O_CREAT cannot be found
+static int PXCALL creat(const char *path, mode_t mode);    // Use it as fallback if a correct O_CREAT cannot be found
 
 // The fildes field contains a file descriptor obtained from an open(2POSIX), dup(2POSIX), accept(2POSIX), socket(2POSIX), or shm_open(2POSIX) system call. The close function closes the file descriptor indicated by fildes.
-static int close(int fildes);
+static int PXCALL close(int fildes);
 
 // Creates a filesystem node (file, device special file, or named pipe) named pathname, with attributes specified by mode and dev.
-// static int mknod(const char *pathname, mode_t mode, dev_t dev);
+// static int PXCALL mknod(const char *pathname, mode_t mode, dev_t dev);
 
 struct iovec
 {
@@ -239,13 +241,13 @@ struct iovec
 
 // Attempts to read nbytes of data from the object referenced by the descriptor d into the buffer pointed to by buf . readv() performs the same action, but scatters the input data into the iovcnt buffers specified by the members of the iov array: iov[0] , iov[1] , ..., iov[iovcnt-1] .
 // Upon successful completion, read() and readv() return the number of bytes actually read and placed in the buffer. The system guarantees to read the number of bytes requested if the descriptor references a normal file that contains that many bytes before the end-of-file, but in no other case. Upon end-of-file, 0 is returned. read() and readv() also return 0 if a non-blocking read is attempted on a socket that is no longer open. Otherwise, -1 is returned, and the global variable errno is set to indicate the error.
-static SSIZE_T read(int fd, PVOID buf, SIZE_T nbytes);
-static SSIZE_T readv(int fd, iovec* iov, int iovcnt);
+static SSIZE_T PXCALL read(int fd, PVOID buf, SIZE_T nbytes);
+static SSIZE_T PXCALL readv(int fd, iovec* iov, int iovcnt);
 
 // Attempts to write nbytes of data to the object referenced by the descriptor d from the buffer pointed to by buf . writev() performs the same action, but gathers the output data from the iovcnt buffers specified by the members of the iov array: iov[0] , iov[1] , ..., iov[iovcnt-1] .
 // Upon successful completion, write() and writev() return the number of bytes actually written. Otherwise, they return -1 and set errno to indicate the error.
-static SSIZE_T write(int fd, PVOID buf, SIZE_T nbytes);
-static SSIZE_T writev(int fd, iovec* iov, int iovcnt);     // Windows: WriteFileGather
+static SSIZE_T PXCALL write(int fd, PVOID buf, SIZE_T nbytes);
+static SSIZE_T PXCALL writev(int fd, iovec* iov, int iovcnt);     // Windows: WriteFileGather
 
 enum ESeek
 {
@@ -255,29 +257,29 @@ enum ESeek
 };
 
 // Repositions the file offset of the open file description associated with the file descriptor fd to the argument offset according to the directive whence
-static SSIZE_T lseek(int fd, SSIZE_T offset, int whence);
+static SSIZE_T PXCALL lseek(int fd, SSIZE_T offset, int whence);
 
 // x32 only(Not present on x64)!
-static int llseek(unsigned int fd, unsigned long offset_high, unsigned long offset_low, uint64* result, unsigned int whence);
+static int PXCALL llseek(unsigned int fd, unsigned long offset_high, unsigned long offset_low, uint64* result, unsigned int whence);
 
 // Attempts to create a directory named pathname.
-static int mkdir(PCHAR pathname, mode_t mode);
+static int PXCALL mkdir(PCHAR pathname, mode_t mode);
 
 // Deletes a name from the filesystem.  If that name was the last link to a file and no processes have the file open, the file is deleted and the space it was using is made available for reuse.
 // If the name was the last link to a file but any processes still have the file open, the file will remain in existence until the last file descriptor referring to it is closed.
 // If the name referred to a symbolic link, the link is removed.
 // If the name referred to a socket, FIFO, or device, the name for it is removed but processes which have the object open may continue to use it.
-static int unlink(PCHAR pathname);
+static int PXCALL unlink(PCHAR pathname);
 
 // Deletes a directory, which must be empty
-static int rmdir(PCHAR pathname);
+static int PXCALL rmdir(PCHAR pathname);
 
 // Renames a file, moving it between directories if required.  Any other hard links to the file (as created using link(2)) are unaffected.  Open file descriptors for oldpath are also unaffected.
-static int rename(PCHAR oldpath, PCHAR newpath);
+static int PXCALL rename(PCHAR oldpath, PCHAR newpath);
 
 // Places the contents of the symbolic link pathname in the buffer buf, which has size bufsiz.  readlink() does not append a terminating null byte to buf.  It will (silently) truncate the contents (to a length of bufsiz characters), in case the buffer is too small to hold all of the contents.
 // On success return the number of bytes placed in buf. (If the returned value equals bufsiz, then truncation may have occurred.)
-static ssize_t readlink(PCHAR pathname, PCHAR buf, SIZE_T bufsiz);
+static ssize_t PXCALL readlink(PCHAR pathname, PCHAR buf, SIZE_T bufsiz);
 
 //TODO: 'int fcntl(int fd, int cmd, void* arg)' for a directory change notification
 
@@ -285,12 +287,12 @@ enum EAcss
 {
  F_OK	=	0,   	// test for existence of file
  X_OK	=	0x01,	// test for execute or search permission
-	W_OK	=	0x02,	// test for write permission
-	R_OK	=	0x04,	// test for read permission
+ W_OK	=	0x02,	// test for write permission
+ R_OK	=	0x04,	// test for read permission
 };
 
 // Checks whether the calling process can access the file pathname.  If pathname is a symbolic link, it is dereferenced.
-static int access(PCHAR pathname, int mode);
+static int PXCALL access(PCHAR pathname, int mode);
 
 
 // /arch/{ARCH}/include/uapi/asm/stat.h
@@ -320,8 +322,8 @@ struct SFStat    // Too volatile to use crossplatform?
  SSIZE_T   __unused[3];
 };
 
-static int stat(PCHAR path, SFStat* buf);    // stat64 for x32 only
-static int fstat(int fildes, SFStat* buf);   // fstat64 for x32 only
+static int PXCALL stat(PCHAR path, SFStat* buf);    // stat64 for x32 only
+static int PXCALL fstat(int fildes, SFStat* buf);   // fstat64 for x32 only
 
 enum EMProt
 {
@@ -333,7 +335,7 @@ enum EMProt
 
 // Changes the access protections for the calling process's memory pages containing any part of the address range in the interval [addr, addr+len-1].  addr must be aligned to a page boundary.
 // On success, mprotect() and pkey_mprotect() return zero.  On error, these system calls return -1, and errno is set to indicate the error.
-static int mprotect(PVOID addr, SIZE_T len, int prot);
+static int PXCALL mprotect(PVOID addr, SIZE_T len, int prot);
 
 enum EMapFlg
 {
@@ -342,7 +344,7 @@ enum EMapFlg
  MAP_SHARED     = 0x01,                // Share changes.
  MAP_PRIVATE    = 0x02,                // Changes are private.
 
- MAP_FIXED      = 0x10,                //Interpret addr exactly.
+ MAP_FIXED      = 0x10,                // Interpret addr exactly.
  MAP_ANONYMOUS  = 0x20,                // Don't use a file.
  MAP_32BIT      = 0x40,                // Only give out 32-bit addresses.
 
@@ -361,13 +363,17 @@ enum EMapFlg
  MAP_UNINITIALIZED = 0x4000000,
 };
 
+// Provides the same interface as mmap, except that the final argument specifies the offset into the file in 4096-byte units
+static PVOID PXCALL mmap2(PVOID addr, SIZE_T length, int prot, int flags, int fd, SIZE_T pgoffset);	  // This system call does not exist on x86-64 and ARM64
+
 // Creates a new mapping in the virtual address space of the calling process.
+// Offset must be a multiple of the page size
 // Check a returned addr as ((size_t)addr & 0xFFF) and if it is non zero then we have an error code which we red as -((ssize_t)addr)
-static PVOID mmap(PVOID addr, SIZE_T length, int prot, int flags, int fd, int offset);     // Last 4 args are actually int32 on x64 too
+static PVOID PXCALL mmap(PVOID addr, SIZE_T length, int prot, int flags, int fd, SIZE_T offset);     // Last 4 args are actually int32 (on x64 too!)	 // Since kernel 2.4 glibc mmap() invokes mmap2 with an adjusted value for offset
 
 // Deletes the mappings for the specified address range, and causes further references to addresses within the range to generate invalid memory references.
 // The address addr must be a multiple of the page size (but length need not be).
-static int   munmap(PVOID addr, SIZE_T length);
+static int   PXCALL munmap(PVOID addr, SIZE_T length);
 
 enum EMadv
 {
@@ -393,7 +399,7 @@ enum EMadv
 };
 
 // Used to give advice or directions to the kernel about the address range beginning at address addr and with size length bytes In most cases, the goal of such advice is to improve system or application performance.
-static int madvise(PVOID addr, SIZE_T length, int advice);
+static int PXCALL madvise(PVOID addr, SIZE_T length, int advice);
 
 
 };

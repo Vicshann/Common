@@ -152,7 +152,7 @@ UINT FindSignatures(PBYTE AddrLo, PBYTE AddrHi, long Step, bool SkipUnreadable=f
 {                                      
  if(!Step)Step = 1;                // Support backwards?
  UINT FoundCtr = 0;
- UINT TotalSig = this->GetSigCount();
+ UINT TotalSig = this->GetSigCount();            
  while(AddrLo < AddrHi)
   {
    UINT RdFail = 0;
@@ -212,7 +212,7 @@ UINT FindSignatures(PBYTE AddrLo, PBYTE AddrHi, long Step, bool SkipUnreadable=f
 //---------------------------------------------------------------------------
 // Returns 1 if a signature match, 0 if it is not and -1 if it is out of buffer
 // Please don`t pass a malformed signatures here :)
-static int IsSignatureMatchBin(PBYTE Address, SIZE_T Size, PBYTE BinSig, long SigLen, bool Backward)
+static int IsSignatureMatchBin(PBYTE Address, SIZE_T Size, PBYTE BinSig, long SigLen, bool Backward)    // TODO: Create a template function to make the counters  
 {
  PBYTE Data = (PBYTE)Address; 
  long DataDir = (Backward)?(-1):(1);
@@ -226,17 +226,17 @@ static int IsSignatureMatchBin(PBYTE Address, SIZE_T Size, PBYTE BinSig, long Si
      if(*Data != *BinSig)return 0;
      Size--; Data+=DataDir; BinSig++; SigLen--;
     }
-   else if(Val & poSkp)   // poSkp   // Must come before poRaw (Bit ordering)
+   else if(Val & poSkp)   // poSkp  (0x80)  // Can skip 32768 bytes (127 in low counter)  // Must come before poRaw (Bit ordering)       // IT IS STILL a nonsense!!!!
     { 
-     SIZE_T Len = (Val == 0xFF)?(((UINT)*(BinSig++) << 7)|0x7F):(Val & 0x7F);   // If the small counter is full then use an extended one  
+     SIZE_T Len = (Val == 0xFF)?((UINT)*(BinSig++) | 0x7F00):(Val & 0x7F);   // If the small counter is full then use an extended one (if all counter`s bits is set then this is HI bits and LOW bits follow in a next byte)  // If low counter bits is 0x7F then next byte will have the rest of HI bits (15 bits total) (0 counter value means 1)
      Len++;   // No zero Counter
      if(Len > Size)return -1;   // Out of buffer
      Size -= Len;     
      Data += (DataDir * Len);
     }
-   else if(Val & poRaw)   // poRaw
+   else if(Val & poRaw)   // poRaw  (0x40)  // Can define 16384 raw bytes (63 in low counter)
     {
-     SIZE_T Len = (Val == 0xFF)?(((UINT)*(BinSig++) << 7)|0x7F):(Val & 0x7F);   // If the small counter is full then use an extended one
+     SIZE_T Len = (Val == 0x7F)?((UINT)*(BinSig++) | 0x3F00):(Val & 0x3F);   // If the small counter is full then use an extended one (if all counter`s bits is set then this is HI bits and LOW bits follow in a next byte)  // If low counter bits is 0x3F then next byte will have the rest of HI bits (14 bits total) (0 counter value means 1)
      Len++;   // No zero Counter
      if((Len > Size)||((long)Len > SigLen))return -1;   // Out of buffer
      for(;Len;Len--,Size--,BinSig++,SigLen--,Data+=DataDir){if(*Data != *BinSig)return 0;}
@@ -360,7 +360,9 @@ CSigPatch(void)
  if(this->ScpBuf)HeapFree(GetProcessHeap(),0,this->ScpBuf); 
 }
 //---------------------------------------------------------------------------
-UINT GetPatchCount(void){return this->PatchCnt;}
+UINT GetPatchCount(void){return this->PatchCnt;}      // Total  
+//---------------------------------------------------------------------------
+PBYTE GetPatchAddr(UINT AddrIdx, UINT SigIdx){return (PBYTE)this->SigList.GetSigAddr(SigIdx, AddrIdx, nullptr);}
 //---------------------------------------------------------------------------
 void SetBorders(SIZE_T Lower, SIZE_T Upper)
 {
@@ -432,6 +434,7 @@ int ApplyPatches(PVOID Data, SIZE_T Size, long Step=1, UINT Flags=0)        // b
  PBYTE AddrHi = &((PBYTE)Data)[Size - this->BrdHi]; 
  UINT  Total  = this->SigList.FindSignatures(AddrLo, AddrHi, Step, Flags & prSkipUnread);
  if((Total != this->SigList.GetSigCount()) && !(Flags & pfForce)){LOGMSG("Not all signatures found!"); return -3;}
+ UINT PatchCtr = 0;
  for(UINT ctr=0;ctr < this->PatchCnt;ctr++)
   {
    SPatchRec* Patch = this->Patches[ctr];
@@ -454,14 +457,14 @@ int ApplyPatches(PVOID Data, SIZE_T Size, long Step=1, UINT Flags=0)        // b
        DWORD PrevProt = 0;
        DBGMSG("  Patch %u: %p [%p], %08X",Idx,Addr,(Addr-(PBYTE)Data),Blk->Size);
        if(Flags & pfProtMem){if(!VirtualProtectEx(GetCurrentProcess(),Addr,Blk->Size,PAGE_READWRITE,&PrevProt))return -4;}  
-       memcpy(Addr,&Blk->Data,Blk->Size);
+       memcpy(Addr,&Blk->Data,Blk->Size);   PatchCtr++;
        if(Flags & pfProtMem){if(!VirtualProtectEx(GetCurrentProcess(),Addr,Blk->Size,PrevProt,&PrevProt))return -5;}  
        Blk = (SCodeBlk*)((PBYTE)Blk + Blk->Size + sizeof(SCodeBlk));
       }
      if(Patch->SigIdx < 0)break;   
     }
   } 
- return 0;
+ return PatchCtr;
 }
 //--------------------------------------------------------------------------- 
 int LoadPatchScript(LPSTR Script, UINT ScriptSize=0)          // TODO: SigMCtr
@@ -609,7 +612,6 @@ int LoadPatchScript(LPSTR Script, UINT ScriptSize=0)          // TODO: SigMCtr
  return 0;
 }
 //--------------------------------------------------------------------------- 
-
 };
 
 };

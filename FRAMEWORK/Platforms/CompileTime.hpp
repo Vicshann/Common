@@ -192,7 +192,10 @@ template<typename T> constexpr _finline static T RevByteOrder(T Value) // Can be
  return Value;
 }
 //============================================================================================================
+// https://github.com/Michaelangel007/crc32
 // CRC32 hash: CRC32A("Hello World!")
+// Normal table initialization checks the top bit and shifts left,
+// Reflected table initialiation checks the bottom bit and shifts right.
 // Use polynomial 0x82F63B78 instead of 0xEDB88320 for compatibility with Intel`s hardware CRC32C (SSE 4.2: _mm_crc32_u8) and ARM (ARMv8-A: __crc32d; -march=armv8-a+crc )
 /* English dictionary test:
 | hash         | collisions | polynomial |

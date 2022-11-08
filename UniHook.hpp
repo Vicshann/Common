@@ -332,12 +332,14 @@ bool SetHookIntr(PBYTE ProcAddr=NULL, UINT Flags=EHookFlg::hfFillNop|EHookFlg::h
  *((PDWORD)&Patch[1]) = AddrToRelAddr(ProcAddr,TrLen,*(PBYTE*)&HookProc);
 #endif
 #endif
- _mm_storeu_si128((__m128i*)ProcAddr, *(__m128i*)&Patch);  // SSE2, single operation, should be safe       // TODO: memcpy with aligned SSE2 16 byte copy
- NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, OldProtect, &OldProtect);   // VirtualProtect(ProcAddr,TrLen,PrevProt,&PrevProt); 
+ PVOID  TTBaseAddress = this;
+ SIZE_T TTRegionSize  = sizeof(*this);
+ ULONG  TTOldProtect  = 0;
+ NtProtectVirtualMemory(NtCurrentProcess, &TTBaseAddress, &TTRegionSize, PAGE_EXECUTE_READWRITE, &TTOldProtect);  // Make the hook area executable // Must come first in case we are hooking NtProtectVirtualMemory // On some platforms data sections are not executable!
 
- BaseAddress = this;
- RegionSize  = sizeof(*this);
- NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, PAGE_EXECUTE_READWRITE, &OldProtect);  // VirtualProtect(this,sizeof(*this),PAGE_EXECUTE_READWRITE,&PrevProt);	 // On some platforms data sections are not executable!
+ _mm_storeu_si128((__m128i*)ProcAddr, *(__m128i*)&Patch);  // SSE2, single operation, should be safe       // TODO: memcpy with aligned SSE2 16 byte copy
+ NtProtectVirtualMemory(NtCurrentProcess, &BaseAddress, &RegionSize, OldProtect, &OldProtect);   // Restore original protection of hooked area 
+
 // FlushInstructionCache(GetCurrentProcess(),ProcAddr,sizeof(this->OriginCode));   // Is it really needed here?   (Just returns 1)
  return true;
 }  
@@ -353,8 +355,8 @@ bool SetHook(LPSTR ProcName, LPSTR LibName, UINT Flags=EHookFlg::hfFillNop|EHook
  HMODULE  hLib  = (HMODULE)NNTDLL::GetModuleBaseLdr(LibName);            // GetModuleHandleA(LibName);
  if(!hLib && LibName)hLib  = LoadLibraryA(LibName);             // Only with a ForceLoad flag?
  PBYTE ProcAddr = (PBYTE)NPEFMT::GetProcAddr(hLib, ProcName);    // 'C:\Windows\AppPatch\AcLayers.dll' sometimes intercept GetProcAddress and substitutes its result
+ DBGMSG("Module=%p, Proc=%p",hLib,ProcAddr);
  if(!ProcAddr){DBGMSG("Failed: %s:%s",LibName?LibName:"",ProcName); return false;}
-// DBGMSG("Module=%p, Proc=%p",hLib,ProcAddr);
  return this->SetHook(ProcAddr,Flags,HookFunc);  
 }  
 //------------------------------------------------------------------------------------

@@ -1651,7 +1651,7 @@ bool HandleException(DWORD ThreadID, PEXCEPTION_RECORD ExceptionRecord, PCONTEXT
 #else
      Context->Eip++;
 #endif
-   case EXCEPTION_SINGLE_STEP:   // TF/DRx       
+   case EXCEPTION_SINGLE_STEP:   // TF/DRx   0x80000004L    
     this->ThList.Lock();
     TIdx = this->ThList.FindThreadIdxInList(&Desc, ThreadID);  
     if(TIdx < 0)
@@ -1733,15 +1733,6 @@ static void DebugRstExcContext(PCONTEXT ExcCont, PCONTEXT HandledCtx)
    HandledCtx->ContextFlags |= CONTEXT_DEBUG_REGISTERS; 
   }
  memcpy(ExcCont,HandledCtx,sizeof(CONTEXT));
-}
-//------------------------------------------------------------------------------------
-SIZE_T IsMemAvailable(PVOID Addr)      // Helps to skip a Reserved mapping rgions
-{
- SIZE_T RetLen = 0; 
- MEMORY_BASIC_INFORMATION minf;                                                                            
- NTSTATUS Status = NtQueryVirtualMemory(NtCurrentProcess,Addr,MemoryBasicInformation,&minf,sizeof(MEMORY_BASIC_INFORMATION),&RetLen);
- if(Status || !(minf.State & MEM_COMMIT))return 0;
- return minf.RegionSize;
 }
 //------------------------------------------------------------------------------------
 //
@@ -1878,7 +1869,7 @@ int Report_LOAD_DLL_DEBUG_INFO(TEB* pThTeb, PVOID DllBase, bool CheckForDups=fal
               
  this->ThList.Lock();
  UINT ThreadID = (UINT)pThTeb->ClientId.UniqueThread;
- if(CheckForDups && this->IsExistDbgEvent(LOAD_DLL_DEBUG_EVENT, ThreadID, DllBase)){DBGMSG("Already reported!"); this->ThList.UnLock(); return -8;}   // If called from DebugerAttach afrer AddressSpace scan
+ if(CheckForDups && this->IsExistDbgEvent(LOAD_DLL_DEBUG_EVENT, ThreadID, DllBase)){DBGMSG("Already reported!"); this->ThList.UnLock(); return -8;}  // NOTE: An app itself can request DLL mapping several times   // If called from DebugerAttach afrer AddressSpace scan
  int TIdx = this->ThList.FindThreadIdxInList(NULL,ThreadID);  
  if(TIdx < 0)
   {

@@ -16,28 +16,91 @@
 // For more information, please refer to <http://unlicense.org/>
 
 #include "ExtraProt.h"
-#include "SimpleWin.h"
-#include "Sha256.h"
 #include "Utils.h"
-#include "Base64.h"
-#include "MiniIni.h"
+#include "SimWin.hpp"
+#include "Sha256.h"
+#include "Base64.hpp"
+#include "MiniIni.hpp"
+#include "MiniString.h"
 
 int  BreakPassWnd = 0;
 PASSCALLBACK Callback = NULL;
 BYTE CurPassHash[SHA256::HashBytes];
-//====================================================================================
-int _stdcall BtnClickOk(CWndButton *Btn, WPARAM wParam, LPARAM lParam)
+
+
+class CPasswForm: public CWndForm
+{
+// <-- GENERATED
+public:
+ HFONT hDefFont;
+// --> GENERATED
+
+public:
+CSWEdit*   Edit;
+CSWButton* BtnOk;
+CSWButton* BtnCancel;
+   
+//------------------------------------------------------------------------------------------------------------
+CPasswForm(HWND hParent, int PosX, int PosY, int Width, int Height)
+{
+// <-- GENERATED
+ this->hDefFont = CreateFontA(
+					  12,   // Height
+					   6,   // Width
+                       0,
+                       0,
+                 FW_BOLD,
+                   false,
+                   false,
+				   false,
+         DEFAULT_CHARSET,
+      OUT_DEFAULT_PRECIS,
+     CLIP_DEFAULT_PRECIS,
+           PROOF_QUALITY,
+ FIXED_PITCH | FF_MODERN,
+        "Times New Roman");
+
+ this->Create("Enter the Password", SWDim{600, 700, 500, 600}, hParent, WS_CLIPSIBLINGS|WS_BORDER|WS_MINIMIZEBOX|WS_OVERLAPPEDWINDOW, WS_EX_CONTROLPARENT);    // Ex: WS_EX_APPWINDOW WS_EX_CLIENTEDGE WS_EX_TOPMOST
+ this->SetFont(hDefFont);
+ this->BtnOk     = this->AddObj<CSWButton>("OK", SWDim{15, 40, 75, 25});
+ this->BtnCancel = this->AddObj<CSWButton>("CANCEL", SWDim{105, 40, 75, 25});
+ this->Edit      = this->AddObj<CSWEdit>("", SWDim{7, 10, 180, 18}, ES_PASSWORD);
+ 
+ SetCallback(BtnOk->OnMouseBtnUp, &CPasswForm::BtnOk_OnMouseBtnUp);  
+ SetCallback(BtnCancel->OnMouseBtnUp, &CPasswForm::BtnCancel_OnMouseBtnUp);  
+
+ this->Edit->Show(true);  
+ this->BtnOk->Show(true);
+ this->BtnCancel->Show(true); 
+
+ this->Show(true);
+// --> GENERATED
+}
+//------------------------------------------------------------------------------------------------------------
+~CPasswForm()
+{
+ DeleteObject(this->hDefFont);
+}
+//------------------------------------------------------------------------------------------------------------
+void _fastcall BtnOk_OnMouseBtnUp(CWndBase* Sender, WORD WMsg, WORD KeyEx, int x, int y)
 {
  BreakPassWnd = 1;
- return 0;
 }
-//------------------------------------------------------------------------------------
-int _stdcall BtnClickCn(CWndButton *Btn, WPARAM wParam, LPARAM lParam)
+//------------------------------------------------------------------------------------------------------------
+void _fastcall BtnCancel_OnMouseBtnUp(CWndBase* Sender, WORD WMsg, WORD KeyEx, int x, int y)
 {
  BreakPassWnd = 2;
- return 0;
-}          
-//------------------------------------------------------------------------------------
+}
+//------------------------------------------------------------------------------------------------------------
+
+};                       
+//------------------------------------------------------------------------------------------------------------
+
+
+
+
+
+//====================================================================================
 void _stdcall InitPassword(UINT Passw, PASSCALLBACK PClbk)
 {                   
  SHA256 sha;  
@@ -50,30 +113,17 @@ void _stdcall InitPassword(UINT Passw, PASSCALLBACK PClbk)
  sha.getHash(CurPassHash);
 }
 //------------------------------------------------------------------------------------
-bool _stdcall RequestPassword(HWND* MainWnd, int PosX, int PosY, int Width, int Height)
+bool _stdcall RequestPassword(void)
 {
  static int TryCtr = 0;
  BYTE PassBuf[128];
  BYTE Hash[SHA256::HashBytes];
  SHA256   sha;
- CWndForm Dlg;
- Dlg.Create("Enter the Password", 0x4000000, 0x20084, PosX - 100 + Width / 2, PosY - 50 + Height / 2, 200, 100, *MainWnd);
 
- CWndButton* BtnOk = Dlg.AllocCtrl<CWndButton>();
- BtnOk->Create("OK", 15, 40, 75, 25);
- BtnOk->OnMouseLBtnUp = BtnClickOk;
-
- CWndButton* BtnCancel = Dlg.AllocCtrl<CWndButton>();
- BtnCancel->Create("CANCEL", 105, 40, 75, 25);
- BtnCancel->OnMouseLBtnUp = BtnClickCn;
-
- CWndEdit* Edit = Dlg.AllocCtrl<CWndEdit>();
- Edit->Create(7, 10, 180, 18, true);
-
- Edit->Show(true);
- BtnOk->Show(true);
- BtnCancel->Show(true);
- Dlg.Show(true);
+ RECT dwr;
+ HWND MainWnd = GetDesktopWindow();
+ GetWindowRect(MainWnd,&dwr);                
+ CPasswForm* Dlg = new CPasswForm(MainWnd,dwr.left, dwr.top, (dwr.right - dwr.left), (dwr.bottom - dwr.top));
 
  int PassLen = 0;
  for(;;)    // Try Loop
@@ -87,7 +137,7 @@ bool _stdcall RequestPassword(HWND* MainWnd, int PosX, int PosY, int Width, int 
      DispatchMessageA(&Msg);
     }
    if(BreakPassWnd != 1){TerminateProcess(GetCurrentProcess(), 0); return false;}   // Cancel clicked
-   PassLen = GetWindowTextA(Edit->hWindow, (LPSTR)&PassBuf, sizeof(PassBuf));
+   PassLen = GetWindowTextA(Dlg->Edit->GetHandle(), (LPSTR)&PassBuf, sizeof(PassBuf));
    sha.reset();
    sha.add((LPSTR)&PassBuf, PassLen);
    sha.getHash(Hash);
@@ -97,15 +147,16 @@ bool _stdcall RequestPassword(HWND* MainWnd, int PosX, int PosY, int Width, int 
      if(Callback)Callback(1);
      SelfRemove(1);
      if(Callback)Callback(0);
-     *MainWnd = (HWND)-1;
+     MainWnd = (HWND)-1;
      BreakPassWnd = 2;
      break;
     } 
    BreakPassWnd = 0;
   }
  if(!PassLen)TerminateProcess(GetCurrentProcess(), 0);
- if(BreakPassWnd == 2)*MainWnd = (HWND)-2;     // Corrupt the window handle :)
- if(*MainWnd != GetDesktopWindow())TerminateProcess(GetCurrentProcess(), 0);
+ if(BreakPassWnd == 2)MainWnd = (HWND)-2;     // Corrupt the window handle :)
+ if(MainWnd != GetDesktopWindow())TerminateProcess(GetCurrentProcess(), 0);
+ delete(Dlg);
  return true;
 }
 //====================================================================================
@@ -170,7 +221,7 @@ int _stdcall ProtRefreshINIValueInt(LPSTR SectionName, LPSTR ValueName, int Defa
 {
  BYTE OutStr[256]; // [sp+0h] [bp-200h]@1
 
- if(ProtRefreshINIValueStr(SectionName, ValueName, "", (LPSTR)&OutStr, sizeof(OutStr), FileName) == 0 )return DecStrToNum((LPSTR)&OutStr);
+ if(ProtRefreshINIValueStr(SectionName, ValueName, "", (LPSTR)&OutStr, sizeof(OutStr), FileName) == 0 )return DecStrToNum<int>((LPSTR)&OutStr);
  return Default;
 }
 //------------------------------------------------------------------------------------

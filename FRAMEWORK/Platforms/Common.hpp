@@ -46,18 +46,22 @@
 // https://abseil.io/docs/cpp/platforms/macros
 // https://stackoverflow.com/questions/152016/detecting-cpu-architecture-compile-time
 //#if defined(i386) || defined(__i386__) || defined(__i386) || defined(_M_IX86) || defined(__X86__) || defined(_X86_) || defined(__i486__) || defined(__i586__) || defined(__i686__)    // None of those is recognized by CLANG
-#if defined(__arm__) || defined(__aarch64__)
+#if defined(__arm__) || defined(__aarch64__) || defined(_M_ARM64)
 #define _CPU_ARM
-//#error "Not ARM!"
-#else
+#pragma message("CPU is ARM")
+#elif defined(__x86_64__) || defined(_M_X64) || defined(__amd64__) || defined(__amd64) || defined(__i386__) || defined(_M_X86)
 #define _CPU_X86
+#pragma message("CPU is X86")
+#else
+#pragma message("CPU is UNKNOWN")
 #endif
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__x86_64__) || defined(_M_X64) || defined(__amd64__) || defined(__amd64)
 #define _ARCH_X64
+#pragma message("Platform is X64")
 #else
 #define _ARCH_X32
-#error "Not x32"
+#pragma message("Platform is X32")
 #endif
 
 //#define _CPU_X86
@@ -72,27 +76,27 @@
 #endif
 
 #if defined(_WIN32) || defined(__WIN32__) || defined(_WIN64) || defined(__WINDOWS__) || defined(__NT__)  // Clang, GCC mode at least   // MSVC: _WIN64 - Defined as 1 when the compilation target is 64-bit ARM (Windows only?)or x64.
-#error "We have Windows!"
+#pragma message("OS is Windows")
 #endif
 
 #ifdef __ANDROID__        // Implies Linux, so check it first
-#error "We have Android"
+#pragma message("OS is  Android")
 #endif
 
 #ifdef __linux__    // Clang, GCC mode at least
-//#error "We have a Linux!"
+#pragma message("OS is Linux")
 #endif
 
 #if defined(unix) || defined(__unix__) || defined(__unix)    // Linux too  // Clang, GCC mode at least
-//#error "We have a Unix!"
+//#error "We have Unix!"   // Linux too!
 #endif
 
 #if defined(__APPLE__) && defined(__MACH__)    // __APPLE__  // Clang, GCC mode at least
-#error "We have MacOS X"
+#error "We have MacOS X!"
 #endif
 
 #ifdef __FreeBSD__        // FreeBSD, NetBSD, OpenBSD, DragonFly BSD
-#error "We have a FreeBSD"
+#error "We have FreeBSD!"
 #endif
 
 
@@ -102,17 +106,17 @@
 #ifdef _CPU_X86
 
 #ifdef _ARCH_X64
-#   define SYSDESCPTR ((void*)__readgsqword(0x60))
-#elif _ARCH_X32
-#   define SYSDESCPTR ((void*)__readfsdword(0x30))
+#define SYSDESCPTR ((void*)__readgsqword(0x60))
+#elif defined(_ARCH_X32)
+#define SYSDESCPTR ((void*)__readfsdword(0x30))
 #else
-    #error "SYSDESCPTR Architecture Unsupported"
+#error "SYSDESCPTR Architecture Unsupported"
 #endif
 
-#elif _CPU_ARM
-    #error "SYSDESCPTR Windows ARM Unsupported"
+#elif defined(_CPU_ARM)
+#error "SYSDESCPTR Windows ARM Unsupported"
 #else
-    #error "SYSDESCPTR CPU Unsupported"
+#error "SYSDESCPTR CPU Unsupported"
 #endif
 
 #else
@@ -192,7 +196,8 @@ template<typename T> consteval static auto ChangeTypeSign(T Val=0)  // Should be
 
 constexpr static bool Is64BitBuild(void){return sizeof(void*) == 8;}   // To be used in constexpr expressions instead of __amd64__ macro
 //------------------------------------------------------------------------------------------------------------
-namespace NGenericTypes   // You should do 'using' for it yourselves if you want to bring these types to global name space
+// NOTE: You must use these types if you want code randomization to be applied
+namespace NGenericTypes   // You should do 'using' for it yourselves if you want to bring these types to global name space   // If this is not Namespace than this would not be possible: 'using namespace NFWK::NGenericTypes;'
 {
 #ifdef FWK_DEBUG
  static_assert(1 == sizeof(unsigned char), "Unsupported size of char!");
@@ -260,7 +265,6 @@ typedef __builtin_va_list va_list;        // Requires stack alignment by 16
 
 #endif
 //------------------------------------------------------------------------------------------------------------
-static const uint SYSCALLSTUBLEN = 32;       // 16: x64_x86
 
 // NOTE:  Dump here any implementations that should be accessible early and have no personal HPP yet >>>
 
@@ -274,8 +278,42 @@ template<typename A, typename B> constexpr _finline static bool IsSameTypes(A Va
  return SameTypes<A, B>::value;
 }
 
-template<typename T> struct Is_Pointer { static const bool value = false; };
-template<typename T> struct Is_Pointer<T*> { static const bool value = true; };
+template<typename T> struct IsPointer { static const bool value = false; };
+template<typename T> struct IsPointer<T*> { static const bool value = true; };
+
+template<typename T> struct IsPositive { static const bool V = (T(-1) >= 0); };     // template<typename T> constexpr _finline static bool IsPositive(void){return (T(-1) >= 0);}
+
+//------------------------------------------------------------------------------------------------------------
+template<typename Ty> struct RemoveRef { using T = Ty; };
+template<typename Ty> struct RemoveRef<Ty&> { using T = Ty; };
+template<typename Ty> struct RemoveRef<Ty&&> { using T = Ty; };
+//------------------------------------------------------------------------------------------------------------
+template <typename Ty> struct TyIdent { using T = Ty; };
+
+// NOTE: Use this only to pass an unused temporaries as unneeded return values of a function
+// EXAMPLE: ARef<typename RemoveRef<typename TyIdent<T>::T>::T> res
+template <typename Ref> struct ARef
+{
+ Ref &&ref;
+
+ constexpr _finline ARef(Ref&& arg) : ref((typename RemoveRef<Ref>::T&&)arg) { }   // RValue     // Using the class` type Ref leaves us wuthout Universal Reference. But making the constructor template will break type conversion on assignment
+ constexpr _finline ARef(Ref& arg) : ref((typename RemoveRef<Ref>::T&&)arg) { }    // LValue
+ constexpr _finline ARef(volatile Ref& arg) : ref((typename RemoveRef<Ref>::T&&)arg) { }    // LValue for a volatile storage (Can removing the 'volatile' break some use cases of it bacause of optimization?)  // Can we pass a type to ARef without losing its volatility?
+
+ constexpr _finline Ref& operator=(ARef<Ref> const& v){ref = v; return ref; };
+ constexpr _finline operator Ref& () const & { return ref; }
+ constexpr _finline operator Ref&& () const && { return (typename RemoveRef<Ref>::T&&)ref; }
+ constexpr _finline Ref& operator*() const { return ref; }
+ constexpr _finline Ref* operator->() const { return &ref; }
+};
+
+// EXAMPLE: XRef<T> res
+template<typename T> using XRef = ARef<typename RemoveRef<typename TyIdent<T>::T>::T>;    // Template Alias
+
+template <int Size> struct TypeForSizeU
+{
+ using T = typename TSW<(Size < 8), typename TSW<Size < 4, typename TSW<Size < 2, uint8, uint16>::T, uint32>::T, uint64>::T;    // without 'typename' the compiler refuses to look for TSW type 
+};
 //------------------------------------------------------------------------------------------------------------
 
 template<typename T> constexpr _finline static T SwapBytes(T Value)  // Unsafe with optimizations?
@@ -295,8 +333,8 @@ template <typename T> constexpr _finline static T RotR(T Value, unsigned int Shi
 template<typename N, typename M> constexpr _finline static M NumToPerc(N Num, M MaxVal){return (((Num)*100)/(MaxVal));}               // NOTE: Can overflow!
 template<typename P, typename M> constexpr _finline static M PercToNum(P Per, M MaxVal){return (((Per)*(MaxVal))/100);}               // NOTE: Can overflow!
 
-template<class N, class M> constexpr _finline static M AlignFrwd(N Value, M Alignment){return (Value/Alignment)+(bool(Value%Alignment)*Alignment);}    // NOTE: Slow but works with any Alignment value
-template<class N, class M> constexpr _finline static M AlignBkwd(N Value, M Alignment){return (Value/Alignment)*Alignment;}                            // NOTE: Slow but works with any Alignment value
+template<typename N> constexpr _finline static N AlignFrwd(N Value, N Alignment){return ((Value/Alignment)+(bool(Value%Alignment)))*Alignment;}    // NOTE: Slow but works with any Alignment value
+template<typename N> constexpr _finline static N AlignBkwd(N Value, N Alignment){return (Value/Alignment)*Alignment;}                              // NOTE: Slow but works with any Alignment value
 
 // 2,4,8,16,...
 template<typename N> constexpr _finline static bool IsPowerOf2(N Value){return Value && !(Value & (Value - 1));}
@@ -309,50 +347,42 @@ template<typename T> consteval size_t countof(T& a){return (sizeof(T) / sizeof(*
 
 //------------------------------------------------------------------------------------------------------------
 // The pointer proxy to use inside of a platform dependant structures (i.e. NTDLL)
+// Accepts a pointer to type T and stores it as type H
 template<typename T, typename H=uint> struct alignas(H) SPTR
 {
  STASRT(SameTypes<H, uint>::value || SameTypes<H, uint32>::value || SameTypes<H, uint64>::value, "Unsupported pointer type!");
  H Value;
+ _finline SPTR(void) = default;    //{this->Value = 0;}          // Avoid default constructors in POD (SPTR will replace many members in POD structures)!
  _finline SPTR(H v){this->Value = v;}
  _finline SPTR(T* v){this->Value = (H)v;}
- _finline SPTR(int v){this->Value = (H)v;}    // For '0' values
- _finline SPTR(unsigned int v){this->Value = (H)v;}    // For '0' values
- _finline SPTR(long long v){this->Value = (H)v;}    // For '0' values
- _finline SPTR(unsigned long long v){this->Value = (H)v;}    // For '0' values
- _finline SPTR(const char* v){this->Value = (H)v;}
- _finline SPTR(nullptr_t v){this->Value = (H)v;}    // For 'nullptr' values
+ _finline SPTR(int v){this->Value = (H)v;}                   // For '0' values
+ //_finline SPTR(unsigned int v){this->Value = (H)v;}          // For '0' values
+ _finline SPTR(long long v){this->Value = (H)v;}             // For '0' values
+ //_finline SPTR(unsigned long long v){this->Value = (H)v;}    // For '0' values
+ _finline SPTR(const char* v){this->Value = (H)v;}           // For string pointers
+ _finline SPTR(nullptr_t v){this->Value = (H)v;}             // For 'nullptr' values
 
  _finline void operator= (H val){this->Value = val;}
- _finline void operator= (T* val){this->Value = (H)val;}    // May truncate or extend the pointer
+ _finline void operator= (T* val){this->Value = (H)val;}     // May truncate or extend the pointer
  _finline void operator= (SPTR<T,H> val){this->Value = val.Value;}
- _finline operator T* (void){return (T*)this->Value;}    // Must be convertible to current pointer type
- _finline operator H (void){return this->Value;}    // Raw value
+ _finline operator T* (void){return (T*)this->Value;}        // Must be convertible to current pointer type
+ _finline operator H (void){return this->Value;}             // Raw value
 };
 //using SPTRN  = SPTR<uint>;
 //using SPTR32 = SPTR<uint32>;
 //using SPTR64 = SPTR<uint64>;
 //------------------------------------------------------------------------------------------------------------
-template<class> struct SFuncStub;
-template<class TRet, class... TPar> struct SFuncStub<TRet(TPar...)>
-{
- using TFuncPtr = TRet (*)(TPar...);
- static const int ArgNum   = sizeof...(TPar);
- static const int StubSize = SYSCALLSTUBLEN;   // Let it be copyable with __m256
- static const int StubFill = 0xFF;
- uint8 Stub[StubSize];     // TFuncPtr ptr;  // TReturn (*ptr)(TParameter...);
- consteval SFuncStub(void) {for(int ctr=0;ctr < StubSize;ctr++)Stub[ctr]=StubFill;}  // TODO: Fill with random if PROTECT is enabled?
- _finline TRet operator()(TPar... params){return ((TFuncPtr)&Stub)(params...);}     //return ptr(params...);
-};
-//------------------------------------------------------------------------------------------------------------
+
 
 
 
 //---------------------------------------------------------------------------
-
+// TODO: Get rid of div and mult
+// TODO: Align the addresses and use xmm for copy operations
 static void*  __cdecl memcpy(void* _Dst, const void* _Src, size_t _Size)
 {
  size_t ALen = _Size/sizeof(size_t);
- size_t BLen = _Size%sizeof(size_t);
+// size_t BLen = _Size%sizeof(size_t);
  for(size_t ctr=0;ctr < ALen;ctr++)((size_t*)_Dst)[ctr] = ((size_t*)_Src)[ctr];
  for(size_t ctr=(ALen*sizeof(size_t));ctr < _Size;ctr++)((char*)_Dst)[ctr] = ((char*)_Src)[ctr];
  return _Dst;
@@ -371,7 +401,7 @@ static void*  __cdecl memmove(void* _Dst, const void* _Src, size_t _Size)
 static void*  __cdecl memset(void* _Dst, int _Val, size_t _Size)      // TODO: Aligned, SSE by MACRO
 {
  size_t ALen = _Size/sizeof(size_t);
- size_t BLen = _Size%sizeof(size_t);
+// size_t BLen = _Size%sizeof(size_t);
  size_t DVal =_Val & 0xFF;               // Bad and incorrect For x32: '(size_t)_Val * 0x0101010101010101;'         // Multiply by 0x0101010101010101 to copy the lowest byte into all other bytes
  if(DVal)
   {

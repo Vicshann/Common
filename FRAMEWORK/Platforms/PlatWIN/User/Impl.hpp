@@ -23,11 +23,25 @@ namespace NAPI   // On NIX all syscall stubs will be here   // https://docs.orac
 #include "Impl_PT.hpp"
 };
 //============================================================================================================
+namespace NPRIVATE
+{
+
+}
+//============================================================================================================
+
+
+//============================================================================================================
+namespace NPDBG
+{
+
+}
+//============================================================================================================
 //private:
 //static inline  decltype(TypeSwitch<IsBigEnd, uint32, uint64>()) Val = 0;
 //static inline TSW<IsBigEnd, uint32, uint64>::T Val = 0;
 //public:
 //============================================================================================================
+
 static int Initialize(void* DescrPtr)
 {
 // TODO: Validate presence of all required POSX functions implementation?

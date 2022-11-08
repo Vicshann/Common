@@ -24,8 +24,9 @@ HANDLE hConsOut = NULL;
 
 wchar_t   LogFilePath[MAX_PATH];	
 int    LogMode = lmNone;	
-void _cdecl DummyLogProc(LPSTR, UINT){}
-void (_cdecl *pLogProc)(LPSTR, UINT) = DummyLogProc;			   
+int    MaxLogLevel = 9;  // Log everything  // 0 will log nothing but still form log messages
+void _cdecl DummyLogProc(LPSTR, UINT, UINT){}
+void (_cdecl *pLogProc)(LPSTR Msh, UINT MsgLen, UINT Level) = DummyLogProc;			   
 			   			   
 //---------------------------------------------------------------------------
 #ifndef __BORLANDC__
@@ -571,6 +572,7 @@ bool _stdcall IsLogHandle(HANDLE Hnd)
 // !!! -0.177166 is incorrectly printed with %f!!!
 // OPt: InterprocSync, Reopen/Update log // Depth // Fastcall, Max 3 constant args
 // float pushed as double, char pushed as a signed size_t
+// NOTE: Incorrectly receives UINT64 on x32 !!!!!!!
 //
 void  _cdecl LogProc(int Flags, char* ProcName, char* Message, ...)
 {
@@ -579,6 +581,7 @@ void  _cdecl LogProc(int Flags, char* ProcName, char* Message, ...)
  static volatile UINT64 PrvTime = 0;
  NTSTATUS Status;
  UINT  MSize = 0;
+ int  LogLvl = Flags & 0xFF;
  char* MPtr  = NULL;
  char TmpBuf[1024*4];   // avoid chkstk
 
@@ -608,6 +611,19 @@ void  _cdecl LogProc(int Flags, char* ProcName, char* Message, ...)
      MSize += Len;
      TmpBuf[MSize++] = 0x20;
     }
+   if(Flags & lfLogLevel)   
+    {
+     if(LogLvl==llLogVFail)*(UINT32*)&TmpBuf[MSize] = 'LIAF';  //FAIL      // Mind the byte order!
+     else if(LogLvl==llLogVError)*(UINT32*)&TmpBuf[MSize] = 'RRRE';  //ERRR      // Mind the byte order!
+     else if(LogLvl==llLogVWarning)*(UINT32*)&TmpBuf[MSize] = 'NRAW';  //WARN 
+     else if(LogLvl==llLogVNote)*(UINT32*)&TmpBuf[MSize] = 'ETON';  //NOTE 
+     else if(LogLvl==llLogVInfo)*(UINT32*)&TmpBuf[MSize] = 'OFNI';  //INFO  
+     else if(LogLvl==llLogVDebug)*(UINT32*)&TmpBuf[MSize] = 'GBED';  //DEBG  
+     else if(LogLvl==llLogVTrace)*(UINT32*)&TmpBuf[MSize] = 'ECRT';  //TRCE  
+     else *(UINT32*)&TmpBuf[MSize] = 'ENON';  // NONE
+     MSize += 4;
+     TmpBuf[MSize++] = 0x20;
+    }
    if(ProcName && (Flags & lfLogName))    
     {
      for(;*ProcName;ProcName++,MSize++)TmpBuf[MSize] = *ProcName;
@@ -634,7 +650,8 @@ void  _cdecl LogProc(int Flags, char* ProcName, char* Message, ...)
     }
  va_end(args);
 
- if(LogMode & lmProc)pLogProc(MPtr, MSize);
+ if(LogLvl && (LogLvl >= MaxLogLevel))return;   // Skip logging  // Log any unleveled messages
+ if(LogMode & lmProc)pLogProc(MPtr, MSize, LogLvl);
  if(LogMode & lmFile)
   {                                                                                                                 
    if(!hLogFile)  // NOTE: Without FILE_APPEND_DATA offsets must be specified to NtWriteFile
@@ -652,7 +669,7 @@ void  _cdecl LogProc(int Flags, char* ProcName, char* Message, ...)
  if(LogMode & lmCons)
   {           
    IO_STATUS_BLOCK iosb = {};
-   if(!hConsOut)hConsOut = NtCurrentPeb()->ProcessParameters->StandardOutput;               // Not a real file handle on Windows 7!
+   if(!hConsOut)hConsOut = NtCurrentPeb()->ProcessParameters->StandardOutput;               // Not a real file handle on Windows 7(Real for an redirected IO?)!      // Win8+: \Device\ConDrv\Console     // https://stackoverflow.com/questions/47534039/windows-console-handle-for-con-device
    if((UINT)hConsOut != 7)Status = NtWriteFile(hConsOut, NULL, NULL, NULL, &iosb, MPtr, MSize, NULL, NULL);        // Will not work until Windows 8
   }
 }
@@ -747,6 +764,7 @@ template<typename T> size_t _ntoa(char* buffer, size_t idx, size_t maxlen, T val
 // TODO: Put this and all num-to-str/str-to-num functions into Format.hpp (mamespace NFMT)
 // TODO: Use a template to generate a type validation string from all passed arguments
 // TODO: Repeated chars
+// TODO: Add char/str repeat option, useful for logging trees
 // TODO: Indexed arg reuse
 //
 int _stdcall FormatToBuffer(char* format, char* buffer, UINT maxlen, va_list va)
@@ -1111,6 +1129,15 @@ UINT64 _stdcall QueryFileSize(LPSTR File)
  CloseHandle(hFile);
  if(res < 0)return 0;
  return FileSize.QuadPart;
+}
+//---------------------------------------------------------------------------
+PVOID _stdcall GetRealModuleBase(PVOID AddrInModule)
+{
+ MEMORY_BASIC_INFORMATION meminfo;
+ SIZE_T RetLen     = 0; 
+ memset(&meminfo, 0, sizeof(MEMORY_BASIC_INFO));
+ if(NtQueryVirtualMemory(NtCurrentProcess,AddrInModule,MemoryBasicInformation,&meminfo,sizeof(MEMORY_BASIC_INFORMATION),&RetLen))return nullptr;   // Use MEMORY_IMAGE_INFORMATION instead?
+ return meminfo.AllocationBase;
 }
 //---------------------------------------------------------------------------
 SIZE_T _stdcall GetRealModuleSize(PVOID ModuleBase)

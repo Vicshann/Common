@@ -31,10 +31,12 @@ namespace NFWK      // Must be a namespace because we are adding some namespaces
 
 #include "Platforms/Common.hpp"
 #include "Platforms/CompileTime.hpp"  // May use something from Utils.hpp
+#include "Math.hpp"
 #include "UTF.hpp"
 #include "NumCnv.hpp"
 #include "StrUtils.hpp"
 #include "StrFmt.hpp"
+#include "Platforms/Syscall.hpp"
 #include "Platforms/Utils.hpp"        // Anything that doesn`t have a separate HPP and still doesn`t use any of system API
 #include "Platforms/ModFmtELF.hpp"
 #include "Platforms/ModFmtPE.hpp"

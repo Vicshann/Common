@@ -1,16 +1,152 @@
-// ssl.cpp
+#pragma once
+
+// ssl.h
 
 #define _CRT_SECURE_NO_WARNINGS
-#include "ssl.h"
-//#include "z.h"
+
+#include <stdio.h>
+//#include <winsock2.h>
+//#include <ws2tcpip.h>
+#include <wincrypt.h>
+#include <tchar.h>
+#define SECURITY_WIN32
+#include <security.h>
+#include <schnlsp.h>
+
+// Z template class
+template <class T>class Z
+	{
+   private:
+
+   	T* d;
+      unsigned int ss;
+
+   public:
+
+   	Z(int s = 0)
+			{
+			if (!s)
+				s = 1;
+			d = new T[s];
+			memset(d,0,s*sizeof(T));
+			ss = s;
+			}
+		~Z()
+			{
+	      delete[] d;
+			}
+
+      operator T*()
+			{
+			return d;
+			}
+
+	void _clear()
+		{
+		ZeroMemory(d,ss*sizeof(T));
+		}
+	void clear()
+		{
+		ZeroMemory(d,ss*sizeof(T));
+		}
+
+	int bs()
+		{
+		return ss*sizeof(T);
+		}
+
+	int is()
+		{
+		return ss;
+		}
+
+	void Resize(unsigned int news)
+		{
+		if (news == ss)
+			return; // same size
+
+		// Create buffer to store existing data
+		T* newd = new T[news];
+		int newbs = news*sizeof(T);
+		ZeroMemory((void*)newd, newbs);
+
+		if (ss < news)
+			// we created a larger data structure
+			memcpy((void*)newd,d,ss*sizeof(T));
+		else
+			// we created a smaller data structure
+			memcpy((void*)newd,d,news*sizeof(T));
+		delete[] d;
+		d = newd;
+		ss = news;
+		}
+
+	void AddResize(int More)
+		{
+		Resize(ss + More);
+		}
+
+   };
 
 //* PENDING:
 //* Certificate Chain 
+//------------------------------------------------------------------------------------------------------------
 
-static void nop() {}
-//==============================================================================
-//------------------------------------------------------------------------------
-void SSL_SOCKET :: Initialize(SOCKET x,int Ty,PCCERT_CONTEXT pc)
+class SSL_SOCKET
+	{
+	private:
+		int Type;
+		HCERTSTORE hCS;
+		SCHANNEL_CRED m_SchannelCred;
+		CredHandle hCred;
+		CtxtHandle hCtx;
+		TCHAR dn[1000];
+		SecBufferDesc sbin;
+		SecBufferDesc sbout;
+		bool InitContext;
+		Z<char> ExtraData;
+		int ExtraDataSize;
+		Z<char> PendingRecvData;
+		int PendingRecvDataSize;
+		PCCERT_CONTEXT OurCertificate;
+		bool IsExternalCert;
+//		Z<char> ExtraDataSec;
+//		int ExtraDataSecSize;
+
+		static void nop() {}
+
+	public:
+		SOCKET X;
+
+	/*	void Initialize(SOCKET,int,PCCERT_CONTEXT = 0);
+		void SetDestinationName(TCHAR* n);
+		int ClientInit(bool = false);
+		int ClientLoop();
+		int ServerInit(bool = false);
+		int ServerLoop();
+
+		void Destroy(void);
+		int s_rrecv(char *b, int sz);
+		int s_ssend(char* b, int sz);
+		int s_recv(char *b, int sz);
+		int s_send(char* b, int sz);
+		int rrecv_p(char *b, int sz);
+		int ssend_p(char* b, int sz);
+		int recv_p(char *b, int sz);
+		int send_p(char* b, int sz);
+
+		int ClientOff();
+		int ServerOff();
+
+		SECURITY_STATUS Verify(PCCERT_CONTEXT);
+		SECURITY_STATUS VerifySessionCertificate();
+		void GetCertificateInfoString(TCHAR* s);
+		static PCCERT_CONTEXT CreateOurCertificate();
+		void NoFail(HRESULT);	 */
+
+
+
+void  Initialize(SOCKET x,int Ty,PCCERT_CONTEXT pc=nullptr)
 	{
 	X = x;
 	Type = Ty;
@@ -32,7 +168,7 @@ void SSL_SOCKET :: Initialize(SOCKET x,int Ty,PCCERT_CONTEXT pc)
 		}
 	}
 //------------------------------------------------------------------------------
-void SSL_SOCKET :: Destroy(void)
+void  Destroy(void)
 	{
 	if (Type == 0)
 		ClientOff();
@@ -60,12 +196,12 @@ void SSL_SOCKET :: Destroy(void)
 	hCS = 0;
 	}
 //------------------------------------------------------------------------------
-void SSL_SOCKET :: SetDestinationName(TCHAR* n)
+void  SetDestinationName(TCHAR* n)
 	{
 	_tcscpy(dn,n);
 	}
 //------------------------------------------------------------------------------
-int SSL_SOCKET :: ClientOff()
+int  ClientOff()
 	{
 	// Client wants to disconnect
 
@@ -118,7 +254,7 @@ int SSL_SOCKET :: ClientOff()
 	return 1;
 	}
 //------------------------------------------------------------------------------
-int SSL_SOCKET :: ServerOff()
+int  ServerOff()
 	{
 	// Server wants to disconnect
 	SECURITY_STATUS ss;
@@ -170,7 +306,7 @@ int SSL_SOCKET :: ServerOff()
 	return 1;
 	}
 //------------------------------------------------------------------------------
-int SSL_SOCKET :: rrecv_p(char *b, int sz)
+int  rrecv_p(char *b, int sz)
 {
    // same as recv, but forces reading ALL sz
    int rs = 0;
@@ -185,7 +321,7 @@ int SSL_SOCKET :: rrecv_p(char *b, int sz)
    }
 }
 //------------------------------------------------------------------------------
-int SSL_SOCKET :: ssend_p(char *b, int sz)
+int  ssend_p(char *b, int sz)
 {
    // same as send, but forces reading ALL sz
    int rs = 0;
@@ -200,17 +336,17 @@ int SSL_SOCKET :: ssend_p(char *b, int sz)
    }
 }
 //------------------------------------------------------------------------------
-int SSL_SOCKET :: recv_p(char *b, int sz)
+int  recv_p(char *b, int sz)
 	{
    return recv(X, b,sz, 0);
 	}
 //------------------------------------------------------------------------------
-int SSL_SOCKET :: send_p(char *b, int sz)
+int  send_p(char *b, int sz)
 	{
    return send(X, b, sz, 0);
 	}
 //------------------------------------------------------------------------------
-int SSL_SOCKET :: s_rrecv(char* b,int sz)
+int  s_rrecv(char* b,int sz)
 	{
    int rs = 0;
    for (;;)
@@ -224,7 +360,7 @@ int SSL_SOCKET :: s_rrecv(char* b,int sz)
 		}
 	}
 //------------------------------------------------------------------------------
-int SSL_SOCKET :: s_recv(char* b,int sz)
+int  s_recv(char* b,int sz)
 	{
 	SecPkgContext_StreamSizes Sizes;
 	SECURITY_STATUS ss = 0;
@@ -358,7 +494,7 @@ int SSL_SOCKET :: s_recv(char* b,int sz)
 	return TotalR;
 	}
 //------------------------------------------------------------------------------
-int SSL_SOCKET :: s_ssend(char* b,int sz)
+int  s_ssend(char* b,int sz)
 	{
 	// QueryContextAttributes
 	// Encrypt Message
@@ -435,7 +571,7 @@ int SSL_SOCKET :: s_ssend(char* b,int sz)
   If you get SEC_I_CONTINUE_NEEDED result once again, you repeat the whole thing - you send token data to remote party, receive response 
   and again you feed it into SChannel API to continue initialization. 
 */
-int SSL_SOCKET :: ClientLoop()
+int  ClientLoop()
 {
  DWORD dwSSPIFlags  = ISC_REQ_SEQUENCE_DETECT|ISC_REQ_REPLAY_DETECT|ISC_REQ_CONFIDENTIALITY|ISC_RET_EXTENDED_ERROR|ISC_REQ_ALLOCATE_MEMORY|ISC_REQ_STREAM  | ISC_REQ_MANUAL_CRED_VALIDATION;
  SECURITY_STATUS ss = SEC_I_CONTINUE_NEEDED;
@@ -554,7 +690,7 @@ int SSL_SOCKET :: ClientLoop()
  return 0;
 }
 //------------------------------------------------------------------------------
-int SSL_SOCKET :: ClientInit(bool NoLoop)
+int  ClientInit(bool NoLoop = false)
 	{
 	SECURITY_STATUS ss = 0;
 	if (IsExternalCert)
@@ -590,7 +726,7 @@ int SSL_SOCKET :: ClientInit(bool NoLoop)
 	return ClientLoop();
 	}
 //------------------------------------------------------------------------------
-int SSL_SOCKET :: ServerLoop()
+int  ServerLoop()
 	{
 	// Loop AcceptSecurityContext
 	SECURITY_STATUS ss = SEC_I_CONTINUE_NEEDED;
@@ -680,7 +816,7 @@ int SSL_SOCKET :: ServerLoop()
 	return 0;
 	}
 //------------------------------------------------------------------------------
-SECURITY_STATUS SSL_SOCKET :: Verify(PCCERT_CONTEXT px)
+SECURITY_STATUS  Verify(PCCERT_CONTEXT px)
 	{
 	if (px == 0)
 		return SEC_E_WRONG_PRINCIPAL;
@@ -739,7 +875,7 @@ SECURITY_STATUS SSL_SOCKET :: Verify(PCCERT_CONTEXT px)
 	return ss;
 	}
 //------------------------------------------------------------------------------
-void SSL_SOCKET :: GetCertificateInfoString(TCHAR* s)
+void  GetCertificateInfoString(TCHAR* s)
 	{
 	PCCERT_CONTEXT pRemoteCertContext = NULL;
 	SECURITY_STATUS Status = QueryContextAttributes(&hCtx,SECPKG_ATTR_REMOTE_CERT_CONTEXT,(PVOID)&pRemoteCertContext);
@@ -756,7 +892,7 @@ void SSL_SOCKET :: GetCertificateInfoString(TCHAR* s)
 	CertFreeCertificateContext(pRemoteCertContext);
 	}
 //------------------------------------------------------------------------------
-SECURITY_STATUS SSL_SOCKET :: VerifySessionCertificate()
+SECURITY_STATUS  VerifySessionCertificate()
 	{
 	PCCERT_CONTEXT pRemoteCertContext = NULL;
 	SECURITY_STATUS Status = QueryContextAttributes(&hCtx,SECPKG_ATTR_REMOTE_CERT_CONTEXT,(PVOID)&pRemoteCertContext);
@@ -767,13 +903,13 @@ SECURITY_STATUS SSL_SOCKET :: VerifySessionCertificate()
 	return Status;
 	}
 //------------------------------------------------------------------------------
-void SSL_SOCKET :: NoFail(HRESULT hr)
+void  NoFail(HRESULT hr)
 	{
 //	if (FAILED(hr))
 //		throw;
 	}
 //------------------------------------------------------------------------------
-PCCERT_CONTEXT SSL_SOCKET :: CreateOurCertificate()
+PCCERT_CONTEXT  CreateOurCertificate()
 {
 	// CertCreateSelfSignCertificate(0,&SubjectName,0,0,0,0,0,0);
 	HRESULT hr = 0;
@@ -850,7 +986,7 @@ PCCERT_CONTEXT SSL_SOCKET :: CreateOurCertificate()
 //==============================================================================
 //                Server functions
 //==============================================================================
-int SSL_SOCKET :: ServerInit(bool NoLoop)
+int  ServerInit(bool NoLoop=false)
 	{
 	SECURITY_STATUS ss = 0;
 
@@ -914,3 +1050,12 @@ int SSL_SOCKET :: ServerInit(bool NoLoop)
 	return ServerLoop();
 	}
 //------------------------------------------------------------------------------
+
+
+
+	};
+
+
+
+
+

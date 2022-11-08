@@ -526,6 +526,7 @@ bool Truncate(UINT NewCnt)
  const UINT  GetValStrLen(void){return CountedStrLen(this->Value.StringVal);} 
  void  SetName(const LPSTR name, UINT Len=0){SetString(&this->Name,name,Len);}
  void  SetType(const EJSonType type){this->Type = type;}
+ EJSonType GetType(void){return this->Type;}
 
  __int64 GetValInt(void){return this->Value.IntVal;}
  bool    GetValBol(void){return this->Value.BoolVal;}
@@ -1263,7 +1264,7 @@ int LoadXmlOjectsToJsn(CMiniStr& XmlStr, int From=0, bool SkipComments=false)  /
  if(XmlStr.c_str()[npend] != '<')   // Load DataBody  // Should not start with '<'
   {
    int dend = XmlStr.Pos('<',CMiniStr::ComparatorE,npend);    // I.E.: <MyObjName>0AD1F9C900336BA32156C4DFE8BFC010C28CAB30</MyObjName>
-   if(npend < 0)return -5;
+   if(dend < 0)return -5;
    CJSonItem* Itm = this->Add(CJSonItem(""));         // Add a body as unnamed string
    int slen = SkipSpaces(XmlStr, dend, true) - npend;
    if(slen > 0)Itm->SetValStr(&XmlStr.c_str()[npend], slen);
@@ -1275,6 +1276,7 @@ int LoadXmlOjectsToJsn(CMiniStr& XmlStr, int From=0, bool SkipComments=false)  /
       {
        CJSonItem* Itm = this->Add(CJSonItem(jsObject));
        npend = Itm->LoadXmlOjectsToJsn(XmlStr, npend, SkipComments);
+	   if(npend < 0)return npend;
        npend = XmlStr.Pos('<',CMiniStr::ComparatorE,npend); 
        if(npend < 0)return -6;
        if(XmlStr.c_str()[npend+1] == '/')
