@@ -329,7 +329,7 @@ struct SCplFuncInfo  // Holds info about a TypeName position in a function signa
 
 // Helps to get name of a type without RTTI and RTL
 // If Template Params will be included(NoTmpl=false): 'CProp<float,0>'
-template<typename T, bool NoTmpl=false> constexpr __forceinline const char* TypeName(void)  // One instance per requested type, holds only a name
+template<typename T, bool NoTmpl=false> static constexpr __forceinline const char* TypeName(void)  // One instance per requested type, holds only a name
 {
  constexpr int End = ctTNLen<T>(SCplFuncInfo::TypeOffs) - SCplFuncInfo::TailSize;   // End if TypeName (Begin for backward reading)
  constexpr int Beg = ctTNLenBk<T>(End);
@@ -339,7 +339,7 @@ template<typename T, bool NoTmpl=false> constexpr __forceinline const char* Type
  return SChrUnp<ctTNChars<T,Pos,Len>::Result>::Chars();
 }
 
-template<typename A, typename B, bool NoTmpl=false> constexpr __forceinline bool IsSameTypes(void){return (TypeName<A,NoTmpl>() == TypeName<B,NoTmpl>());}  
+template<typename A, typename B, bool NoTmpl=false> constexpr __forceinline bool IsSameTypes(void){return (TypeName<A,NoTmpl>() == TypeName<B,NoTmpl>());}   // Same strings expected to have same address
 //==============================================================================
 
 template<unsigned N> struct StaticStr        // C++20
@@ -363,10 +363,16 @@ constexpr unsigned int ctCplHash(const unsigned char* Str)           { return (*
 #define ctHASH(Str) (unsigned int)(ctCplConstantify<ctCplHash(Str)>::Value ^ ctCplConstantify<ctCplRandom(1)>::Value)
 */
 //==============================================================================
+
+template<typename Ty> struct RemoveRef { using T = Ty; };
+template<typename Ty> struct RemoveRef<Ty&> { using T = Ty; };
+template<typename Ty> struct RemoveRef<Ty&&> { using T = Ty; };
 };
 
 // ps is embedded packed string or EncryptedString using C++20 (Fast, no index sequences required)
 //template<CTStr str> consteval static const auto operator"" _ps() { return str; }   // must be in a namespace or global scope  // C++20, no inlining required if consteval and MSVC bug is finally fixed   // Examples: auto st = "Hello World!"_ps;  MyProc("Hello World!"_ps);
 //template<CNStr str> consteval static const auto operator"" _es() { return str; }   // must be in a namespace or global scope  // C++20, no inlining required if consteval and MSVC bug is finally fixed   // Examples: auto st = "Hello World!"_ps;  MyProc("Hello World!"_ps);
+
+
 
 #pragma warning(pop)
