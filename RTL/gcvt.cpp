@@ -105,6 +105,8 @@ unsigned long long uExp10[MaxDigit] =    // NOTE: No __int64 for GCC!!!
 1000000000000000000,  // Max for INT64
 };  
 //------------------------------------------------------------------------------------ 
+// http://www.jhauser.us/arithmetic/SoftFloat-3/doc/SoftFloat.html
+//
 // #define ROUND_2_INT(f) ((int)(f >= 0.0 ? (f + 0.5) : (f - 0.5)))
 // MSVC: Compile option '/d2noftol3' will avoid _dtoul3 and _ultod3
 // /Qifist switch with the Microsoft compiler. This switch tells the compiler not to change the rounding mode for float-to-int casts.

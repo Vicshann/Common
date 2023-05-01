@@ -88,6 +88,7 @@ template<typename D, typename S> static size_t StrCopy(D Dst, S Src)      // Shl
 template<typename D, typename S> static size_t StrCopy(D Dst, S Src, size_t MaxLen)
 {
  size_t len = 0;
+ //MaxLen--;    // For terminating 0 // If MaxLen was 0 then this will behave as StrCopy without size, unless you want to copy a very big string:)
  for(;Src[len] && (len < MaxLen);len++)Dst[len] = Src[len];         // Probably 'if constexpr (!MaxLen || (len < MaxLen))'  to exclude it if MaxLen is 0 and not needed
  Dst[len] = 0;
  return len;
@@ -104,7 +105,24 @@ template<typename D, typename S> static size_t StrCnat(D Dst, S Src)
 //---------------------------------------------------------------------------
 
 //--------------------------------------------------------------------------- 
-
+template<typename T> static int SplitBySep(T Str, size_t StrLen, T* PtrArr, int MaxCnt, UINT32 Sep)
+{
+ int Total = 0;
+ wchar_t SepH = Sep & 0xFFFF;
+ wchar_t SepL = Sep >> 16;
+ wchar_t NeedEnd = 0;
+ for(UINT idx=0;idx < StrLen;idx++)
+  {
+   wchar_t val = Str[idx];
+   if((val <= SepH)&&(val >= SepL)){Str[idx]=NeedEnd=0; continue;}  // Skip seps
+   if(NeedEnd)continue;
+   if(Total >= MaxCnt)return Total;
+   PtrArr[Total++] = &Str[idx];
+   NeedEnd = 1;
+  }
+ return Total;
+}
+//--------------------------------------------------------------------------- 
 
 
 

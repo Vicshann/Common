@@ -201,7 +201,7 @@ public: static int InjModuleIntoProcessAndExec(HANDLE hProcess, PVOID ModuleData
  return 0;
 }
 //------------------------------------------------------------------------------------
-static int SetSkipThreadReport(HANDLE hProcess, HANDLE hThread)  // See RtlIsCurrentThreadAttachExempt
+static int SetSkipThreadReport(HANDLE hProcess, HANDLE hThread)  // See RtlIsCurrentThreadAttachExempt   // TODO: Move to NtDllEx
 {
  THREAD_BASIC_INFORMATION tinf;
  ULONG RetLen = 0;

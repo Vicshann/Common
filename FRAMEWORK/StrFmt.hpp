@@ -1,7 +1,15 @@
 
 #pragma once
 
-struct NSFMT
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wshorten-64-to-32"
+#pragma clang diagnostic ignored "-Wimplicit-int-conversion"
+#pragma clang diagnostic ignored "-Wimplicit-int-float-conversion"
+#pragma clang diagnostic ignored "-Wsign-compare"
+#pragma clang diagnostic ignored "-Wsign-conversion"
+#pragma clang diagnostic ignored "-Wcast-align"
+
+struct NFMT
 {
 
 //---------------------------------------------------------------------------
@@ -37,10 +45,11 @@ static inline unsigned int _atoi(char** Str)
 //---------------------------------------------------------------------------
 template<typename T> static inline unsigned int _strnlen_s(T str, size_t maxsize)
 {
+ int constexpr BSh = (sizeof(str[0]) > 1)?1:0;   // 2 or the same
  if(!str)return 0;
  T s = str;
  for (; *s && maxsize--; ++s);
- return (unsigned int)(s - str);
+ return (unsigned int)(((char*)s - (char*)str) >> BSh);
 }
 //---------------------------------------------------------------------------
 template<typename T> static size_t _ntoa(char* buffer, size_t idx, size_t maxlen, T value, bool negative, T base, unsigned int prec, unsigned int width, unsigned int flags)
@@ -49,12 +58,46 @@ template<typename T> static size_t _ntoa(char* buffer, size_t idx, size_t maxlen
  size_t len = 0U;
  if (!value)flags &= ~FLAGS_HASH;   // no hash for 0 values
  // write if precision != 0 and value is != 0
- if (!(flags & FLAGS_PRECISION) || value) {
+ if (!(flags & FLAGS_PRECISION) || value)  // Reversed
+ {
+  if(base == 2)   // Binary
+   {
     do {
+     buf[len++] = '0' + (value & 1);  // Mod 2
+     value >>= 1;  // div 2
+    } while (value && (len < sizeof(buf)));
+   }
+  else if(base == 8)   // Octal
+   {
+    do {
+     buf[len++] = '0' + (value & 7);  // mod 8
+     value >>= 3;  // div 8
+    } while (value && (len < sizeof(buf)));
+   }
+  else if(base == 10)   // Decimal
+   {
+    do {
+     T vmod;
+     value = NMATH::UDivMod10(value, vmod);
+     buf[len++] = '0' + vmod;
+    } while (value && (len < sizeof(buf)));
+   }
+  else  // Hexadecimal
+   {
+    char BaseCh = (flags & FLAGS_UPPERCASE ? 'A' : 'a');
+    do {
+     char digit = (char)(value & 15);  // mod 16
+     buf[len++] = digit < 10 ? '0' + digit : BaseCh + digit - 10;
+     value >>= 4;  // div 16
+    } while (value && (len < sizeof(buf)));
+   }
+
+  /*  do {
       const char digit = (char)(value % base);    // Not cheap!!!
       buf[len++] = digit < 10 ? '0' + digit : (flags & FLAGS_UPPERCASE ? 'A' : 'a') + digit - 10;
       value /= base;
-    } while (value && (len < sizeof(buf)));
+    } while (value && (len < sizeof(buf))); */
+
   }
 
   // pad leading zeros
@@ -94,14 +137,22 @@ template<typename T> static size_t _ntoa(char* buffer, size_t idx, size_t maxlen
  return idx;
 }
 //---------------------------------------------------------------------------
+// NOTE: T is type of argument is stored in ArgList, no type of argument to be read into
+template<typename T> static constexpr _finline T GetArgAsType(uint& ArgIdx, void** ArgList)   // TODO: Make lambda and capture ArgList
+{
+ if constexpr (IsPtrType<T>::V)return (T)ArgList[ArgIdx++];  // Read it as a pointer itself, not pointer to a pointer variable
+ return *(T*)ArgList[ArgIdx++];
+}
+//---------------------------------------------------------------------------
 // TODO: Put this and all num-to-str/str-to-num functions into Format.hpp (mamespace NFMT)
 // TODO: Use a template to generate a type validation string from all passed arguments
 // TODO: Repeated chars
 // TODO: Indexed arg reuse
 //
-static int FormatToBuffer(char* format, char* buffer, uint maxlen, va_list va)
+_ninline static sint FormatToBuffer(char*  format, char* buffer, uint maxlen, uint ArgNum, void** ArgList)
 {
  size_t idx = 0U;
+ uint ArgIdx = 0;
  while(*format && (idx < (size_t)maxlen))   // format specifier?  %[flags][width][.precision][length]
   {
    // Check if the next 4 bytes contain %(0x25) or end of string. Using the 'hasless' trick: https://graphics.stanford.edu/~seander/bithacks.html#HasLessInWord
@@ -129,7 +180,7 @@ static int FormatToBuffer(char* format, char* buffer, uint maxlen, va_list va)
     unsigned int width = 0U;
     if (_is_digit(*format))width = _atoi(&format);
     else if (*format == '*') {
-      const int w = va_arg(va, int);
+      const int w = GetArgAsType<int>(ArgIdx, ArgList);  // va_arg(va, int);
       if (w < 0) {flags |= FLAGS_LEFT; width = (unsigned int)-w;}    // reverse padding
       else  width = (unsigned int)w;
       format++;
@@ -142,7 +193,7 @@ static int FormatToBuffer(char* format, char* buffer, uint maxlen, va_list va)
       format++;
       if (_is_digit(*format))precision = _atoi(&format);
       else if (*format == '*') {
-        const int prec = (int)va_arg(va, int);
+        const int prec = GetArgAsType<int>(ArgIdx, ArgList);  // (int)va_arg(va, int);
         precision = prec > 0 ? (unsigned int)prec : 0U;
         format++;
       }
@@ -196,23 +247,23 @@ static int FormatToBuffer(char* format, char* buffer, uint maxlen, va_list va)
         // convert the integer
         if (*format == 'i') {   // signed         //  || (*format == 'd')
           if (flags & FLAGS_LONG_LONG) {
-            const long long value = va_arg(va, long long);
+            const long long value = GetArgAsType<long long>(ArgIdx, ArgList);  // va_arg(va, long long);
             idx = _ntoa<unsigned long long>(buffer, idx, maxlen, (unsigned long long)(value > 0 ? value : 0 - value), value < 0, base, precision, width, flags);
           }
           else if (flags & FLAGS_LONG) {
-            const long value = va_arg(va, long);
+            const long value = GetArgAsType<long>(ArgIdx, ArgList);  // va_arg(va, long);
             idx = _ntoa<unsigned long>(buffer, idx, maxlen, (unsigned long)(value > 0 ? value : 0 - value), value < 0, base, precision, width, flags);
           }
           else {
-            const int value = (flags & FLAGS_CHAR) ? (char)va_arg(va, int) : (flags & FLAGS_SHORT) ? (short int)va_arg(va, int) : va_arg(va, int);
+            const int value = (flags & FLAGS_CHAR) ? GetArgAsType<char>(ArgIdx, ArgList) : (flags & FLAGS_SHORT) ? GetArgAsType<short int>(ArgIdx, ArgList) : GetArgAsType<int>(ArgIdx, ArgList);
             idx = _ntoa<unsigned long>(buffer, idx, maxlen, (unsigned int)(value > 0 ? value : 0 - value), value < 0, base, precision, width, flags);
           }
         }
         else {   // unsigned
-          if (flags & FLAGS_LONG_LONG)idx = _ntoa<unsigned long long>(buffer, idx, maxlen, va_arg(va, unsigned long long), false, base, precision, width, flags);
-          else if (flags & FLAGS_LONG)idx = _ntoa<unsigned long>(buffer, idx, maxlen, va_arg(va, unsigned long), false, base, precision, width, flags);
+          if (flags & FLAGS_LONG_LONG)idx = _ntoa<unsigned long long>(buffer, idx, maxlen, GetArgAsType<unsigned long long>(ArgIdx, ArgList), false, base, precision, width, flags);   // va_arg(va, unsigned long long)
+          else if (flags & FLAGS_LONG)idx = _ntoa<unsigned long>(buffer, idx, maxlen, GetArgAsType<unsigned long>(ArgIdx, ArgList), false, base, precision, width, flags);    // va_arg(va, unsigned long)
           else {
-            const unsigned int value = (flags & FLAGS_CHAR) ? (unsigned char)va_arg(va, unsigned int) : (flags & FLAGS_SHORT) ? (unsigned short int)va_arg(va, unsigned int) : va_arg(va, unsigned int);
+            const unsigned int value = (flags & FLAGS_CHAR) ? GetArgAsType<unsigned char>(ArgIdx, ArgList) : (flags & FLAGS_SHORT) ? GetArgAsType<unsigned short int>(ArgIdx, ArgList) : GetArgAsType<unsigned int>(ArgIdx, ArgList);
             idx = _ntoa<unsigned long>(buffer, idx, maxlen, value, false, base, precision, width, flags);
           }
         }
@@ -226,7 +277,7 @@ static int FormatToBuffer(char* format, char* buffer, uint maxlen, va_list va)
         if(flags & FLAGS_HASH)prec |= 0x8000;       // ffZeroPad                      // ffCommaSep  // Or may be ffZeroPad 0x8000?
         size_t len = 0;
         char buf[52];
-        char* ptr = NNCNV::ftoa_simple(va_arg(va, double), prec, buf, sizeof(buf), &len);   // After this we have some space at beginning of the buffer
+        char* ptr = NCNV::ftoa_simple(GetArgAsType<double>(ArgIdx, ArgList), prec, buf, sizeof(buf), &len);   // After this we have some space at beginning of the buffer    // va_arg(va, double)
         bool negative = (*ptr == '-');
         if (!(flags & FLAGS_LEFT) && (flags & FLAGS_ZEROPAD)) {
           if (width && (negative || (flags & (FLAGS_PLUS | FLAGS_SPACE)))) width--;
@@ -258,7 +309,7 @@ static int FormatToBuffer(char* format, char* buffer, uint maxlen, va_list va)
       case 'c' : {
         unsigned int l = 1U;
         if (!(flags & FLAGS_LEFT)){while (l++ < width)buffer[idx++] = ' ';}  // pre padding         //  TODO: Buffer limit
-        buffer[idx++] = (char)va_arg(va, int);  // char output       // out((char)va_arg(va, int), buffer, idx++, maxlen);
+        buffer[idx++] = GetArgAsType<char>(ArgIdx, ArgList);  // va_arg(va, int);  // char output       // out((char)va_arg(va, int), buffer, idx++, maxlen);
         if (flags & FLAGS_LEFT){while (l++ < width)buffer[idx++] = ' ';}    // post padding
         format++;
         break;
@@ -270,12 +321,12 @@ static int FormatToBuffer(char* format, char* buffer, uint maxlen, va_list va)
         unsigned int l;
         if(flags & FLAGS_LONG)
          {
-          wp = va_arg(va, wchar_t*);
+          wp = GetArgAsType<wchar_t*>(ArgIdx, ArgList);  // va_arg(va, wchar_t*);
           l  = _strnlen_s(wp, precision ? precision : (size_t)-1);    // precision or a full size
          }
         else
          {
-          cp = va_arg(va, char*);
+          cp = GetArgAsType<char*>(ArgIdx, ArgList);  // va_arg(va, char*);
           l  = _strnlen_s(cp, precision ? precision : (size_t)-1);    // precision or a full size
          }
         unsigned int f = l;    // Full len  of the string
@@ -291,7 +342,7 @@ static int FormatToBuffer(char* format, char* buffer, uint maxlen, va_list va)
       case 'd' :                     // LOGMSG("\r\n%#*.32D",Size,Src);
       case 'D' : {   // Width is data block size, precision is line size(single line if not specified)  // '%*D' counted dump
         if(*format == 'D')flags |= FLAGS_UPPERCASE;
-        unsigned char* DPtr  = va_arg(va, unsigned char*);
+        unsigned char* DPtr  = GetArgAsType<unsigned char*>(ArgIdx, ArgList);  // va_arg(va, unsigned char*);
         unsigned int   RLen  = precision?precision:width;   // If no precision is specified then write everything in one line
         unsigned int DelMult = (flags & FLAGS_SPACE)?3:2;
         for(unsigned int offs=0,roffs=0,rpos=0;idx < maxlen;offs++,roffs++)
@@ -310,7 +361,7 @@ static int FormatToBuffer(char* format, char* buffer, uint maxlen, va_list va)
                {
                 unsigned char Val = DPtr[rpos+ctr];
                 if(Val < 0x20)Val = '.';
-                buffer[idx++] = Val;
+                buffer[idx++] = int8(Val);
                }
              }
             if(!HaveMore || ((idx+4) > maxlen))break;
@@ -319,26 +370,29 @@ static int FormatToBuffer(char* format, char* buffer, uint maxlen, va_list va)
             rpos  = offs;
             roffs = 0;
            }
-          unsigned short Val = NNCNV::ByteToHexChar(DPtr[offs], true);   // Case flag?
-          buffer[idx++] = Val;
-          buffer[idx++] = Val >> 8;
+          //unsigned short Val = NCNV::ByteToHexChar(DPtr[offs], true);   // Case flag?
+          //buffer[idx++] = int8(Val);
+          //buffer[idx++] = int8(Val >> 8);
+          *(uint16*)&buffer[idx] = NCNV::ByteToHexChar(DPtr[offs], flags & FLAGS_UPPERCASE);  // Unaligned but should be faster
+          idx += 2;
           if(flags & FLAGS_SPACE)buffer[idx++] = ' ';
          }
         format++;
         break; }
 
-      case 'p' : {
+      case 'p' :       // NOTE: If a nonpointer type is passed then its address is read instead of its value
+      {
 //        width = sizeof(void*) * 2U;
         flags |= FLAGS_ZEROPAD | FLAGS_UPPERCASE;
         const bool is_ll = (sizeof(void*) == sizeof(long long)) || (flags & FLAGS_LONG);
-        if (is_ll)idx = _ntoa<unsigned long long>(buffer, idx, maxlen, (unsigned long long)va_arg(va, unsigned long long), false, 16U, precision, width=sizeof(long long)*2, flags);
-          else idx = _ntoa<unsigned long>(buffer, idx, maxlen, (unsigned long)va_arg(va, unsigned long), false, 16U, precision, width=sizeof(long)*2, flags);
+        if (is_ll)idx = _ntoa<unsigned long long>(buffer, idx, maxlen, (unsigned long long)GetArgAsType<void*>(ArgIdx, ArgList), false, 16U, precision, width=sizeof(long long)*2, flags);  //  (unsigned long long)va_arg(va, unsigned long long)
+          else idx = _ntoa<unsigned long>(buffer, idx, maxlen, (unsigned long)GetArgAsType<void*>(ArgIdx, ArgList), false, 16U, precision, width=sizeof(long)*2, flags); //  (unsigned long)va_arg(va, unsigned long)
         format++;
         break;
       }
 
       case 'n': {       // Nothing printed. The number of characters written so far is stored in the pointed location.
-        int* p = va_arg(va, int*);
+        int* p = GetArgAsType<int*>(ArgIdx, ArgList);  // va_arg(va, int*);
         *p = idx; }
         break;
 
@@ -353,14 +407,17 @@ Exit:
  return (int)idx;
 }
 //---------------------------------------------------------------------------
-__attribute__((__force_align_arg_pointer__)) static int PrintFmt(char* buffer, uint maxlen, char* format, ...)   // How to force CLANG to make sure that stack is always aligned to 16? ('-mstack-alignment=16' have no effect)
+// TODO: Fix bad stack alignment at _start (It is misaligned by ABI on NIX and MacOS)
+/*__attribute__((__force_align_arg_pointer__)) static int PrintFmt(char* buffer, uint maxlen, char* format, ...)   // How to force CLANG to make sure that stack is always aligned to 16? ('-mstack-alignment=16' have no effect)
 {
  va_list  args;
  va_start(args,format);
  int MSize = FormatToBuffer(format, buffer, maxlen, args);
  va_end(args);
  return MSize;
-}
+}*/
 //---------------------------------------------------------------------------
 
 };
+
+#pragma clang diagnostic pop

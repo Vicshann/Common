@@ -1,11 +1,7 @@
 
 #pragma once
 
-using ELFTYPE64  = uint64;
-using ELFTYPE32  = uint32;
-using ELFCURRENT = uint;
-
-template<typename PHT=ELFCURRENT> struct NFMTELF
+template<typename PHT=PTRCURRENT> struct NFMTELF
 {
 using PVOID    = SPTR<void, PHT>;
 using SIZE_T   = SPTR<uint, PHT>;
@@ -256,6 +252,7 @@ enum EHFlags
 
 };
 //------------------------------------------------------------------------------------------------------------
+// AUX vector types
 enum EAFlags
 {
 // Legal values for a_type (entry type).

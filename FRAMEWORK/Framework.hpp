@@ -15,46 +15,69 @@
    https://graphics.stanford.edu/~seander/bithacks.html
 
 */
+
+//#include <intrin.h>
+//#include <xmmintrin.h>
 //------------------------------------------------------------------------------------------------------------
+// Some STD stuff
+#if !__has_include (<initializer_list>)
+#include "Platforms/InitList.hpp"
+#endif
+
 //extern "C" void*  __cdecl memmove(void* _Dst, const void* _Src, size_t _Size);
 //extern "C" void*  __cdecl memset(void* _Dst, int _Val, size_t _Size)
 
 // Format: 'N'+'Four letters of namespace'
-// NOTE: You cannot put a 'namespace' inside of a 'class'
+// NOTE: It is impossible to put a 'namespace' inside of a 'class'
 namespace NFWK      // Must be a namespace because we are adding some namespaces and configs in it
 {
 // NOTE: None of these files should include anything ( Unless it is a collection? )
 // NOTE: Moving out of namespace should be done in the same file if required
-#if !__has_include ("FrameworkCfg.hpp")
+#if __has_include ("AppCfg.hpp")
+#include "AppCfg.hpp"
+#elif __has_include ("../AppCfg.hpp")
+#include "../AppCfg.hpp"
+#elif __has_include ("../../AppCfg.hpp")
+#include "../../AppCfg.hpp"
+#else
 #include "Platforms/DefaultCfg.hpp"
+#pragma message(">>> Using default config")
 #endif
 
-#include "Platforms/Common.hpp"
-#include "Platforms/CompileTime.hpp"  // May use something from Utils.hpp
+#include "Platforms/Common.hpp"       // Contains type definitions, must be in namespace to allow their inclusion with 'using namespace'
+#include "Platforms/CompileTime.hpp"  // Have access only to Common.hpp, everything else is 'invisible'
+
 #include "Math.hpp"
 #include "UTF.hpp"
 #include "NumCnv.hpp"
 #include "StrUtils.hpp"
 #include "StrFmt.hpp"
-#include "Platforms/Syscall.hpp"
-#include "Platforms/Utils.hpp"        // Anything that doesn`t have a separate HPP and still doesn`t use any of system API
-#include "Platforms/ModFmtELF.hpp"
-#include "Platforms/ModFmtPE.hpp"
-#include "Platforms/POSIX.hpp"
-#include "Platforms/NtDll.hpp"
-#include "Platforms/Platform.hpp"
-#include "Platforms/Misc.hpp"
+#include "Platforms/Platform.hpp"     // All API is defined here and inaccessible before!
+
+using PX   = NPTM::PX;
+using PX64 = NPTM::PX64;
+
+// Now we have access to SAPI+NAPI
+
+
+
 
 //#include "MemUtils.hpp"
 //#include "MemStorage.hpp"
 //#include "StrStorage.hpp"
 //#include "StrPool.hpp"
+#include "Arrays.hpp"
 
+#include "Crypto.hpp"
 
-#include "Application.hpp"
+#include "AppDef.hpp"
+
 };
 //------------------------------------------------------------------------------------------------------------
 using NFWK::NCTM::operator""_ps;
+using NFWK::NCTM::operator""_es;
 
-#include "Platforms/RTL.hpp"    // Must be in global namespace  // Comment this out if you linking with a default Run Time Library
+#include "Platforms/RTL.hpp"    // Must be in global namespace for the compiler to find it // Comment this out if you linking with a default Run Time Library
+
 //#endif
+

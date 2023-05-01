@@ -256,6 +256,7 @@ int _cdecl PrintFmt(char* buffer, UINT maxlen, char* format, ...);
 bool _stdcall FindFileByMask(LPSTR FileMask);
 int _stdcall CopyFileByMask(LPSTR DstDir, LPSTR FileMask, bool Overwr);
 int _stdcall WriteVmProtectedMemory(HANDLE* hProcess, PVOID TgtAddr, PVOID Data, SIZE_T Size, bool RstProt=true);
+DWORD _stdcall ApplyPatchLocal(PVOID PatchAddr, PVOID PatchData, DWORD PatchSize, LPSTR Signature=nullptr);
 ULONG _stdcall SetProcessUntrusted(HANDLE hProcess);
 NTSTATUS _stdcall CreateUntrustedFolder(PHANDLE phObject, PWSTR ObjectName);
 NTSTATUS _stdcall CreateUntrustedNtObjDir(PHANDLE phObject, PWSTR ObjectName);
@@ -769,7 +770,7 @@ template<typename T> T GetCmdLineParam(T CmdLine, T Param, unsigned short Scope=
   else {while(*CmdLine && (*CmdLine != SFchE))CmdLine++;}
  if(ParLen)*ParLen = CmdLine - ParBeg;  // In Chars
  if(*CmdLine)CmdLine++;  // Skip last Quote or Space
-// while(*CmdLine && (*CmdLine <= 0x20))CmdLine++; // Skip any spaces after 
+ while(*CmdLine && (*CmdLine <= 0x20))CmdLine++; // Skip any spaces after it to point at next argument
  return CmdLine; 
 }
 //---------------------------------------------------------------------------
@@ -882,9 +883,6 @@ template<typename S> int INIRefreshValueStr(S SectionName, S ValueName, S Defaul
  return Result;
 }
 //---------------------------------------------------------------------------
-
-
-
 // Return address always points to Number[16-MaxDigits];
 //
 template<typename T, typename S> S ConvertToHexStr(T Value, int MaxDigits, S NumBuf, bool UpCase, UINT* Len=0) 
@@ -1099,12 +1097,13 @@ template<typename T> constexpr __forceinline static T RevByteOrder(T Value)   //
 // GCC:
 //int32_t __builtin_bswap32 (int32_t x)
 //int64_t __builtin_bswap64 (int64_t x)
-//
+//            // TODO: Use refs (L,R val)
+// NOTE: Can`t sift, should work on any types AND arrays
 template<typename T> constexpr __forceinline static T SwapBytes(T Value)  // Unsafe with optimizations?  // https://mklimenko.github.io/english/2018/08/22/robust-endian-swap/
 {
  union {T val; UINT8 raw[sizeof(T)];} src, dst;
  src.val = Value;
- for(int idx=0,ridx=sizeof(T)-1;idx < sizeof(T)lidx++,ridx--)dst.raw[idx] = src.raw[ridx]; // Lets hope it will be optimized to bswap 
+ for(int lidx=0,ridx=sizeof(T)-1;lidx < sizeof(T);lidx++,ridx--)dst.raw[lidx] = src.raw[ridx]; // Lets hope it will be optimized to bswap 
  return dst.val;
 // uint8_t* SrcBytes = (uint8_t*)&Value;
 // uint8_t  DstBytes[sizeof(T)];
@@ -1275,7 +1274,7 @@ public:
    return true;
   }
 //----------------------------------------------------------
- //CArr<T>& operator += (const char* str){this->Append((void*)str, lstrlenA(str)); return *this;}
+ CArr<T>& operator += (const char* str){this->Append((void*)str, lstrlenA(str)); return *this;}
 //----------------------
  //CArr<T>& operator += (const wchar_t* str){this->Append((void*)str, lstrlenW(str)); return *this;}
 //----------------------

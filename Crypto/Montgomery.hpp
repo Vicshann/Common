@@ -1,4 +1,5 @@
 
+#pragma once
 
 // TODO: Get rid of memory allocations, templatize to use a static number sizes
 // TODO: Support native word sizes (8 bytes on x64)

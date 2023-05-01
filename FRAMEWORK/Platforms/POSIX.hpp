@@ -1,7 +1,6 @@
 
 #pragma once
 
-#define PXCALL __cdecl
 //============================================================================================================
 // https://docs.oracle.com/cd/E19048-01/chorus5/806-6897/auto1/index.html
 // https://docs.oracle.com/cd/E19048-01/chorus4/806-3328/6jcg1bm05/index.html
@@ -10,185 +9,286 @@
 // https://marcin.juszkiewicz.com.pl/download/tables/syscalls.html
 
 // Only most useful POSIX functions will go here for now
-// NOTE: We should be able to use these definitions to call X64 functions from X32 code if necessary ???
+// NOTE: We should be able to use these definitions to call X64 functions from X32 code if necessary (Windows only
+// TODO: size of int is platform dependant, replace it
+// PHS is size of pointer we require (set it default to sizeof(void*) here?))
 template<typename PHT> struct NPOSIX  // For members: alignas(sizeof(PHT))
 {
- using PVOID    = SPTR<void,  PHT>;
- using PCHAR    = SPTR<achar, PHT>;
+// Which Linux?
+template<uint vLinux, uint BSD_MAC> struct DCV   // Can be used for Kernel too
+{
+ static constexpr int
+#if defined(SYS_MACOS) || defined(SYS_BSD)
+ V = BSD_MAC
+#else       // Linux and Windows(emulation)
+ V = vLinux
+#endif
+;
+};
+
+
+ using PVOID    = SPTR<void,   PHT>;    // All of this is to be able to call X64 syscalls from X32 code
+ using PCHAR    = SPTR<pchar,  PHT>;
+ using PCCHAR   = SPTR<const pchar,  PHT>;
+ using PPCHAR   = SPTR<const pchar*, PHT>;    // achar**
 //using HANDLE   = PVOID;
- using SIZE_T   = SPTR<uint,  PHT>;
- using SSIZE_T  = SPTR<sint,  PHT>;
+ using SIZE_T   = SPTR<uint,   PHT>;
+ using SSIZE_T  = SPTR<sint,   PHT>;
 
 //using LONG     = int32;
 //using ULONG    = uint32;
 //using PSIZE_T  = SIZE_T*;
 //using PULONG   = ULONG*;
 //using NTSTATUS = LONG;
- using  mode_t  = uint32;
+ using PUINT64  = SPTR<uint64, PHT>;
+ using PINT32   = SPTR<int32, PHT>;
+ using mode_t   = int32;  //uint32;
+ using fdsc_t   = int32;
+ using dev_t    = uint32;    // See makedev macro
+ using pid_t    = int;
+ //using fd_t     = int;
+
+SCVR int EOF    = -1;
+SCVR int BadFD  = -1;
+
+static constexpr bool _finline IsBadFD(fdsc_t fd){return fd < 0;}
 
 enum EDFD  // These are just for convenience. These descriptors don`t have to be open on every system (Android?)
 {
  STDIN,
  STDOUT,
  STDERR
+// TODO: Add descriptors for NULL and RAND, for the framework spesifically?
 };
 
 enum EErrs   // Linux
 {
-	EPERM		 = 1  , // Operation not permitted
-	ENOENT		 = 2	, // No such file or directory
-	ESRCH		 = 3	, // No such process
-	EINTR		 = 4	, // Interrupted system call
-	EIO		 = 5	, // I/O error
-	ENXIO		 = 6	, // No such device or address
-	E2BIG		 = 7	, // Arg list too long
-	ENOEXEC		 = 8	, // Exec format error
-	EBADF		 = 9	, // Bad file number
-	ECHILD		= 10	, // No child processes
-	EAGAIN		= 11	, // Try again
-	ENOMEM		= 12	, // Out of memory
-	EACCES		= 13	, // Permission denied
-	EFAULT		= 14	, // Bad address
-	ENOTBLK		= 15	, // Block device required
-	EBUSY		= 16	, // Device or resource busy
-	EEXIST		= 17	, // File exists
-	EXDEV		= 18	, // Cross-device link
-	ENODEV		= 19	, // No such device
-	ENOTDIR		= 20	, // Not a directory
-	EISDIR		= 21	, // Is a directory
-	EINVAL		= 22	, // Invalid argument
-	ENFILE		= 23	, // File table overflow
-	EMFILE		= 24	, // Too many open files
-	ENOTTY		= 25	, // Not a typewriter
-	ETXTBSY		= 26	, // Text file busy
-	EFBIG		= 27	, // File too large
-	ENOSPC		= 28	, // No space left on device
-	ESPIPE		= 29	, // Illegal seek
-	EROFS		= 30	, // Read-only file system
-	EMLINK		= 31	, // Too many links
-	EPIPE		= 32	, // Broken pipe
-	EDOM		= 33	, // Math argument out of domain of func
-	ERANGE		= 34	, // Math result not representable
-	EDEADLK		= 35	, // Resource deadlock would occur
-	ENAMETOOLONG = 36	, // File name too long
-	ENOLCK		= 37	, // No record locks available
-	ENOSYS		= 38	, // Function not implemented
-	ENOTEMPTY	= 39	, // Directory not empty
-	ELOOP		= 40	, // Too many symbolic links encountered
-	EWOULDBLOCK	= 41	, // Operation would block
-	ENOMSG		= 42	, // No message of desired type
-	EIDRM		= 43	, // Identifier removed
-	ECHRNG		= 44	, // Channel number out of range
-	EL2NSYNC	= 45	, // Level 2 not synchronized
-	EL3HLT		= 46	, // Level 3 halted
-	EL3RST		= 47	, // Level 3 reset
-	ELNRNG		= 48	, // Link number out of range
-	EUNATCH		= 49	, // Protocol driver not attached
-	ENOCSI		= 50	, // No CSI structure available
-	EL2HLT		= 51	, // Level 2 halted
-	EBADE		= 52	, // Invalid exchange
-	EBADR		= 53	, // Invalid request descriptor
-	EXFULL		= 54	, // Exchange full
-	ENOANO		= 55	, // No anode
-	EBADRQC		= 56	, // Invalid request code
-	EBADSLT		= 57	, // Invalid slot
-	EDEADLOCK	= 58	, // File locking deadlock error
-	EBFONT		= 59	, // Bad font file format
-	ENOSTR		= 60	, // Device not a stream
-	ENODATA		= 61	, // No data available
-	ETIME		= 62	, // Timer expired
-	ENOSR		= 63	, // Out of streams resources
-	ENONET		= 64	, // Machine is not on the network
-	ENOPKG		= 65	, // Package not installed
-	EREMOTE		= 66	, // Object is remote
-	ENOLINK		= 67	, // Link has been severed
-	EADV		= 68	, // Advertise error
-	ESRMNT		= 69	, // Srmount error
-	ECOMM		= 70	, // Communication error on send
-	EPROTO		= 71	, // Protocol error
-	EMULTIHOP	= 72	, // Multihop attempted
-	EDOTDOT		= 73	, // RFS specific error
-	EBADMSG		= 74	, // Not a data message
-	EOVERFLOW	= 75	, // Value too large for defined data type
-	ENOTUNIQ	= 76	, // Name not unique on network
-	EBADFD		= 77	, // File descriptor in bad state
-	EREMCHG		= 78	, // Remote address changed
-	ELIBACC		= 79	, // Can not access a needed shared library
-	ELIBBAD		= 80	, // Accessing a corrupted shared library
-	ELIBSCN		= 81	, // .lib section in a.out corrupted
-	ELIBMAX		= 82	, // Attempting to link in too many shared libraries
-	ELIBEXEC	= 83	, // Cannot exec a shared library directly
-	EILSEQ		= 84	, // Illegal byte sequence
-	ERESTART	= 85	, // Interrupted system call should be restarted
-	ESTRPIPE	= 86	, // Streams pipe error
-	EUSERS		= 87	, // Too many users
-	ENOTSOCK	= 88	, // Socket operation on non-socket
-	EDESTADDRREQ	= 89	, // Destination address required
-	EMSGSIZE	= 90	, // Message too long
-	EPROTOTYPE	= 91	, // Protocol wrong type for socket
-	ENOPROTOOPT	= 92	, // Protocol not available
-	EPROTONOSUPPORT	= 93	, // Protocol not supported
-	ESOCKTNOSUPPORT	= 94	, // Socket type not supported
-	EOPNOTSUPP	= 95	, // Operation not supported on transport endpoint
-	EPFNOSUPPORT	= 96	, // Protocol family not supported
-	EAFNOSUPPORT	= 97	, // Address family not supported by protocol
-	EADDRINUSE	= 98	, // Address already in use
-	EADDRNOTAVAIL	= 99	, // Cannot assign requested address
-	ENETDOWN	= 100	, // Network is down
-	ENETUNREACH	= 101	, // Network is unreachable
-	ENETRESET	= 102	, // Network dropped connection because of reset
-	ECONNABORTED	= 103	, // Software caused connection abort
-	ECONNRESET	= 104	, // Connection reset by peer
-	ENOBUFS		= 105	, // No buffer space available
-	EISCONN		= 106	, // Transport endpoint is already connected
-	ENOTCONN	= 107	, // Transport endpoint is not connected
-	ESHUTDOWN	= 108	, // Cannot send after transport endpoint shutdown
-	ETOOMANYREFS	= 109	, // Too many references: cannot splice
-	ETIMEDOUT	= 110	, // Connection timed out
-	ECONNREFUSED	= 111	, // Connection refused
-	EHOSTDOWN	= 112	, // Host is down
-	EHOSTUNREACH	= 113	, // No route to host
-	EALREADY	= 114	, // Operation already in progress
-	EINPROGRESS	= 115	, // Operation now in progress
-	ESTALE		= 116	, // Stale NFS file handle
-	EUCLEAN		= 117	, // Structure needs cleaning
-	ENOTNAM		= 118	, // Not a XENIX named type file
-	ENAVAIL		= 119	, // No XENIX semaphores available
-	EISNAM		= 120	, // Is a named type file
-	EREMOTEIO	= 121	, // Remote I/O error
+ NOERROR         = 0  ,
+ EPERM           = 1  , // Operation not permitted
+ ENOENT          = 2  , // No such file or directory
+ ESRCH           = 3  , // No such process
+ EINTR           = 4  , // Interrupted system call
+ EIO             = 5  , // I/O error
+ ENXIO           = 6  , // No such device or address
+ E2BIG           = 7  , // Arg list too long
+ ENOEXEC         = 8  , // Exec format error
+ EBADF           = 9  , // Bad file number
+ ECHILD          = 10 , // No child processes
+ EAGAIN          = 11 , // Try again
+ ENOMEM          = 12 , // Out of memory
+ EACCES          = 13 , // Permission denied
+ EFAULT          = 14 , // Bad address
+ ENOTBLK         = 15 , // Block device required
+ EBUSY           = 16 , // Device or resource busy
+ EEXIST          = 17 , // File exists
+ EXDEV           = 18 , // Cross-device link
+ ENODEV          = 19 , // No such device
+ ENOTDIR         = 20 , // Not a directory
+ EISDIR          = 21 , // Is a directory
+ EINVAL          = 22 , // Invalid argument
+ ENFILE          = 23 , // File table overflow
+ EMFILE          = 24 , // Too many open files
+ ENOTTY          = 25 , // Not a typewriter
+ ETXTBSY         = 26 , // Text file busy
+ EFBIG           = 27 , // File too large
+ ENOSPC          = 28 , // No space left on device
+ ESPIPE          = 29 , // Illegal seek
+ EROFS           = 30 , // Read-only file system
+ EMLINK          = 31 , // Too many links
+ EPIPE           = 32 , // Broken pipe
+ EDOM            = 33 , // Math argument out of domain of func
+ ERANGE          = 34 , // Math result not representable
+ EDEADLK         = 35 , // Resource deadlock would occur
+ ENAMETOOLONG    = 36 , // File name too long
+ ENOLCK          = 37 , // No record locks available
+ ENOSYS          = 38 , // Function not implemented
+ ENOTEMPTY       = 39 , // Directory not empty
+ ELOOP           = 40 , // Too many symbolic links encountered
+ EWOULDBLOCK     = 41 , // Operation would block
+ ENOMSG          = 42 , // No message of desired type
+ EIDRM           = 43 , // Identifier removed
+ ECHRNG          = 44 , // Channel number out of range
+ EL2NSYNC        = 45 , // Level 2 not synchronized
+ EL3HLT          = 46 , // Level 3 halted
+ EL3RST          = 47 , // Level 3 reset
+ ELNRNG          = 48 , // Link number out of range
+ EUNATCH         = 49 , // Protocol driver not attached
+ ENOCSI          = 50 , // No CSI structure available
+ EL2HLT          = 51 , // Level 2 halted
+ EBADE           = 52 , // Invalid exchange
+ EBADR           = 53 , // Invalid request descriptor
+ EXFULL          = 54 , // Exchange full
+ ENOANO          = 55 , // No anode
+ EBADRQC         = 56 , // Invalid request code
+ EBADSLT         = 57 , // Invalid slot
+ EDEADLOCK       = 58 , // File locking deadlock error
+ EBFONT          = 59 , // Bad font file format
+ ENOSTR          = 60 , // Device not a stream
+ ENODATA         = 61 , // No data available
+ ETIME           = 62 , // Timer expired
+ ENOSR           = 63 , // Out of streams resources
+ ENONET          = 64 , // Machine is not on the network
+ ENOPKG          = 65 , // Package not installed
+ EREMOTE         = 66 , // Object is remote
+ ENOLINK         = 67 , // Link has been severed
+ EADV            = 68 , // Advertise error
+ ESRMNT          = 69 , // Srmount error
+ ECOMM           = 70 , // Communication error on send
+ EPROTO          = 71 , // Protocol error
+ EMULTIHOP       = 72 , // Multihop attempted
+ EDOTDOT         = 73 , // RFS specific error
+ EBADMSG         = 74 , // Not a data message
+ EOVERFLOW       = 75 , // Value too large for defined data type
+ ENOTUNIQ        = 76 , // Name not unique on network
+ EBADFD          = 77 , // File descriptor in bad state
+ EREMCHG         = 78 , // Remote address changed
+ ELIBACC         = 79 , // Can not access a needed shared library
+ ELIBBAD         = 80 , // Accessing a corrupted shared library
+ ELIBSCN         = 81 , // .lib section in a.out corrupted
+ ELIBMAX         = 82 , // Attempting to link in too many shared libraries
+ ELIBEXEC        = 83 , // Cannot exec a shared library directly
+ EILSEQ          = 84 , // Illegal byte sequence
+ ERESTART        = 85 , // Interrupted system call should be restarted
+ ESTRPIPE        = 86 , // Streams pipe error
+ EUSERS          = 87 , // Too many users
+ ENOTSOCK        = 88 , // Socket operation on non-socket
+ EDESTADDRREQ    = 89 , // Destination address required
+ EMSGSIZE        = 90 , // Message too long
+ EPROTOTYPE      = 91 , // Protocol wrong type for socket
+ ENOPROTOOPT     = 92 , // Protocol not available
+ EPROTONOSUPPORT = 93 , // Protocol not supported
+ ESOCKTNOSUPPORT = 94 , // Socket type not supported
+ EOPNOTSUPP      = 95 , // Operation not supported on transport endpoint
+ EPFNOSUPPORT    = 96 , // Protocol family not supported
+ EAFNOSUPPORT    = 97 , // Address family not supported by protocol
+ EADDRINUSE      = 98 , // Address already in use
+ EADDRNOTAVAIL   = 99 , // Cannot assign requested address
+ ENETDOWN        = 100, // Network is down
+ ENETUNREACH     = 101, // Network is unreachable
+ ENETRESET       = 102, // Network dropped connection because of reset
+ ECONNABORTED    = 103, // Software caused connection abort
+ ECONNRESET      = 104, // Connection reset by peer
+ ENOBUFS         = 105, // No buffer space available
+ EISCONN         = 106, // Transport endpoint is already connected
+ ENOTCONN        = 107, // Transport endpoint is not connected
+ ESHUTDOWN       = 108, // Cannot send after transport endpoint shutdown
+ ETOOMANYREFS    = 109, // Too many references: cannot splice
+ ETIMEDOUT       = 110, // Connection timed out
+ ECONNREFUSED    = 111, // Connection refused
+ EHOSTDOWN       = 112, // Host is down
+ EHOSTUNREACH    = 113, // No route to host
+ EALREADY        = 114, // Operation already in progress
+ EINPROGRESS     = 115, // Operation now in progress
+ ESTALE          = 116, // Stale NFS file handle
+ EUCLEAN         = 117, // Structure needs cleaning
+ ENOTNAM         = 118, // Not a XENIX named type file
+ ENAVAIL         = 119, // No XENIX semaphores available
+ EISNAM          = 120, // Is a named type file
+ EREMOTEIO       = 121, // Remote I/O error
 };
 
+// https://android.googlesource.com/platform/bionic/+/master/libc/include/bits/signal_types.h
+enum ESignals
+{
+ SIGHUP    = 1,
+ SIGINT    = 2,
+ SIGQUIT   = 3,
+ SIGILL    = 4,
+ SIGTRAP   = 5,
+ SIGABRT   = 6,
+ SIGIOT    = 6,
+ SIGBUS    = 7,
+ SIGFPE    = 8,
+ SIGKILL   = 9,
+ SIGUSR1   = 10,
+ SIGSEGV   = 11,
+ SIGUSR2   = 12,
+ SIGPIPE   = 13,
+ SIGALRM   = 14,
+ SIGTERM   = 15,
+ SIGSTKFLT = 16,
+ SIGCHLD   = 17,
+ SIGCONT   = 18,
+ SIGSTOP   = 19,
+ SIGTSTP   = 20,
+ SIGTTIN   = 21,
+ SIGTTOU   = 22,
+ SIGURG    = 23,
+ SIGXCPU   = 24,
+ SIGXFSZ   = 25,
+ SIGVTALRM = 26,
+ SIGPROF   = 27,
+ SIGWINCH  = 28,
+ SIGIO     = 29,
+ SIGPOLL   = SIGIO,
+ SIGPWR    = 30,
+ SIGSYS    = 31,
+ SIGUNUSED = 31
+};
 
+// =========================================== FILE/DIRECTORY ===========================================
 // http://cqctworld.org/src/l1/lib/linux-x86-enum.names
 // https://man7.org/linux/man-pages/man2/open.2.html
 // https://docs.huihoo.com/doxygen/linux/kernel/3.7/include_2uapi_2asm-generic_2fcntl_8h.html
 // https://opensource.apple.com/source/xnu/xnu-344/bsd/sys/fcntl.h
 // https://github.com/dlang/druntime/blob/master/src/core/sys/posix/fcntl.d
 
+// MacOS: xnu-2422.1.72\bsd\dev\dtrace\scripts\io.d
+
+// Extended/sys-unsupported (for the Framework) flags are put in the high byte 
 enum EOpnFlg    // For 'flags' field    // Platform/Arch dependant?
+{               //      LINUX           BSD/MacOS
+  O_ACCMODE   = 0x00000003,    // Mask to test one of access modes: if((mode & O_ACCMODE) == O_RDONLY)
+  O_RDONLY    = 0x00000000,    // Open for reading only.
+  O_WRONLY    = 0x00000001,    // Open for writing only.
+  O_RDWR      = 0x00000002,    // Open for reading and writing.
+
+//O_SHLOCK    = 0x00000010,    // BSD/MacOS ???
+//O_EXLOCK    = 0x00000020,    // BSD/MacOS ???
+  O_ASYNC     = DCV< 0         , 0x00000040 >::V,    // Sends SIGIO or SIGPOLL
+  O_SYMLINK   = DCV< 0x80000000, 0x00200000 >::V,    // WinNT+: BSD/MacOS: allow open of symlinks: if the target file passed to open() is a symbolic link then the open() will be for the symbolic link itself, not what it links to.
+
+  O_CREAT     = DCV< 0x00000040, 0x00000200 >::V,    // If the file exists, this flag has no effect. Otherwise, the owner ID of the file is set to the user ID of the c_actor, the group ID of the file is set to the group ID of the c_actor, and the low-order 12 bits of the file mode are set to the value of mode.
+  O_EXCL      = DCV< 0x00000080, 0x00000800 >::V,    // Ensure that this call creates the file. If O_EXCL and O_CREAT are set, open will fail if the file exists. In general, the behavior of O_EXCL is undefined if it is used without O_CREAT
+
+  O_TRUNC     = DCV< 0x00000200, 0x00000400 >::V,    // If the file exists, its length is truncated to 0 and the mode and owner are unchanged.
+  O_APPEND    = DCV< 0x00000400, 0x00000008 >::V,    // If set, the file pointer will be set to the end of the file prior to each write.
+  O_NONBLOCK  = DCV< 0x00000800, 0x00000004 >::V,    // If O_NONBLOCK is set, the open will return without waiting for the device to be ready or available. Subsequent behavior of the device is device-specific.
+ // Additional:
+  O_DSYNC     = DCV< 0x00001000, 0          >::V,
+  O_DIRECT    = DCV< 0x00004000, 0          >::V,    // direct disk access hint
+  O_LARGEFILE = DCV< 0x00008000, 0          >::V,
+  O_DIRECTORY = DCV< 0x00010000, 0x00100000 >::V,    // must be a directory
+  O_NOFOLLOW  = DCV< 0x00020000, 0x00000100 >::V,    // don't follow links: if the target file passed to open() is a symbolic link then the open() will fail
+  O_NOATIME   = DCV< 0x00040000, 0          >::V,
+  O_CLOEXEC   = DCV< 0x00080000, 0x01000000 >::V,    // set close_on_exec    // DARWIN LEVEL >= 200809
+  O_PATH      = DCV< 0x00200000, 0          >::V,
+  O_TMPFILE   = DCV< 0x00410000, 0          >::V,    // Create an unnamed temporary regular file. The pathname argument specifies a directory; an unnamed inode will be created in that directory's filesystem.
+  O_SYNC      = DCV< 0x00101000, 0x00000080 >::V,    // By the time write(2) (or similar) returns, the output data and associated file metadata have been transferred to the underlying hardware (i.e., as though each write(2) was followed by a call to fsync(2))
+};
+
+// https://github.com/torvalds/linux/blob/master/include/uapi/linux/stat.h
+enum ENode     // for mknod
 {
- O_RDONLY    = 0x00000000,    // Open for reading only.
- O_WRONLY    = 0x00000001,    // Open for writing only.
- O_RDWR      = 0x00000002,    // Open for reading and writing.
+ S_IFMT   = 0x0000F000, // 00170000
+ S_IFSOCK = 0x0000C000, // 0140000
+ S_IFLNK     = 0x0000A000, // 0120000
+ S_IFREG  = 0x00008000, // 0100000
+ S_IFBLK  = 0x00006000, // 0060000
+ S_IFDIR  = 0x00004000, // 0040000
+ S_IFCHR  = 0x00002000, // 0020000
+ S_IFIFO  = 0x00001000, // 0010000
+// S_ISUID  = 0x00000800, // 0004000
+// S_ISGID  = 0x00000400, // 0002000
+// S_ISVTX  = 0x00000200, // 0001000
 
- O_CREAT     = 0x00000040,    // If the file exists, this flag has no effect. Otherwise, the owner ID of the file is set to the user ID of the c_actor, the group ID of the file is set to the group ID of the c_actor, and the low-order 12 bits of the file mode are set to the value of mode.
- O_EXCL      = 0x00000080,    // If O_EXCL and O_CREAT are set, open will fail if the file exists.
-
- O_NOCTTY    = 0x00000100,
- O_TRUNC     = 0x00000200,    // If the file exists, its length is truncated to 0 and the mode and owner are unchanged.
- O_APPEND    = 0x00000400,    // If set, the file pointer will be set to the end of the file prior to each write.
- O_NONBLOCK  = 0x00000800,    // If O_NONBLOCK is set, the open will return without waiting for the device to be ready or available. Subsequent behavior of the device is device-specific.
-// Additional:
- O_DSYNC     = 0x00001000,
- O_DIRECT    = 0x00004000,    // direct disk access hint
- O_LARGEFILE = 0x00008000,
- O_DIRECTORY = 0x00010000,    // must be a directory
- O_NOFOLLOW  = 0x00020000,    // don't follow links
- O_NOATIME   = 0x00040000,
- O_CLOEXEC   = 0x00080000,    // set close_on_exec
- O_PATH      = 0x00200000,
- O_TMPFILE   = 0x00410000,
- O_SYNC      = 0x00101000,
+//#define S_ISLNK(m)    (((m) & S_IFMT) == S_IFLNK)
+//#define S_ISREG(m)    (((m) & S_IFMT) == S_IFREG)
+//#define S_ISDIR(m)    (((m) & S_IFMT) == S_IFDIR)
+//#define S_ISCHR(m)    (((m) & S_IFMT) == S_IFCHR)
+//#define S_ISBLK(m)    (((m) & S_IFMT) == S_IFBLK)
+//#define S_ISFIFO(m)   (((m) & S_IFMT) == S_IFIFO)
+//#define S_ISSOCK(m)   (((m) & S_IFMT) == S_IFSOCK)
 };
 
 enum EMode
@@ -213,25 +313,15 @@ enum EMode
  S_ISUID = 0x00000800, // 04000 // set-user-ID bit
 };
 
-// Terminates the calling process "immediately".  Any open file descriptors belonging to the process are closed.  Any children of the process are inherited by init(1) (or by the nearest "subreaper" process as defined through the use of the prctl(2) PR_SET_CHILD_SUBREAPER operation).  The process's parent is sent a SIGCHLD signal.
-// The value status & 0xFF is returned to the parent process as the process's exit status, and can be collected by the parent using one of the wait(2) family of calls.
-// The raw _exit() system call terminates only the calling thread, and actions such as reparenting child processes or sending SIGCHLD to the parent process are performed only if this is the last thread in the thread group.
-static void PXCALL exit(int status);
-
-// This system call is equivalent to _exit(2) except that it terminates not only the calling thread, but all threads in the calling process's thread group.
-static void PXCALL exit_group(int status);
-
 // The path parameter points to a path name naming a file. The open function opens a file descriptor for the named file and sets the file status flags according to the value of oflag.
-static int PXCALL open(PCHAR pathname, int flags, mode_t mode);  // 'open(pathname, O_CREAT|O_WRONLY|O_TRUNC, mode)' is same as call to 'creat'
+static fdsc_t PXCALL open(PCCHAR pathname, int flags, mode_t mode);  // 'open(pathname, O_CREAT|O_WRONLY|O_TRUNC, mode)' is same as call to 'creat'
 
 // Equivalent to: open(path, O_WRONLY|O_CREAT|O_TRUNC, mode)
-static int PXCALL creat(const char *path, mode_t mode);    // Use it as fallback if a correct O_CREAT cannot be found
+//static int PXCALL creat(PCCHAR path, mode_t mode);    // Use it as fallback if a correct O_CREAT cannot be found
 
 // The fildes field contains a file descriptor obtained from an open(2POSIX), dup(2POSIX), accept(2POSIX), socket(2POSIX), or shm_open(2POSIX) system call. The close function closes the file descriptor indicated by fildes.
-static int PXCALL close(int fildes);
+static int PXCALL close(fdsc_t fd);
 
-// Creates a filesystem node (file, device special file, or named pipe) named pathname, with attributes specified by mode and dev.
-// static int PXCALL mknod(const char *pathname, mode_t mode, dev_t dev);
 
 struct iovec
 {
@@ -239,61 +329,163 @@ struct iovec
  SIZE_T iov_len;    // length
 };
 
+using PIOVec = SPTR<iovec,   PHT>;
+
 // Attempts to read nbytes of data from the object referenced by the descriptor d into the buffer pointed to by buf . readv() performs the same action, but scatters the input data into the iovcnt buffers specified by the members of the iov array: iov[0] , iov[1] , ..., iov[iovcnt-1] .
 // Upon successful completion, read() and readv() return the number of bytes actually read and placed in the buffer. The system guarantees to read the number of bytes requested if the descriptor references a normal file that contains that many bytes before the end-of-file, but in no other case. Upon end-of-file, 0 is returned. read() and readv() also return 0 if a non-blocking read is attempted on a socket that is no longer open. Otherwise, -1 is returned, and the global variable errno is set to indicate the error.
-static SSIZE_T PXCALL read(int fd, PVOID buf, SIZE_T nbytes);
-static SSIZE_T PXCALL readv(int fd, iovec* iov, int iovcnt);
+// return 0 is when the size argument was 0 or end-of-file has been reached
+// for pipes, end-of-file means the writing end of the pipe has been closed
+static SSIZE_T PXCALL read(fdsc_t fd, PVOID buf, SIZE_T nbytes);
+static SSIZE_T PXCALL readv(fdsc_t fd, PIOVec iov, int iovcnt);
 
 // Attempts to write nbytes of data to the object referenced by the descriptor d from the buffer pointed to by buf . writev() performs the same action, but gathers the output data from the iovcnt buffers specified by the members of the iov array: iov[0] , iov[1] , ..., iov[iovcnt-1] .
 // Upon successful completion, write() and writev() return the number of bytes actually written. Otherwise, they return -1 and set errno to indicate the error.
-static SSIZE_T PXCALL write(int fd, PVOID buf, SIZE_T nbytes);
-static SSIZE_T PXCALL writev(int fd, iovec* iov, int iovcnt);     // Windows: WriteFileGather
+static SSIZE_T PXCALL write(fdsc_t fd, PVOID buf, SIZE_T nbytes);
+static SSIZE_T PXCALL writev(fdsc_t fd, PIOVec iov, int iovcnt);     // Windows: WriteFileGather
 
 enum ESeek
 {
  SEEK_SET  = 0,       // Seek relative to begining of file
  SEEK_CUR  = 1,       // Seek relative to current file position
  SEEK_END  = 2,       // Seek relative to end of file
+
+ // Linux 3.1: SEEK_DATA, SEEK_HOLE
 };
 
 // Repositions the file offset of the open file description associated with the file descriptor fd to the argument offset according to the directive whence
-static SSIZE_T PXCALL lseek(int fd, SSIZE_T offset, int whence);
+static SSIZE_T PXCALL lseek(fdsc_t fd, SSIZE_T offset, ESeek whence);   // This definition is not good for X32, use UINT64 and llseek wrapper on X32
 
 // x32 only(Not present on x64)!
-static int PXCALL llseek(unsigned int fd, unsigned long offset_high, unsigned long offset_low, uint64* result, unsigned int whence);
+static int PXCALL llseek(fdsc_t fd, uint32 offset_high, uint32 offset_low, PUINT64 result, ESeek whence);
 
 // Attempts to create a directory named pathname.
-static int PXCALL mkdir(PCHAR pathname, mode_t mode);
+static int PXCALL mkdir(PCCHAR pathname, mode_t mode);
 
 // Deletes a name from the filesystem.  If that name was the last link to a file and no processes have the file open, the file is deleted and the space it was using is made available for reuse.
 // If the name was the last link to a file but any processes still have the file open, the file will remain in existence until the last file descriptor referring to it is closed.
 // If the name referred to a symbolic link, the link is removed.
 // If the name referred to a socket, FIFO, or device, the name for it is removed but processes which have the object open may continue to use it.
-static int PXCALL unlink(PCHAR pathname);
+static int PXCALL unlink(PCCHAR pathname);
 
 // Deletes a directory, which must be empty
-static int PXCALL rmdir(PCHAR pathname);
+static int PXCALL rmdir(PCCHAR pathname);
 
 // Renames a file, moving it between directories if required.  Any other hard links to the file (as created using link(2)) are unaffected.  Open file descriptors for oldpath are also unaffected.
-static int PXCALL rename(PCHAR oldpath, PCHAR newpath);
+static int PXCALL rename(PCCHAR oldpath, PCCHAR newpath);
 
 // Places the contents of the symbolic link pathname in the buffer buf, which has size bufsiz.  readlink() does not append a terminating null byte to buf.  It will (silently) truncate the contents (to a length of bufsiz characters), in case the buffer is too small to hold all of the contents.
 // On success return the number of bytes placed in buf. (If the returned value equals bufsiz, then truncation may have occurred.)
-static ssize_t PXCALL readlink(PCHAR pathname, PCHAR buf, SIZE_T bufsiz);
+static SSIZE_T PXCALL readlink(PCCHAR pathname, PCHAR buf, SIZE_T bufsiz);
 
-//TODO: 'int fcntl(int fd, int cmd, void* arg)' for a directory change notification
 
 enum EAcss
 {
- F_OK	=	0,   	// test for existence of file
- X_OK	=	0x01,	// test for execute or search permission
- W_OK	=	0x02,	// test for write permission
- R_OK	=	0x04,	// test for read permission
+ F_OK   =   0,      // test for existence of file
+ X_OK   =   0x01,   // test for execute or search permission
+ W_OK   =   0x02,   // test for write permission
+ R_OK   =   0x04,   // test for read permission
 };
 
 // Checks whether the calling process can access the file pathname.  If pathname is a symbolic link, it is dereferenced.
-static int PXCALL access(PCHAR pathname, int mode);
+static int PXCALL access(PCCHAR pathname, int mode);
 
+// Creates a filesystem node (file, device special file, or named pipe) named pathname, with attributes specified by mode and dev.
+static int PXCALL mknod(PCCHAR pathname, mode_t mode, dev_t dev);
+
+// Create a named pipe
+static int PXCALL mkfifo(PCCHAR pathname, mode_t mode);  // Not a syscall on linux and on BSD is just a wrapper for mknod
+
+// Create an unnamed pipe
+// pipefd[0] refers to the read end of the pipe.  pipefd[1] refers to the write end of the pipe.
+// NOTE: reading the read end of a pipe will return EOF when and only when all copies of the write end of the pipe are closed.
+static int PXCALL pipe(PINT32 fds);
+static int PXCALL pipe2(PINT32 pipefd, int flags);   // int pipefd[2]    // Is Linux-specific? On BSD since V10 (2014)
+
+// Uses the lowest-numbered unused descriptor for the new descriptor
+static int PXCALL dup(int oldfd);
+
+// Makes newfd be the copy of oldfd, closing newfd first if necessary
+// If oldfd is not a valid file descriptor, then the call fails, and newfd is not closed
+// If oldfd is a valid file descriptor, and newfd has the same value as oldfd, then dup2() does nothing, and returns newfd.
+static int PXCALL dup3(int oldfd, int newfd, int flags);
+
+enum EFcntl
+{
+ F_DUPFD         = 0,        // dup
+ F_GETFD         = 1,        // get close_on_exec
+ F_SETFD         = 2,        // set/clear close_on_exec
+ F_GETFL         = 3,        // get file->f_flags
+ F_SETFL         = 4,        // set file->f_flags
+
+ F_GETLK         = 5,
+ F_SETLK         = 6,
+ F_SETLKW        = 7,
+
+ F_SETOWN        = 8,        // for sockets
+ F_GETOWN        = 9,        // for sockets
+
+ F_SETSIG        = 10,       // for sockets
+ F_GETSIG        = 11,       // for sockets
+
+ F_NOTIFY          = 0x402,    // (F_LINUX_SPECIFIC_BASE + 2)
+ F_DUPFD_CLOEXEC   = 0x406     // (F_LINUX_SPECIFIC_BASE + 6),  // F_LINUX_SPECIFIC_BASE = 1024,
+};
+
+enum EDNotify  // Types of directory notifications that may be requested with fcntl
+{
+ DN_ACCESS     = 0x00000001,   // File accessed
+ DN_MODIFY     = 0x00000002,   // File modified
+ DN_CREATE     = 0x00000004,   // File created
+ DN_DELETE     = 0x00000008,   // File removed
+ DN_RENAME     = 0x00000010,   // File renamed
+ DN_ATTRIB     = 0x00000020,   // File changed attibutes
+ DN_MULTISHOT  = 0x80000000    // Don't remove notifier
+};
+
+static int PXCALL fcntl(fdsc_t fd, int cmd, SIZE_T arg);  // for a directory change notification (lagacy, Linux only) : https://linux.die.net/man/7/inotify
+
+enum EFDLock
+{
+ LOCK_SH    = 1,    // Shared lock
+ LOCK_EX    = 2,    // Exclusive lock
+ LOCK_NB    = 4,    // Or'd with one of the above to prevent blocking
+ LOCK_UN    = 8  // Remove lock
+};
+
+static int PXCALL fsync(fdsc_t fd);
+
+static int PXCALL fdatasync(fdsc_t fd);
+
+static int PXCALL flock(fdsc_t fd, int operation);
+
+
+/*typedef long  suseconds_t;    // signed # of microseconds
+struct timeval
+{
+ time_t      tv_sec;   // seconds
+ suseconds_t tv_usec;  // microseconds
+};*/
+
+struct pollfd
+{
+ int   fd;         // file descriptor
+ short events;     // requested events
+ short revents;    // returned events
+};
+
+struct fd_set     // Each bit represents a triggered file descriptor. Total bits is max file descriptors range which is passed in nfds
+{
+ static const int BitsPerElem = (sizeof(size_t)*8);
+ size_t fds_bits[1024 / BitsPerElem];  // long x64=64,x32=32 // FD_SET // Max possible file descriptors is 4096(Hard limit) and max 1024 per process (Soft limit)
+};
+// typedef size_t fd_set[1024 / sizeof(size_t)];
+
+using nfds_t = uint32;
+static int PXCALL poll(pollfd* fds, nfds_t nfds, int timeout);   // Volatile (Flags only?)
+
+// https://unix.stackexchange.com/questions/84227/limits-on-the-number-of-file-descriptors
+// https://stackoverflow.com/questions/18952564/understanding-fd-set-in-unix-sys-select-h
+//static int PXCALL select(int nfds, fd_set* readfds, fd_set* writefds, fd_set* exceptfds, timeval* timeout);    // Volatile and complicated   // Ignore it completely, poll is just faster because there is no need to parse bitfields
 
 // /arch/{ARCH}/include/uapi/asm/stat.h
 // https://stackoverflow.com/questions/29249736/what-is-the-precise-definition-of-the-structure-passed-to-the-stat-system-call
@@ -307,7 +499,7 @@ struct SFStat    // Too volatile to use crossplatform?
  unsigned int  de;        // inode protection mode
  unsigned int  st_uid;    // user ID of the file's owner
  unsigned int  st_gid;    // group ID of the file's group
- unsigned int  __pad0;
+ unsigned int  _pad0;
  SSIZE_T     st_rdev;
  SSIZE_T     st_size;     // file size, in bytes
  SSIZE_T     st_blksize;  // optimal blocksize for I/O
@@ -319,13 +511,52 @@ struct SFStat    // Too volatile to use crossplatform?
  SIZE_T    st_mtime_nsec;
  SIZE_T    st_ctime;      // time of last file status change
  SIZE_T    st_ctime_nsec;
- SSIZE_T   __unused[3];
+ SSIZE_T   _unused[3];
 };
 
-static int PXCALL stat(PCHAR path, SFStat* buf);    // stat64 for x32 only
-static int PXCALL fstat(int fildes, SFStat* buf);   // fstat64 for x32 only
+/*
+struct stat {
+    dev_t     st_dev;     // ID of device containing file
+    ino_t     st_ino;     // inode number
+    mode_t    st_mode;    // protection
+    nlink_t   st_nlink;   // number of hard links
+    uid_t     st_uid;     // user ID of owner
+    gid_t     st_gid;     // group ID of owner
+    dev_t     st_rdev;    // device ID (if special file)
+    off_t     st_size;    // total size, in bytes
+    blksize_t st_blksize; // blocksize for file system I/O
+    blkcnt_t  st_blocks;  // number of 512B blocks allocated
+    time_t    st_atime;   // time of last access
+    time_t    st_mtime;   // time of last modification
+    time_t    st_ctime;   // time of last status change
+};
+*/
 
-enum EMProt
+using PFStat = SPTR<SFStat, PHT>;
+
+static int PXCALL stat(PCCHAR path, PFStat buf);    // stat64 for x32 only
+static int PXCALL fstat(int fildes, PFStat buf);   // fstat64 for x32 only
+
+enum EATExtra
+{
+ AT_FDCWD            = DCV< (uint)-100, (uint)-2 >::V,  // Special value used to indicate openat should use the current working directory.
+ AT_SYMLINK_NOFOLLOW = DCV< 0x100, 0x0020 >::V,  // Do not follow symbolic links.
+ AT_REMOVEDIR        = DCV< 0x200, 0x0080 >::V,  // Remove directory instead of unlinking file.
+ AT_SYMLINK_FOLLOW   = DCV< 0x400, 0x0040 >::V,  // Follow symbolic links.
+};
+
+// New, For Arm64
+static int PXCALL openat(int dirfd, PCCHAR pathname, int flags, mode_t mode);
+static int PXCALL mknodat(int dirfd, PCCHAR pathname, mode_t mode, dev_t dev);
+static int PXCALL mkdirat(int dirfd, PCCHAR pathname, mode_t mode);
+static int PXCALL unlinkat(int dirfd, PCCHAR pathname, int flags);
+static int PXCALL renameat(int olddirfd, PCCHAR oldpath, int newdirfd, PCCHAR newpath);
+static int PXCALL readlinkat(int dirfd, PCCHAR pathname, PCHAR buf, SIZE_T bufsiz);
+static int PXCALL faccessat(int dirfd, PCCHAR pathname, int mode, int flags);
+static int PXCALL fstatat(int dirfd, PCCHAR pathname, PFStat buf, int flags);
+
+// =========================================== MEMORY ===========================================
+enum EMapProt
 {
  PROT_NONE  = 0x00,    // Page can not be accessed.
  PROT_READ  = 0x01,    // Page can be read.
@@ -337,6 +568,8 @@ enum EMProt
 // On success, mprotect() and pkey_mprotect() return zero.  On error, these system calls return -1, and errno is set to indicate the error.
 static int PXCALL mprotect(PVOID addr, SIZE_T len, int prot);
 
+// https://github.com/nneonneo/osx-10.9-opensource/blob/master/xnu-2422.1.72/bsd/sys/mman.h#L150     // <<<<<<<<<<<<<<< Not match!
+//
 enum EMapFlg
 {
  MAP_TYPE       = 0x0f,                // Mask for type of mapping.
@@ -345,66 +578,333 @@ enum EMapFlg
  MAP_PRIVATE    = 0x02,                // Changes are private.
 
  MAP_FIXED      = 0x10,                // Interpret addr exactly.
- MAP_ANONYMOUS  = 0x20,                // Don't use a file.
- MAP_32BIT      = 0x40,                // Only give out 32-bit addresses.
+ MAP_ANONYMOUS  = DCV< 0x20, 0x1000  >::V,                 // Don't use a file.  // BSD?
+ MAP_ANON           = MAP_ANONYMOUS,          // allocated from memory, swap space
+ MAP_32BIT      = DCV< 0x40, 0x8000  >::V,                 // Only give out 32-bit addresses(< 4GB). // BSD?
+ MAP_FILE       = 0x00,                // map from file (default)
 
+ MAP_GROWSDOWN  = DCV< 0x00100, 0  >::V,              // Stack-like segment.
+ MAP_LOCKED     = DCV< 0x02000, 0  >::V,              // Lock the mapping.
+ MAP_NORESERVE  = DCV< 0x04000, 0x0040 >::V,          // Don't check for reservations.
+ MAP_POPULATE   = DCV< 0x08000, 0  >::V,              // Populate (prefault) pagetables.
+ MAP_NONBLOCK   = DCV< 0x10000, 0  >::V,              // Do not block on IO.
+ MAP_STACK      = DCV< 0x20000, 0  >::V,              // Allocation is for a stack.
+ MAP_HUGETLB    = DCV< 0x40000, 0  >::V,              // arch specific
+ MAP_SYNC       = DCV< 0x80000, 0  >::V,              // perform synchronous page faults for the mapping
+ MAP_JIT        = DCV< 0,  0x0800    >::V, // MacOS only // Allocate a region that will be used for JIT purposes  // BSD?
+ MAP_NOCACHE    = DCV< 0,  0x0400    >::V, // don't cache pages for this mapping
 
- MAP_GROWSDOWN   = 0x00100,                // Stack-like segment.
- MAP_DENYWRITE   = 0x00800,                // ETXTBSY
- MAP_EXECUTABLE  = 0x01000,                // Mark it as an executable.
- MAP_LOCKED      = 0x02000,                // Lock the mapping.
- MAP_NORESERVE   = 0x04000,                // Don't check for reservations.
- MAP_POPULATE    = 0x08000,                // Populate (prefault) pagetables.
- MAP_NONBLOCK    = 0x10000,                // Do not block on IO.
- MAP_STACK       = 0x20000,                // Allocation is for a stack.
- MAP_HUGETLB     = 0x40000,                // arch specific
- MAP_SYNC        = 0x80000,                // perform synchronous page faults for the mapping
+ MAP_UNINITIALIZED = DCV< 0x4000000, 0 >::V,
 
- MAP_UNINITIALIZED = 0x4000000,
+// MacOS: MAP_RESILIENT_MEDIA=0x4000, MAP_RESILIENT_CODESIGN=0x2000
 };
 
 // Provides the same interface as mmap, except that the final argument specifies the offset into the file in 4096-byte units
-static PVOID PXCALL mmap2(PVOID addr, SIZE_T length, int prot, int flags, int fd, SIZE_T pgoffset);	  // This system call does not exist on x86-64 and ARM64
+static PVOID PXCALL mmapGD(PVOID addr, SIZE_T length, uint prot, uint flags, int fd, uint64 pgoffset);    // Generic definition for x32/x64
+
+static PVOID PXCALL mmap2(PVOID addr, SIZE_T length, uint prot, uint flags, int fd, SIZE_T pgoffset);     // This system call does not exist on x86-64 and ARM64
 
 // Creates a new mapping in the virtual address space of the calling process.
 // Offset must be a multiple of the page size
 // Check a returned addr as ((size_t)addr & 0xFFF) and if it is non zero then we have an error code which we red as -((ssize_t)addr)
-static PVOID PXCALL mmap(PVOID addr, SIZE_T length, int prot, int flags, int fd, SIZE_T offset);     // Last 4 args are actually int32 (on x64 too!)	 // Since kernel 2.4 glibc mmap() invokes mmap2 with an adjusted value for offset
+static PVOID PXCALL mmap(PVOID addr, SIZE_T length, uint prot, uint flags, int fd, SIZE_T offset);     // Last 4 args are actually int32 (on x64 too!)   // Since kernel 2.4 glibc mmap() invokes mmap2 with an adjusted value for offset
 
 // Deletes the mappings for the specified address range, and causes further references to addresses within the range to generate invalid memory references.
 // The address addr must be a multiple of the page size (but length need not be).
 static int   PXCALL munmap(PVOID addr, SIZE_T length);
 
+static constexpr const int MREMAP_MAYMOVE = 1;
+static constexpr const int MREMAP_FIXED   = 2;
+
+static PVOID PXCALL mremap(PVOID old_address, SIZE_T old_size, SIZE_T new_size, int flags, PVOID new_address);   // LINUX specific
+
 enum EMadv
 {
- MADV_NORMAL    =      0,        // No further special treatment.
- MADV_RANDOM     =     1,        // Expect random page references.
- MADV_SEQUENTIAL = 2,        // Expect sequential page references.
- MADV_WILLNEED      =    3,        // Will need these pages.
- MADV_DONTNEED   =       4,        // Don't need these pages.
- MADV_FREE       =   8,        // Free pages only if memory pressure.
+ MADV_NORMAL      = 0,         // No further special treatment.
+ MADV_RANDOM      = 1,         // Expect random page references.
+ MADV_SEQUENTIAL  = 2,         // Expect sequential page references.
+ MADV_WILLNEED    = 3,         // Will need these pages.
+ MADV_DONTNEED    = 4,         // Don't need these pages.
+ MADV_FREE        = DCV< 8,   5 >::V,      // Free pages only if memory pressure(or immediately?).
 // Linux-cpecific
- MADV_REMOVE       =   9,        // Remove these pages and resources.
- MADV_DONTFORK      =    10,        // Do not inherit across fork.
- MADV_DOFORK        =  11,        // Do inherit across fork.
- MADV_MERGEABLE       =   12,        // KSM may merge identical pages.
- MADV_UNMERGEABLE = 13,        // KSM may not merge identical pages.
- MADV_HUGEPAGE       =   14,        // Worth backing with hugepages.
- MADV_NOHUGEPAGE  = 15,        // Not worth backing with hugepages.
- MADV_DONTDUMP       =   16,    // Explicity exclude from the core dump, overrides the coredump filter bits.
- MADV_DODUMP        =  17,        // Clear the MADV_DONTDUMP flag.
- MADV_WIPEONFORK = 18,        // Zero memory on fork, child only.
- MADV_KEEPONFORK = 19,        // Undo MADV_WIPEONFORK.
- MADV_HWPOISON       =   100,        // Poison a page for testing.
+ MADV_REMOVE      = DCV< 9,   0 >::V,      // Remove these pages and resources.
+ MADV_DONTFORK    = DCV< 10,  0 >::V,      // Do not inherit across fork.
+ MADV_DOFORK      = DCV< 11,  0 >::V,      // Do inherit across fork.
+ MADV_MERGEABLE   = DCV< 12,  0 >::V,      // KSM may merge identical pages.
+ MADV_UNMERGEABLE = DCV< 13,  0 >::V,      // KSM may not merge identical pages.
+ MADV_HUGEPAGE    = DCV< 14,  0 >::V,      // Worth backing with hugepages.
+ MADV_NOHUGEPAGE  = DCV< 15,  0 >::V,      // Not worth backing with hugepages.
+ MADV_DONTDUMP    = DCV< 16,  0 >::V,      // Explicity exclude from the core dump, overrides the coredump filter bits.
+ MADV_DODUMP      = DCV< 17,  0 >::V,      // Clear the MADV_DONTDUMP flag.
+ MADV_WIPEONFORK  = DCV< 18,  0 >::V,      // Zero memory on fork, child only.
+ MADV_KEEPONFORK  = DCV< 19,  0 >::V,      // Undo MADV_WIPEONFORK.
+ MADV_HWPOISON    = DCV< 100, 0 >::V,      // Poison a page for testing.
 };
 
 // Used to give advice or directions to the kernel about the address range beginning at address addr and with size length bytes In most cases, the goal of such advice is to improve system or application performance.
-static int PXCALL madvise(PVOID addr, SIZE_T length, int advice);
+static int PXCALL madvise(PVOID addr, SIZE_T length, EMadv advice);
 
+// =========================================== SOCKET ==================================
+enum ESockCall  // socketcall calls  (x86_32 only)
+{
+ SYS_SOCKET      = 1,
+ SYS_BIND        = 2,
+ SYS_CONNECT     = 3,
+ SYS_LISTEN      = 4,
+ SYS_ACCEPT      = 5,
+ SYS_GETSOCKNAME = 6,
+ SYS_GETPEERNAME = 7,
+ SYS_SOCKETPAIR  = 8,
+ SYS_SEND        = 9,
+ SYS_RECV        = 10,
+ SYS_SENDTO      = 11,
+ SYS_RECVFROM    = 12,
+ SYS_SHUTDOWN    = 13,
+ SYS_SETSOCKOPT  = 14,
+ SYS_GETSOCKOPT  = 15,
+ SYS_SENDMSG     = 16,
+ SYS_RECVMSG     = 17,
+ SYS_ACCEPT4     = 18,
+ SYS_RECVMMSG    = 19,
+ SYS_SENDMMSG    = 20
+};
+
+enum EShtdn
+{
+ SHUT_RD,
+ SHUT_WR,
+ SHUT_RDWR
+};
+
+enum ESockDomain
+{
+ AF_UNSPEC     = 0,
+ AF_UNIX            = 1,    // Unix domain sockets (local pipes)
+ AF_INET            = 2,    // Internet IP Protocol
+// AF_AX25       =  3,  // Amateur Radio AX.25
+// AF_IPX         = 4,  // Novell IPX
+// AF_APPLETALK = 5,    // Appletalk DDP
+//  AF_NETROM      = 6, // Amateur radio NetROM
+// AF_BRIDGE       = 7, // Multiprotocol bridge
+// AF_AAL5       =  8,  // Reserved for Werner's ATM
+// AF_X25       =   9,  // Reserved for X.25 project
+ AF_INET6       = DCV< 10,  30  >::V, // IP version 6  // Linux 10 ?
+// AF_MAX         = 12, // For now..
+};
+
+enum ESockType
+{
+ SOCK_STREAM       = 1,  // stream socket
+ SOCK_DGRAM     = 2,  // datagram socket
+ SOCK_RAW         = 3,  // raw-protocol interface
+ SOCK_RDM         = 4,  // reliably-delivered message
+ SOCK_SEQPACKET = 5,  // sequenced packet stream
+ SOCK_PACKET       = DCV< 10, 0 >::V,
+};
+
+enum ESockProto
+{
+ IPPROTO_IP   = 0,      // dummy for IP
+ IPPROTO_ICMP = 1,      // control message protocol
+ IPPROTO_IGMP = 2,      // group management protocol
+ IPPROTO_GGP  = 3,      // gateway^2 (deprecated)
+ IPPROTO_IPV4 = 4,      // IPv4 encapsulation
+ IPPROTO_IPIP = IPPROTO_IPV4,    //for compatibility
+ IPPROTO_TCP  = 6,      // tcp    // This is what you need in most cases
+ IPPROTO_PUP  = 12,     // pup
+ IPPROTO_UDP  = 17,     // user datagram protocol
+ IPPROTO_IDP  = 22,     // xns idp
+ IPPROTO_ND   = 77,     // UNOFFICIAL net disk proto
+
+ IPPROTO_RAW  = 255,    // raw IP packet
+ IPPROTO_MAX  = 256
+};
+
+enum ESockOpt
+{
+ SO_DEBUG      = 0x0001,          // turn on debugging info recording
+ SO_ACCEPTCONN = 0x0002,          // socket has had listen()
+ SO_REUSEADDR  = 0x0004,          // allow local address reuse
+ SO_KEEPALIVE  = 0x0008,          // keep connections alive
+ SO_DONTROUTE  = 0x0010,          // just use interface addresses
+ SO_BROADCAST  = 0x0020,          // permit sending of broadcast msgs
+};
+
+using socklen_t = int;   // Should be same size as int, not size_t
+
+// The format and size of the address is usually protocol specific.
+struct sockaddr
+{
+ uint16 sa_family;           // address family, AF_xxx
+ uint8  sa_data[14];         // 14 bytes of protocol address
+};
+
+struct msghdr
+{
+ PVOID      msg_name;       // Optional address
+ socklen_t  msg_namelen;    // Size of address
+ PIOVec     msg_iov;        // Scatter/gather array
+ SIZE_T     msg_iovlen;     // # elements in msg_iov
+ PVOID      msg_control;    // Ancillary data, see below
+ SIZE_T     msg_controllen; // Ancillary data buffer len
+ int        msg_flags;      // Flags on received message
+};
+
+using PMsgHdr    = SPTR<msghdr,   PHT>;
+using PSockAddr  = SPTR<sockaddr, PHT>;
+using PSockLent  = SPTR<socklen_t,PHT>;
+
+static int PXCALL socketcall(int call, unsigned long *args);    // Deprecated?
+
+static int PXCALL socket(ESockDomain domain, ESockType type, ESockProto protocol);
+static int PXCALL connect(int sockfd, PSockAddr addr, socklen_t addrlen);
+static int PXCALL bind(int sockfd, PSockAddr addr, socklen_t addrlen);
+static int PXCALL accept(int sockfd, PSockAddr addr, PSockLent addrlen);
+static int PXCALL accept4(int sockfd, PSockAddr addr, PSockLent addrlen, int flags=0);  // Linux x32   // INTERNAL
+static int PXCALL listen(int sockfd, int backlog);
+static int PXCALL shutdown(int sockfd, int how);
+
+static int PXCALL getsockopt(int sockfd, int level, int optname, PVOID optval, PSockLent optlen);
+static int PXCALL setsockopt(int sockfd, int level, int optname, PVOID optval, socklen_t optlen);
+
+// With zero flags read and write can be used instead of recv and send.
+static SSIZE_T PXCALL send(int sockfd, PVOID buf, size_t len, int flags);
+static SSIZE_T PXCALL sendto(int sockfd, PVOID buf, size_t len, int flags, PSockAddr dest_addr, socklen_t addrlen);
+static SSIZE_T PXCALL sendmsg(int sockfd, PMsgHdr msg, int flags);
+
+static SSIZE_T PXCALL recv(int sockfd, PVOID buf, size_t len, int flags);
+static SSIZE_T PXCALL recvfrom(int sockfd, PVOID buf, size_t len, int flags, PSockAddr src_addr, PSockLent addrlen);
+static SSIZE_T PXCALL recvmsg(int sockfd, PMsgHdr msg, int flags);
+
+// =========================================== PROCESS/THREAD/DEBUG ===========================================
+// Terminates the calling process "immediately".  Any open file descriptors belonging to the process are closed.  Any children of the process are inherited by init(1) (or by the nearest "subreaper" process as defined through the use of the prctl(2) PR_SET_CHILD_SUBREAPER operation).  The process's parent is sent a SIGCHLD signal.
+// The value status & 0xFF is returned to the parent process as the process's exit status, and can be collected by the parent using one of the wait(2) family of calls.
+// The raw _exit() system call terminates only the calling thread, and actions such as reparenting child processes or sending SIGCHLD to the parent process are performed only if this is the last thread in the thread group.
+static void PXCALL exit(int status);
+
+// This system call is equivalent to _exit(2) except that it terminates not only the calling thread, but all threads in the calling process's thread group.
+static void PXCALL exit_group(int status);
+
+// returns the caller's thread ID (TID). In a single-threaded process, the thread ID is equal to the process ID (PID, as returned by getpid(2)).
+// In a multithreaded process, all threads have the same PID, but each one has a unique TID.
+static pid_t PXCALL gettid(void);      // Linux specific // MacOS have gettid name but it is related to user groups  // use pthread_self which usually a pointer or other big number
+// returns the process ID (PID) of the calling process.
+static pid_t PXCALL getpid(void);
+// returns the process ID of the parent of the calling process.  This will be either the ID of the process that created this process using fork(),
+// or, if that process has already terminated, the ID of the process to which this process has been reparented (either init(1) or a "subreaper" process defined via the prctl(2) PR_SET_CHILD_SUBREAPER operation).
+// If the caller's parent is in a different PID namespace (see pid_namespaces(7)), getppid() returns 0.
+static pid_t PXCALL getppid(void);
+
+// get the process group ID of the calling process
+static pid_t PXCALL getpgrp(void);    // Deprecated on ARM64
+
+static pid_t PXCALL getpgid(pid_t pid);
+
+// For job control
+// If pgid is zero, then the PGID of the process specified by pid is made the same as its process ID
+static int   PXCALL setpgid(pid_t pid, pid_t pgid);
+
+// On success, the PID of the child process is returned in the parent, and 0 is returned in the child.  On failure, -1 is returned in the parent, no child process is created
+static pid_t PXCALL vfork(void);
+static pid_t PXCALL fork(void);
+
+// The kill() system call can be used to send any signal to any process group or process.
+static int   PXCALL kill(pid_t pid, int sig);
+
+// A child created via fork(2) inherits its parent's process group ID.  The PGID is preserved across an execve(2).
+static int   PXCALL execve(PCCHAR pathname, PPCHAR argv, PPCHAR envp);
+// prctl is Linux only
+
+enum ECloneFlags
+{
+ CLONE_SIGMSK         = 0x000000ff, // signal mask to be sent at exit
+ CLONE_VM             = 0x00000100, // set if VM shared between processes
+ CLONE_FS             = 0x00000200, // set if fs info shared between processes
+ CLONE_FILES          = 0x00000400, // set if open files shared between processes
+ CLONE_SIGHAND        = 0x00000800, // set if signal handlers and blocked signals shared
+ CLONE_PIDFD          = 0x00001000, // set if a pidfd should be placed in parent
+ CLONE_PTRACE         = 0x00002000, // set if we want to let tracing continue on the child too
+ CLONE_VFORK          = 0x00004000, // set if the parent wants the child to wake it up on mm_release (execution of the calling process is suspended)
+ CLONE_PARENT         = 0x00008000, // set if we want to have the same parent as the cloner
+ CLONE_THREAD         = 0x00010000, // Same thread group?
+ CLONE_NEWNS          = 0x00020000, // New mount namespace group
+ CLONE_SYSVSEM        = 0x00040000, // share system V SEM_UNDO semantics
+ CLONE_SETTLS         = 0x00080000, // create a new TLS for the child
+ CLONE_PARENT_SETTID  = 0x00100000, // set the TID in the parent
+ CLONE_CHILD_CLEARTID = 0x00200000, // clear the TID in the child
+ CLONE_DETACHED       = 0x00400000, // Unused, ignored
+ CLONE_UNTRACED       = 0x00800000, // set if the tracing process can't force CLONE_PTRACE on this clone
+ CLONE_CHILD_SETTID   = 0x01000000, // set the TID in the child
+ CLONE_NEWCGROUP      = 0x02000000, // New cgroup namespace
+ CLONE_NEWUTS         = 0x04000000, // New utsname namespace
+ CLONE_NEWIPC         = 0x08000000, // New ipc namespace
+ CLONE_NEWUSER        = 0x10000000, // New user namespace
+ CLONE_NEWPID         = 0x20000000, // New pid namespace
+ CLONE_NEWNET         = 0x40000000, // New network namespace
+ CLONE_IO             = 0x80000000, // Clone io context
+};
+// https://github.com/raspberrypi/linux/blob/rpi-5.15.y/kernel/fork.c
+// It returns 0 in the child process and returns the PID of the child in the parent.
+static pid_t  PXCALL cloneB0(uint32 flags, PVOID newsp, PINT32 parent_tid, PINT32 child_tid, unsigned long tls);  // Linux specific  // x86-x64, ...
+static pid_t  PXCALL cloneB1(uint32 flags, PVOID newsp, PINT32 parent_tid, unsigned long tls, PINT32 child_tid);  // Linux specific  // x86-32, ARM32, ARM64, ...
+
+// Spawn a new process
+// Default format of siofd is {oldfd,newfd,...,-1}
+// NOTE: Values other than -1 can be used in the future to do some actions between vfork and execve in format {ACTIONID1,OPTVAL1,...OPTVALN,ACTIONID2,OPTVAL,ACTIONID3,-1}
+// See posix_spawn for actions that may be required
+static pid_t  PXCALL spawn(PCCHAR path, PPCHAR argv, PPCHAR envp, PINT32 siofd, uint32 flags);    // Improvised  // int siofd[3]{STDIN,STDOUT,STDERR} // Flags are additional flags for Clone, unused for now
+
+
+enum EThDefs
+{
+ THD_MAX_MMGRS   = 4,
+ THD_MAX_USR_TLS = 32
+};
+
+// This thread context is allocated on stack, no separate TLS memory block is used
+// Need some means to retrieve its pointer without conflicts with usual TLS mechanisms to allow libc coexist with the framework
+//
+struct SThCtx
+{
+ PVOID  Self;  // Points to this SThCtx
+ PVOID  StkBase;
+ SIZE_T StkSize;
+ pid_t  GroupID;     // Can be changed with setpgid
+ pid_t  ThreadID;    // May be equal ProcesssID?
+ pid_t  ProcesssID;
+ PVOID  MMPtrs[THD_MAX_MMGRS];      // For thread local memory managers (mempool)
+ PVOID  UsrTls[THD_MAX_USR_TLS];
+};
+
+using ThreadProc = SIZE_T (_scall *)(PVOID);
+
+static pid_t  PXCALL thread(ThreadProc* Proc, PVOID Arg, uint32 Flags, SIZE_T StkSize);  // Improvised
+
+static constexpr const int  WNOHANG       = 1;  // Don't block waiting.
+static constexpr const int  WUNTRACED    = 2;   // Report status of stopped children.
+static constexpr const int  WCONTINUED = 3; // Return if a stopped child has been resumed by delivery of SIGCONT
+
+static constexpr _finline int32 WEXITSTATUS(int32 s) {return (((s) & 0xff00) >> 8);}
+static constexpr _finline int32 WTERMSIG(int32 s) {return ((s) & 0x7f);}
+static constexpr _finline int32 WSTOPSIG(int32 s) {return WEXITSTATUS(s);}
+static constexpr _finline bool  WCOREDUMP(int32 s) {return ((s) & 0x80);}
+static constexpr _finline bool  WIFEXITED(int32 s) {return (!WTERMSIG(s));}
+static constexpr _finline bool  WIFSTOPPED(int32 s){return  ((short)((((s)&0xffff)*0x10001U)>>8) > 0x7f00);}
+static constexpr _finline bool  WIFSIGNALED(int32 s) {return (((s)&0xffff)-1U < 0xffu);}
+static constexpr _finline bool  WIFCONTINUED(int32 s) {return ((s) == 0xffff);}
+
+/*
+A child that terminates, but has not been waited for becomes a "zombie". The kernel maintains a minimal set of information about the
+zombie process (PID, termination status, resource usage information) in order to allow the parent to later perform a wait to obtain
+information about the child. As long as a zombie is not removed from the system via a wait, it will consume a slot in the kernel
+process table, and if this table fills, it will not be possible to create further processes. If a parent process terminates,
+then its "zombie" children (if any) are adopted by init(8), which automatically performs a wait to remove the zombies.
+*/
+static pid_t  PXCALL wait4(pid_t pid, PINT32 wstatus, int options, PVOID rusage);
+//static int    PXCALL waitid(idtype_t idtype, id_t id, siginfo_t *infop, int options);   // Later
 
 };
 
-using PX = NPOSIX<uint>;
+using PX   = NPOSIX<uint>;   // Current build
+using PX64 = NPOSIX<uint64>;
 //============================================================================================================
-
-

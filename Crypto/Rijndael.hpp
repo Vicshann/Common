@@ -210,7 +210,7 @@ auto Mul4 = [&log, &alog](int a, unsigned char b[]) -> int // Convenience method
 public:	
 CRijndael(int iMode=ECB, int keylen=16, int blklen=16)   // Default is AES // Memset this to 0?
 {
- this->KeyLength = (keylen >= 128)?(keylen / 8):keylen;  // Key Length   // Defining its here will cause many functions to be templated and the code will bloat but for speed and protection it is better
+ this->KeyLength = (keylen >= 128)?(keylen / 8):keylen;  // Key Length     // Defining its here will cause many functions to be templated and the code will bloat but for speed and protection it is better
  this->BlockSize = (blklen >= 128)?(blklen / 8):blklen;  // Block Size
  this->RoundsNum = (KeyLength == 16)?((BlockSize == 16) ? 10 : (BlockSize == 24 ? 12 : 14)):((KeyLength == 24)?((BlockSize != 32) ? 12 : 14):(14));	
  this->iMode     = iMode;
@@ -394,7 +394,7 @@ void Decrypt(unsigned char* in, unsigned char* out, size_t n)
      BYTE Temp[MAX_BLOCK_SIZE];
      for(size_t i=0,e=n/BlockSize;i < e; i++, in += BlockSize, out += BlockSize)
       {
-       memcpy(Temp, in, BlockSize);      // Save it for naxt a block
+       memcpy(Temp, in, BlockSize);      // Save it for next a block
        this->DecryptBlock(in, out);      // Mods IN/OUT
        XorBlk(out, m_chain, BlockSize);
        memcpy(m_chain, Temp, BlockSize);

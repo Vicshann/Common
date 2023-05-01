@@ -211,7 +211,7 @@ static NTSTATUS CreateNtObjDirectory(PWSTR ObjDirName, PHANDLE phDirObj)   // Cr
  SECURITY_DESCRIPTOR  sd = {SECURITY_DESCRIPTOR_REVISION, 0, 4};    // NULL security descriptor: InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION); SetSecurityDescriptorDacl(&sd, TRUE, NULL, FALSE);
  OBJECT_ATTRIBUTES oattr = { sizeof(OBJECT_ATTRIBUTES), 0, &ObjectNameUS, OBJ_CASE_INSENSITIVE|OBJ_OPENIF, &sd };
  UINT Length = 1;   
- for(int idx=0;*ObjDirName;ObjDirName++)Path[Length++] = *ObjDirName;
+ for(;*ObjDirName;ObjDirName++)Path[Length++] = *ObjDirName;
  ObjectNameUS.Buffer = Path;
  ObjectNameUS.Length = Length * sizeof(wchar_t);
  ObjectNameUS.MaximumLength = ObjectNameUS.Length + sizeof(wchar_t);
@@ -260,7 +260,7 @@ static BOOL NTAPI DeviceIsRunning(IN PWSTR DeviceName)
  return result;
 }
 //------------------------------------------------------------------------------------
-static NTSTATUS NativeDeleteFile(PWSTR FileName)
+static NTSTATUS NativeDeleteFile(PWSTR FileName)     // NtDeleteFile
 {
  HANDLE hFile;
  OBJECT_ATTRIBUTES attr;
@@ -280,7 +280,7 @@ static NTSTATUS NativeDeleteFile(PWSTR FileName)
      fBasicInfo.FileAttributes = FILE_ATTRIBUTE_NORMAL;
      NtSetInformationFile(hFile, &iost, &fBasicInfo, sizeof(FILE_BASIC_INFORMATION), FileBasicInformation);
     }
-   fDispositionInfo.DeleteFile = TRUE;
+   fDispositionInfo.DeleteFile = TRUE;  // puts the file into a "delete pending" state. It will be deleted once all existing handles are closed. No new handles will be possible to open
    Status = NtSetInformationFile(hFile, &iost, &fDispositionInfo, sizeof(FILE_DISPOSITION_INFORMATION), FileDispositionInformation);
    NtClose(hFile);
   }

@@ -1,7 +1,14 @@
 
 #pragma once
 
-struct NNCNV
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wshorten-64-to-32"
+#pragma clang diagnostic ignored "-Wimplicit-int-float-conversion"
+#pragma clang diagnostic ignored "-Wsign-compare"
+#pragma clang diagnostic ignored "-Wsign-conversion"
+#pragma clang diagnostic ignored "-Wcast-align"
+
+struct NCNV
 {
 //------------------------------------------------------------------------------------
 enum EFltFmt {ffZeroPad=0x8000, ffSkipZeroFrac=0x4000, ffCommaSep=0x2000, ffUpperCase=0x1000};  // Add this flags to 'afterpoint'
@@ -112,7 +119,7 @@ static void FTOA_Test(void)
  ptr = ftoa_simple(9.0, 6, (char*)&Buf, sizeof(Buf), &size);
  ptr = ftoa_simple(8.0, 6|ffSkipZeroFrac, (char*)&Buf, sizeof(Buf), &size);
  ptr = ftoa_simple(8.1, 6|ffSkipZeroFrac, (char*)&Buf, sizeof(Buf), &size);
- ptr = 0;
+ ptr = nullptr;
 }
 //------------------------------------------------------------------------------------
 //====================================================================================
@@ -125,15 +132,26 @@ static _finline int HexCharToHalfByte(uint8 CharVal)
 }
 //---------------------------------------------------------------------------
 // Output uint16 can be directly written to a string with right half-byte ordering  (little endian)  // TODO: Endianess check
+// 0x30: '0' : 0011 0000
+// 0x39: '9' : 0011 1001
+// 0x41: 'A' : 0100 0001
+// 0x46: 'F' : 0100 0110
+// 0x61: 'a' : 0110 0001
+// 0x66: 'f' : 0110 0110
+//             0010 0000  |(1 << 5)  // OR it with TblVal to have lower case
+//
+// Return:  LLHH (LE), HHLL (BE)
+//
 static _finline uint16 ByteToHexChar(uint8 Value, bool UpCase=true)  // Fast but not relocable
 {
- static const char ChrTable[] = "0123456789abcdef0123456789ABCDEF";    // TODO: Optimize this string
- int offs = (int)UpCase << 4;  // 0 or 16
- return ((uint16)ChrTable[offs + (Value >> 4)] << 8) | (uint16)ChrTable[offs + (Value & 0x0F)];
+ const char ChrTable[] = {"0123456789ABCDEF"};    // TODO: Optimize this string
+ uint8 cmsk = ((uint8)!UpCase << 5);  // Low case bit mask
+ if constexpr(IsBigEnd) return (uint16(ChrTable[Value >> 4] << 8) | uint16(ChrTable[Value & 0x0F]));
+ else return (uint16(ChrTable[Value & 0x0F] << 8) | uint16(ChrTable[Value >> 4]));
 }
 //---------------------------------------------------------------------------
 // 'buf' is for storage only, DO NOT expect result to be at beginning of it
-template<typename T, typename S> static S DecNumToStrS(T Val, S buf, uint* Len=0)
+template<typename T, typename S> static S DecNumToStrS(T Val, S buf, uint* Len=nullptr)
 {
  if(Val == 0){if(Len)*Len = 1; *buf = '0'; buf[1] = 0; return buf;}
  bool isNeg = (Val < 0);
@@ -192,7 +210,7 @@ template<typename O, typename T> static O HexStrToNum(T Str, long* Size=nullptr)
  return x;
 }
 //---------------------------------------------------------------------------
-template<typename T> static int HexStrToByteArray(uint8* Buffer, T SrcStr, uint HexByteCnt=-1)
+template<typename T> static uint HexStrToByteArray(uint8* Buffer, T SrcStr, uint HexByteCnt=(uint)-1)
 {
  uint ctr = 0;
  for(uint len = 0;(SrcStr[len]&&SrcStr[len+1])&&(ctr < HexByteCnt);len++)   // If it would be possible to make an unmodified defaults to disappear from compilation...
@@ -201,7 +219,7 @@ template<typename T> static int HexStrToByteArray(uint8* Buffer, T SrcStr, uint 
    int ByteHi  = HexCharToHalfByte(SrcStr[len]);
    int ByteLo  = HexCharToHalfByte(SrcStr[len+1]);
    if((ByteHi  < 0)||(ByteLo < 0))return ctr;  // Not a HEX char
-   Buffer[ctr] = (ByteHi << 4)|ByteLo;
+   Buffer[ctr] = uint8((ByteHi << 4)|ByteLo);
    ctr++;
    len++;
   }
@@ -210,9 +228,9 @@ template<typename T> static int HexStrToByteArray(uint8* Buffer, T SrcStr, uint 
 //---------------------------------------------------------------------------
 // Return address always points to Number[16-MaxDigits];
 //
-template<typename T, typename S> static S ByteArrayToHexStr(T Value, int MaxDigits, S NumBuf, bool UpCase, uint* Len=0)
+template<typename T, typename S> static S ConvertToHexStr(T Value, uint MaxDigits, S NumBuf, bool UpCase, uint* Len=nullptr)
 {
- const int cmax = sizeof(T)*2;      // Number of byte halves (Digits)
+ const uint cmax = sizeof(T)*2;      // Number of byte halves (Digits)
  char  HexNums[] = {'0','1','2','3','4','5','6','7','8','9','A','B','C','D','E','F','0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f'};     // Must be optimized to PlatLen assignments
  uint Case = UpCase?0:16;
  if(Value)
@@ -221,11 +239,11 @@ template<typename T, typename S> static S ByteArrayToHexStr(T Value, int MaxDigi
     {
      MaxDigits = 0;
      T tmp = Value;    // Counter needed to limit a signed value
-     for(int ctr=cmax;tmp && ctr;ctr--,MaxDigits++,tmp >>= 4);    // for(T tmp = Value;tmp;tmp>>=4,MaxDigits++);
+     for(uint ctr=cmax;tmp && ctr;ctr--,MaxDigits++,tmp >>= 4);    // for(T tmp = Value;tmp;tmp>>=4,MaxDigits++);
      if(MaxDigits & 1)MaxDigits++;    // Full bytes
     }
    S DstPtr = &NumBuf[MaxDigits-1];
-   for(int Ctr = 0;DstPtr >= NumBuf;DstPtr--)   // Start from last digit
+   for(uint Ctr = 0;DstPtr >= NumBuf;DstPtr--)   // Start from last digit
     {
      if(Ctr < cmax)
       {
@@ -239,7 +257,7 @@ template<typename T, typename S> static S ByteArrayToHexStr(T Value, int MaxDigi
    else       // Fast 0
     {
      if(MaxDigits <= 0)MaxDigits = 2;
-     for(int ctr=0;ctr < MaxDigits;ctr++)NumBuf[ctr] = '0';
+     for(uint ctr=0;ctr < MaxDigits;ctr++)NumBuf[ctr] = '0';
     }
  if(Len)*Len = MaxDigits;
    else NumBuf[MaxDigits] = 0;
@@ -249,3 +267,5 @@ template<typename T, typename S> static S ByteArrayToHexStr(T Value, int MaxDigi
 
 
 };
+
+#pragma clang diagnostic pop

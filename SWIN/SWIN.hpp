@@ -102,7 +102,7 @@ SendMessage(s_hWndButton, WM_SETFONT, (WPARAM)s_hFont, (LPARAM)MAKELONG(TRUE, 0)
 #define WM_DPICHANGED       0x02E0
 #endif
 
-struct SSWIN
+struct SWIN
 {
 private:
 static inline decltype(ChangeWindowMessageFilterEx)* pChangeWindowMessageFilterEx = nullptr;
@@ -157,18 +157,18 @@ class CWndBase;
 
 namespace NSWIN
 {
- using EWNotify = SSWIN::EWNotify;
- using SWDim    = SSWIN::SWDim;
+ using EWNotify = SWIN::EWNotify;
+ using SWDim    = SWIN::SWDim;
 
- using CWndForm = SSWIN::CWndForm;
- using CSWEdit      = SSWIN::CSWEdit;
- using CSWButton    = SSWIN::CSWButton;
- using CSWStatic    = SSWIN::CSWStatic;
- using CSWScrBar    = SSWIN::CSWScrBar;
- using CSWDTPicker  = SSWIN::CSWDTPicker;
- using CSWComboBox  = SSWIN::CSWComboBox;
- using CSWTrayIcon  = SSWIN::CSWTrayIcon;
- using CSWTimer  = SSWIN::CSWTimer;    
+ using CWndForm = SWIN::CWndForm;
+ using CSWEdit      = SWIN::CSWEdit;
+ using CSWButton    = SWIN::CSWButton;
+ using CSWStatic    = SWIN::CSWStatic;
+ using CSWScrBar    = SWIN::CSWScrBar;
+ using CSWDTPicker  = SWIN::CSWDTPicker;
+ using CSWComboBox  = SWIN::CSWComboBox;
+ using CSWTrayIcon  = SWIN::CSWTrayIcon;
+ using CSWTimer  = SWIN::CSWTimer;    
 }
 
 //==========================================================================================================================

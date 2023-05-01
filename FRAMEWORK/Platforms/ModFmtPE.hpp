@@ -2,12 +2,8 @@
 #pragma once
 
 //============================================================================================================
-struct NFMTPE 
+template<typename PHT> struct NFMTPE
 {
-using PETYPE64  = uint64;
-using PETYPE32  = uint32;
-using PECURRENT = uint;
-
 static constexpr uint32 SIGN_MZ = 0x5A4D;
 static constexpr uint32 SIGN_PE = 0x4550;
 //------------------------------------------------------------------------------------------------------------
@@ -125,7 +121,7 @@ struct SDataDirTbl   //DATA_DIRECTORIES_TABLE
 //------------------------------------------------------------------------------------------------------------
 struct SFileHdr    // FILE_HEADER
 {
- uint16  TypeCPU;         // Machine((Alpha/Motorola/.../0x014C = I386)   0x04                        
+ uint16  TypeCPU;         // Machine((Alpha/Motorola/.../0x014C = I386)   0x04
  uint16  SectionsNumber;  // Number of sections in the file               0x06
  uint32  TimeDateStamp;   // Number of seconds since Dec 31,1969,4:00PM   0x08
  uint32  TablePtrCOFF;    // Used in OBJ files and PE with debug info     0x0C
@@ -134,10 +130,10 @@ struct SFileHdr    // FILE_HEADER
  uint16  Flags;           // 0000-Program; 0001-NoReloc; 0002-Can Exec;   0x16
 };                        // 0200-Address fixed; 2000-This DLL
 //------------------------------------------------------------------------------------------------------------
-template<typename T> struct SOptHdr    // OPTIONAL_HEADER
-{ 
-STASRT(SameTypes<T, PECURRENT>::value || SameTypes<T, PETYPE32>::value || SameTypes<T, PETYPE64>::value, "Unsupported architecture type!"); 
- 
+struct SOptHdr    // OPTIONAL_HEADER
+{
+STASRT(SameTypes<PHT, PTRCURRENT>::V || SameTypes<PHT, PTRTYPE32>::V || SameTypes<PHT, PTRTYPE64>::V, "Unsupported architecture type!");
+
  uint16  Magic;           // 0107-ROM projection;010B-Normal projection   0x18
  uint8   MajLinkerVer;    // Linker version number                        0x1A
  uint8   MinLinkerVer;    // Linker version number                        0x1B
@@ -145,9 +141,9 @@ STASRT(SameTypes<T, PECURRENT>::value || SameTypes<T, PETYPE32>::value || SameTy
  uint32  InitDataSize;    // Size of the initialized data                 0x20
  uint32  UnInitDataSize;  // Size of the uninitialized data section (BSS) 0x24
  uint32  EntryPointRVA;   // Address of 1st instruction to be executed    0x28
- uint32  BaseOfCode;      // Address (RVA) of beginning of code section   0x2C                               
- typename TSW<SameTypes<T, PETYPE32>::value, uint32, ETYPE>::T  BaseOfData;   // Address (RVA) of beginning of data section   0x30
- typename TSW<SameTypes<T, PETYPE32>::value, uint32, uint64>::T ImageBase;    // The *preferred* load address of the file     0x34
+ uint32  BaseOfCode;      // Address (RVA) of beginning of code section   0x2C
+ typename TSW<SameTypes<PHT, PTRTYPE32>::V, uint32, ETYPE>::T  BaseOfData;   // Address (RVA) of beginning of data section   0x30
+ typename TSW<SameTypes<PHT, PTRTYPE32>::V, uint32, uint64>::T ImageBase;    // The *preferred* load address of the file     0x34
 /* union
   {
    struct
@@ -171,20 +167,20 @@ STASRT(SameTypes<T, PECURRENT>::value || SameTypes<T, PETYPE32>::value || SameTy
  uint32  FileCheckSum;      // Image file checksum                          0x58
  uint16  SubSystem;         // 1-NotNeeded;2-WinGUI;3-WinCON;5-OS2;7-Posix  0x5C
  uint16  FlagsDLL;          // Used to indicate if a DLL image includes EPs 0x5E
- T       StackReserveSize;  // Size of stack to reserve                     0x60
- T       StackCommitSize;   // Size of stack to commit                      0x64 / 0x68
- T       HeapReserveSize;   // Size of local heap space to reserve          0x68 / 0x70
- T       HeapCommitSize;    // Size of local heap space to commit           0x6C / 0x78
+ PHT     StackReserveSize;  // Size of stack to reserve                     0x60
+ PHT     StackCommitSize;   // Size of stack to commit                      0x64 / 0x68
+ PHT     HeapReserveSize;   // Size of local heap space to reserve          0x68 / 0x70
+ PHT     HeapCommitSize;    // Size of local heap space to commit           0x6C / 0x78
  uint32  LoaderFlags;       // Choose Break/Debug/RunNormally(def) on load  0x70 / 0x80
  uint32  NumOfSizesAndRVA;  // Length of next DataDirectory array(alw10h)   0x74 / 0x84
- SDataDirTbl DataDirectories; //                             0x78 / 0x88     
+ SDataDirTbl DataDirectories; //                             0x78 / 0x88
 };
 //------------------------------------------------------------------------------------------------------------
-template<typename T> struct SWinHdr   // WIN_HEADER                // Must be uint64 aligned
+struct SWinHdr   // WIN_HEADER                // Must be uint64 aligned
 {
- uint32     FlagPE;          // PE File Signature             0x00
- SFileHdr   FileHeader;      // File header                   0x04
- SOptHdr<T> OptionalHeader;  // Optional file header          0x18
+ uint32    FlagPE;          // PE File Signature             0x00
+ SFileHdr  FileHeader;      // File header                   0x04
+ SOptHdr   OptionalHeader;  // Optional file header          0x18
 };
 //------------------------------------------------------------------------------------------------------------
 struct SExpDir  //EXPORT_DIR
@@ -251,9 +247,9 @@ struct SRelocDesc   // RELOCATION_DESC  // Max for 4k page // There may be more 
 //------------------------------------------------------------------------------------------------------------
 struct SRsrcDirEntry       //   _IMAGE_RESOURCE_DIRECTORY_ENTRY
 {
- union 
+ union
   {
-   struct 
+   struct
     {
      uint32 NameOffset   : 31;
      uint32 NameIsString : 1;
@@ -261,10 +257,10 @@ struct SRsrcDirEntry       //   _IMAGE_RESOURCE_DIRECTORY_ENTRY
    uint32 Name;
    uint16 Id;
   };
- union 
+ union
   {
    uint32 OffsetToData;
-   struct 
+   struct
     {
      uint32 OffsetToDirectory : 31;
      uint32 DataIsDirectory   : 1;
@@ -287,13 +283,13 @@ struct SImportByName
 {
  uint16  Hint;
  uint8   Name[1];
-}; 
-template<typename T> struct SImportThunk 
+};
+struct SImportThunk
 {
- T Value;	   // ForwarderString; Function; Ordinal; AddressOfData;
+ PHT Value;	   // ForwarderString; Function; Ordinal; AddressOfData;
 };
 //------------------------------------------------------------------------------------------------------------
-struct SRichRec 
+struct SRichRec
 {
  uint16  Ver;    // MinVer
  uint16  PId;    // Product Identifier
@@ -303,9 +299,9 @@ struct SRichRec
 //============================================================================================================
 //
 //------------------------------------------------------------------------------------------------------------
-template<typename T> _finline static SWinHdr<T>* GetWinHdr(void* Base)
+_finline static SWinHdr* GetWinHdr(void* Base)
 {
- return (SWinHdr<T>*)&(((uint8*)Base)[((SDosHdr*)Base)->OffsetHeaderPE]);
+ return (SWinHdr*)&(((uint8*)Base)[((SDosHdr*)Base)->OffsetHeaderPE]);
 }
 //------------------------------------------------------------------------------------------------------------
 // NOTE: Do not expect that all PE image pages will be allocated
@@ -313,7 +309,7 @@ static bool IsValidHeaderPE(void* Base)
 {
  SDosHdr* DosHdr  = (SDosHdr*)Base;
  if((DosHdr->FlagMZ != SIGN_MZ))return false;
- auto WinHdr = GetWinHdr<PECURRENT>(Base); // (SWinHdr<PECURRENT>*)&(((uint8*)Base)[DosHdr->OffsetHeaderPE]);
+ auto WinHdr = GetWinHdr(Base);  //  GetWinHdr<PTRCURRENT>(Base);  // (SWinHdr<PTRCURRENT>*)&(((uint8*)Base)[DosHdr->OffsetHeaderPE]);
  if((WinHdr->FlagPE != SIGN_PE))return false;
  return true;
 }
@@ -323,27 +319,27 @@ static bool IsValidHeaderPE(void* Base, uint Size)
  if(Size < sizeof(SDosHdr))return false;
  SDosHdr* DosHdr  = (SDosHdr*)Base;
  if((DosHdr->FlagMZ != SIGN_MZ))return false;
- if(Size < (DosHdr->OffsetHeaderPE + sizeof(SWinHdr<PECURRENT>)))return false;
- auto WinHdr = GetWinHdr<PECURRENT>(Base); // (SWinHdr<PECURRENT>*)&(((uint8*)Base)[DosHdr->OffsetHeaderPE]);
+ if(Size < (DosHdr->OffsetHeaderPE + sizeof(SWinHdr)))return false;   // sizeof(SWinHdr<PTRCURRENT>)
+ auto WinHdr = GetWinHdr(Base);   //  GetWinHdr<PTRCURRENT>(Base);  // (SWinHdr<PTRCURRENT>*)&(((uint8*)Base)[DosHdr->OffsetHeaderPE]);
  if((WinHdr->FlagPE != SIGN_PE))return false;
  return true;
 }
 //------------------------------------------------------------------------------------------------------------
 static bool IsModuleDLL(void* Base)
 {
- auto WinHdr = GetWinHdr<PECURRENT>(Base); // (SWinHdr<PECURRENT>*)&(((uint8*)Base)[DosHdr->OffsetHeaderPE]);
+ auto WinHdr = GetWinHdr(Base);  //  GetWinHdr<PTRCURRENT>(Base);  // (SWinHdr<PTRCURRENT>*)&(((uint8*)Base)[DosHdr->OffsetHeaderPE]);
  return (WinHdr->FileHeader.Flags & 0x2002) == 0x2002;   // 0x2000=IsDll; 0x0002=IsExecutable
 }
 //------------------------------------------------------------------------------------------------------------
 static bool IsModuleX64(void* Base)
 {
- auto WinHdr = GetWinHdr<PECURRENT>(Base); // (SWinHdr<PECURRENT>*)&(((uint8*)Base)[DosHdr->OffsetHeaderPE]);
+ auto WinHdr = GetWinHdr(Base);  //  GetWinHdr<PTRCURRENT>(Base);  // (SWinHdr<PTRCURRENT>*)&(((uint8*)Base)[DosHdr->OffsetHeaderPE]);
  return (WinHdr->OptionalHeader.Magic == 0x020B);
 }
 //---------------------------------------------------------------------------
 static uint GetPEImageSize(void* Base)
 {
- auto WinHdr = GetWinHdr<PECURRENT>(Base); // (SWinHdr<PECURRENT>*)&(((uint8*)Base)[DosHdr->OffsetHeaderPE]);
+ auto WinHdr = GetWinHdr(Base);  //  GetWinHdr<PTRCURRENT>(Base);  // (SWinHdr<PTRCURRENT>*)&(((uint8*)Base)[DosHdr->OffsetHeaderPE]);
  return WinHdr->OptionalHeader.SizeOfImage;
 }
 //------------------------------------------------------------------------------------------------------------
@@ -357,7 +353,7 @@ static bool IsRvaInSection(SSecHdr* Sec, uint Rva)
 static uint GetSections(void* Base, SSecHdr** FirstSec)
 {
  SDosHdr*  DosHdr = (SDosHdr*)Base;
- auto      WinHdr = GetWinHdr<PECURRENT>(Base); // (SWinHdr<PECURRENT>*)&((uint8*)Base)[DosHdr->OffsetHeaderPE];
+ auto      WinHdr = GetWinHdr(Base);  //  GetWinHdr<PTRCURRENT>(Base);  // (SWinHdr<PTRCURRENT>*)&((uint8*)Base)[DosHdr->OffsetHeaderPE];
  uint      HdrLen = DosHdr->OffsetHeaderPE+WinHdr->FileHeader.HeaderSizeNT+sizeof(SFileHdr)+sizeof(uint32);
  *FirstSec = (SSecHdr*)&((uint8*)Base)[HdrLen];
  return WinHdr->FileHeader.SectionsNumber;
@@ -390,10 +386,10 @@ static uint FileOffsetToRva(void* Base, uint Offset)
 }
 //------------------------------------------------------------------------------------------------------------
 // NOTE: Assumed that section offsets is sequential!
-static uint SizeOfSections(void* Base, uint MaxSecs=-1, bool RawSize=false)
+static uint SizeOfSections(void* Base, uint MaxSecs=(uint)-1, bool RawSize=false)
 {
 // DOS_HEADER     *DosHdr = (DOS_HEADER*)ModuleBase;
- auto WinHdr = GetWinHdr<PECURRENT>(Base); // (WIN_HEADER<PECURRENT>*)&((uint8*)ModuleBase)[DosHdr->OffsetHeaderPE];
+ auto WinHdr = GetWinHdr(Base);  //  GetWinHdr<PTRCURRENT>(Base);  // (WIN_HEADER<PTRCURRENT>*)&((uint8*)ModuleBase)[DosHdr->OffsetHeaderPE];
 // UINT            HdrLen = DosHdr->OffsetHeaderPE+WinHdr->FileHeader.HeaderSizeNT+sizeof(FILE_HEADER)+sizeof(DWORD);
  SSecHdr* CurSec = nullptr;  //(SECTION_HEADER*)&((uint8*)ModuleBase)[HdrLen];
  uint TotalSecs = GetSections(Base, &CurSec);
@@ -404,15 +400,15 @@ static uint SizeOfSections(void* Base, uint MaxSecs=-1, bool RawSize=false)
   {
    if(!Offs)Offs = RawSize?(CurSec[ctr].PhysicalOffset):(CurSec[ctr].VirtualOffset);
    Size += RawSize?(AlignFrwd(CurSec[ctr].PhysicalSize, WinHdr->OptionalHeader.FileAlign)):(AlignFrwd(CurSec[ctr].VirtualSize, WinHdr->OptionalHeader.SectionAlign));
-  }                
- if(!Offs)Offs = RawSize?WinHdr->OptionalHeader.SizeOfHeaders:(AlignFrwd(WinHdr->OptionalHeader.SizeOfHeaders, WinHdr->OptionalHeader.SectionAlign));    
+  }
+ if(!Offs)Offs = RawSize?WinHdr->OptionalHeader.SizeOfHeaders:(AlignFrwd(WinHdr->OptionalHeader.SizeOfHeaders, WinHdr->OptionalHeader.SectionAlign));
  return Offs + Size;
 }
 //------------------------------------------------------------------------------------------------------------
 static bool GetSectionForAddress(void* Base, void* Address, SSecHdr** ResSec)
 {
 // DOS_HEADER     *DosHdr = (DOS_HEADER*)ModuleBase;
-// WIN_HEADER<PECURRENT>  *WinHdr = (WIN_HEADER<PECURRENT>*)&((PBYTE)ModuleBase)[DosHdr->OffsetHeaderPE];
+// WIN_HEADER<PTRCURRENT>  *WinHdr = (WIN_HEADER<PTRCURRENT>*)&((PBYTE)ModuleBase)[DosHdr->OffsetHeaderPE];
 // UINT            HdrLen = DosHdr->OffsetHeaderPE+WinHdr->FileHeader.HeaderSizeNT+sizeof(FILE_HEADER)+sizeof(DWORD);
  SSecHdr* CurSec = nullptr;  //SECTION_HEADER *CurSec = (SECTION_HEADER*)&((BYTE*)ModuleBase)[HdrLen];
  uint TotalSecs = GetSections(Base, &CurSec);
@@ -432,7 +428,7 @@ static bool GetSectionForAddress(void* Base, void* Address, SSecHdr** ResSec)
 static char CharCaseUpper(char Chr)
 {
  if((Chr > 0x60)&&(Chr < 0x7B))Chr -= 0x20;
- return Chr;  
+ return Chr;
 }
 //------------------------------------------------------------------------------
 static bool IsCharsEqualIC(char ChrA, char ChrB)
@@ -500,7 +496,7 @@ static uint CalcModuleSize(void* Base, bool RawSize=false)
   {
    for(uint ctr = 0;ctr < TotalSecs;ctr++,CurSec++)
     {
-     if(CurSec->PhysicalOffset > LstSec->PhysicalOffset)LstSec = CurSec; 
+     if(CurSec->PhysicalOffset > LstSec->PhysicalOffset)LstSec = CurSec;
     }
    return LstSec->PhysicalOffset + LstSec->PhysicalSize;
   }
@@ -508,7 +504,7 @@ static uint CalcModuleSize(void* Base, bool RawSize=false)
     {
      for(uint ctr = 0;ctr < TotalSecs;ctr++,CurSec++)
       {
-       if(CurSec->VirtualOffset > LstSec->VirtualOffset)LstSec = CurSec; 
+       if(CurSec->VirtualOffset > LstSec->VirtualOffset)LstSec = CurSec;
       }
      return LstSec->VirtualOffset + LstSec->VirtualSize;
     }
@@ -516,7 +512,7 @@ static uint CalcModuleSize(void* Base, bool RawSize=false)
 //------------------------------------------------------------------------------------------------------------
 static uint GetExpectedVSize(void* Base)
 {
- auto WinHdr = GetWinHdr<PECURRENT>(Base);
+ auto WinHdr = GetWinHdr(Base);   //  GetWinHdr<PTRCURRENT>(Base);
  return WinHdr->OptionalHeader.SizeOfImage;
 }
 //------------------------------------------------------------------------------------------------------------
@@ -524,23 +520,23 @@ static void* GetLoadedModuleEntryPoint(void* Base)
 {
  if(!IsValidHeaderPE(Base))return nullptr;
 // DOS_HEADER *DosHdr = (DOS_HEADER*)ModuleBase;
- auto WinHdr = GetWinHdr<PECURRENT>(Base);   //WIN_HEADER<PECURRENT> *WinHdr = (WIN_HEADER<PECURRENT>*)&(((BYTE*)ModuleBase)[DosHdr->OffsetHeaderPE]);
- if(!WinHdr->OptionalHeader.EntryPointRVA)return nullptr;				  
+ auto WinHdr = GetWinHdr(Base);   //  GetWinHdr<PTRCURRENT>(Base);   //WIN_HEADER<PTRCURRENT> *WinHdr = (WIN_HEADER<PTRCURRENT>*)&(((BYTE*)ModuleBase)[DosHdr->OffsetHeaderPE]);
+ if(!WinHdr->OptionalHeader.EntryPointRVA)return nullptr;
  return &((uint8*)Base)[WinHdr->OptionalHeader.EntryPointRVA];
 }
 //------------------------------------------------------------------------------------------------------------
 static uint GetModuleEntryOffset(void* Base, bool Raw)
 {
 // DOS_HEADER     *DosHdr    = (DOS_HEADER*)ModuleBase;
- auto WinHdr  = GetWinHdr<PECURRENT>(Base);   //(WIN_HEADER<T>*)&ModuleBase[DosHdr->OffsetHeaderPE];
- if(!WinHdr->OptionalHeader.EntryPointRVA)return 0;	 
+ auto WinHdr  = GetWinHdr(Base);   //  GetWinHdr<PTRCURRENT>(Base);   //(WIN_HEADER<T>*)&ModuleBase[DosHdr->OffsetHeaderPE];
+ if(!WinHdr->OptionalHeader.EntryPointRVA)return 0;
  return (Raw)?(RvaToFileOffset(Base,WinHdr->OptionalHeader.EntryPointRVA)):(WinHdr->OptionalHeader.EntryPointRVA);
 }
 //------------------------------------------------------------------------------------------------------------
 static uint32 CalcChecksumPE(void* Base, uint Size)   // TODO: Rewrite
 {
 // DOS_HEADER *DosHdr = (DOS_HEADER*)ModuleBase;
- auto WinHdr  = GetWinHdr<PECURRENT>(Base);  //WIN_HEADER<PECURRENT> *WinHdr = (WIN_HEADER<PECURRENT>*)&(((BYTE*)ModuleBase)[DosHdr->OffsetHeaderPE]);
+ auto WinHdr  = GetWinHdr(Base);   //  GetWinHdr<PTRCURRENT>(Base);  //WIN_HEADER<PTRCURRENT> *WinHdr = (WIN_HEADER<PTRCURRENT>*)&(((BYTE*)ModuleBase)[DosHdr->OffsetHeaderPE]);
 
  unsigned long long checksum = 0;
  unsigned long long top = 0xFFFFFFFF + 1;
@@ -550,7 +546,7 @@ static uint32 CalcChecksumPE(void* Base, uint Size)   // TODO: Rewrite
  uint8* DataPtr  = (uint8*)Base;
  for(uint idx=0;idx < Size;idx += 4)
   {
-   if(idx == CSimOffs)continue;   //Skip "CheckSum" DWORD		
+   if(idx == CSimOffs)continue;   //Skip "CheckSum" DWORD
    checksum = (checksum & 0xFFFFFFFF) + *(uint32*)&DataPtr[idx] + (checksum >> 32);     // Calculate checksum
    if(checksum > top)checksum = (checksum & 0xFFFFFFFF) + (checksum >> 32);               // TODO: Without 64bit shift
   }
@@ -576,19 +572,19 @@ static uint32 CalcChecksumPE(void* Base, uint Size)   // TODO: Rewrite
    RELOCATION_DESC* CurRelBlk = (RELOCATION_DESC*)&RelocPtr[RelOffs];
    PBYTE BasePtr = (PBYTE)&ModuleBase[(Raw)?(RvaToFileOffset(ModuleBase,CurRelBlk->BaseRVA)):(CurRelBlk->BaseRVA)];
    for(UINT RIdx=0,RTotal=CurRelBlk->Count();RIdx < RTotal;RIdx++)
-    {   
+    {
      BYTE Type = CurRelBlk->Records[RIdx].Type;   // NOTE: 'switch()' makes the code Base dependant (Remember Reflective Injection)
      if(Type == IMAGE_REL_BASED_HIGHLOW)     // x32
       {
-       PUINT32 Value = (PUINT32)&BasePtr[CurRelBlk->Records[RIdx].Offset];     
+       PUINT32 Value = (PUINT32)&BasePtr[CurRelBlk->Records[RIdx].Offset];
        if(Raw==1)*Value = UINT32(TargetBase + RvaToFileOffset(ModuleBase, (*Value - ImageBase)));    // Direct x32 address      // Resolve to a Raw address
-         else *Value += LoadDelta;           
-      }              
+         else *Value += LoadDelta;
+      }
      else if(Type == IMAGE_REL_BASED_DIR64)  // x64
       {
-       PUINT64 Value = (PUINT64)&BasePtr[CurRelBlk->Records[RIdx].Offset];     
+       PUINT64 Value = (PUINT64)&BasePtr[CurRelBlk->Records[RIdx].Offset];
        if(Raw==1)*Value = UINT64(TargetBase + RvaToFileOffset(ModuleBase, (*Value - ImageBase)));    // Direct x32 address      // Resolve to a Raw address
-         else *Value += LoadDelta;           
+         else *Value += LoadDelta;
       }
 //     else if(Type != IMAGE_REL_BASED_ABSOLUTE){DBGMSG("Unsupported reloc type: %u", Type);}    // 11:IMAGE_REL_BASED_HIGH3ADJ(3xWORD) and 4:IMAGE_REL_BASED_HIGHADJ(2xWORD)  // Can`t log if self relocating
     }
@@ -598,8 +594,8 @@ static uint32 CalcChecksumPE(void* Base, uint Size)   // TODO: Rewrite
 } */
 //------------------------------------------------------------------------------------------------------------
 static char* GetExpModuleName(void* Base, bool Raw)  // Only if an Export section is present     // TODO: Optional Pointer validation mode
-{ 
- SDataDir* ExportDir = (IsModuleX64(Base))?(&GetWinHdr<PETYPE64>(Base)->OptionalHeader.DataDirectories.ExportTable):(&GetWinHdr<PETYPE32>(Base)->OptionalHeader.DataDirectories.ExportTable);
+{
+ SDataDir* ExportDir = (IsModuleX64(Base))?((SDataDir*)&NPE64::GetWinHdr(Base)->OptionalHeader.DataDirectories.ExportTable):((SDataDir*)&NPE32::GetWinHdr(Base)->OptionalHeader.DataDirectories.ExportTable);
  if(!ExportDir->DirectoryRVA)return nullptr;
  SExpDir* Export     = (SExpDir*)&((uint8*)Base)[ExportDir->DirectoryRVA];
  return &((char*)Base)[(Raw)?(RvaToFileOffset(Base,Export->NameRVA)):(Export->NameRVA)];
@@ -617,6 +613,10 @@ static void* ModuleAddressToBase(void* Addr)   // NOTE: Will find a PE header or
 
 //------------------------------------------------------------------------------------------------------------
 };
+
+using NPE   = NFMTPE<uint>;
+using NPE32 = NFMTPE<uint32>;
+using NPE64 = NFMTPE<uint64>;
 //============================================================================================================
 
 

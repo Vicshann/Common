@@ -19,6 +19,8 @@
 #include <Wbemidl.h>
 //====================================================================================
                                             // sprintf: hex, bits
+
+#ifndef NOLOG
 HANDLE hLogFile = NULL;
 HANDLE hConsOut = NULL;
 
@@ -27,7 +29,7 @@ int    LogMode = lmNone;
 int    MaxLogLevel = 9;  // Log everything  // 0 will log nothing but still form log messages
 void _cdecl DummyLogProc(LPSTR, UINT, UINT){}
 void (_cdecl *pLogProc)(LPSTR Msh, UINT MsgLen, UINT Level) = DummyLogProc;			   
-			   			   
+#endif			   			   
 //---------------------------------------------------------------------------
 #ifndef __BORLANDC__
 
@@ -166,7 +168,9 @@ void __cdecl operator delete[](void* p, size_t n)
 
 #ifndef NOMINIRTL 
 
+#ifndef NOFLT 
 extern "C" int _fltused = 0;
+#endif
 
 extern "C" int __cdecl _purecall(void) { return 0; }
 
@@ -566,7 +570,11 @@ __declspec(noinline) PVOID _fastcall FixExportRedir(PVOID ThisLibBase, PVOID Exp
 
 bool _stdcall IsLogHandle(HANDLE Hnd)
 {
+#ifdef NOLOG
+ return false;
+#else
  return ((Hnd == hLogFile)||(Hnd == hConsOut));
+#endif
 }
 //---------------------------------------------------------------------------
 // !!! -0.177166 is incorrectly printed with %f!!!
@@ -576,6 +584,7 @@ bool _stdcall IsLogHandle(HANDLE Hnd)
 //
 void  _cdecl LogProc(int Flags, char* ProcName, char* Message, ...)
 {
+#ifndef NOLOG
  va_list args;
  static volatile ULONG  MsgIdx  = 0;
  static volatile UINT64 PrvTime = 0;
@@ -650,11 +659,11 @@ void  _cdecl LogProc(int Flags, char* ProcName, char* Message, ...)
     }
  va_end(args);
 
- if(LogLvl && (LogLvl >= MaxLogLevel))return;   // Skip logging  // Log any unleveled messages
+ if(LogLvl && (LogLvl >= MaxLogLevel))return;   // Skip logging  // Log any unleveled messages only
  if(LogMode & lmProc)pLogProc(MPtr, MSize, LogLvl);
  if(LogMode & lmFile)
   {                                                                                                                 
-   if(!hLogFile)  // NOTE: Without FILE_APPEND_DATA offsets must be specified to NtWriteFile
+   if(!hLogFile)  // NOTE: Without FILE_APPEND_DATA offsets must be specified to NtWriteFile     // https://nblumhardt.com/2016/08/atomic-shared-log-file-writes/
     {          // (LogMode & lmFileUpd)?FILE_APPEND_DATA:FILE_WRITE_DATA       //           //  LogMode |= lmFileUpd;
      Status = NCMN::NNTDLL::FileCreateSync(LogFilePath, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ|FILE_SHARE_WRITE, (LogMode & lmFileUpd)?FILE_OPEN_IF:FILE_OVERWRITE_IF, FILE_NON_DIRECTORY_FILE, &hLogFile);
     }
@@ -672,6 +681,7 @@ void  _cdecl LogProc(int Flags, char* ProcName, char* Message, ...)
    if(!hConsOut)hConsOut = NtCurrentPeb()->ProcessParameters->StandardOutput;               // Not a real file handle on Windows 7(Real for an redirected IO?)!      // Win8+: \Device\ConDrv\Console     // https://stackoverflow.com/questions/47534039/windows-console-handle-for-con-device
    if((UINT)hConsOut != 7)Status = NtWriteFile(hConsOut, NULL, NULL, NULL, &iosb, MPtr, MSize, NULL, NULL);        // Will not work until Windows 8
   }
+#endif
 }
 //---------------------------------------------------------------------------
 enum EFlags {
@@ -2972,9 +2982,18 @@ int _stdcall BinaryPackToBlobStr(LPSTR ApLibPath, LPSTR SrcBinPath, LPSTR OutBin
 }
 //------------------------------------------------------------------------------------------------------------
 /* Types:    https://en.wikipedia.org/wiki/X.690
-   0x30 - SEQUENCE (sub tree)
-   0x16 - IA5String
+   0x01 - BOOLEAN
    0x02 - INTEGER
+   0x03 - BIT STRING         // May be used to store another ASN1 data
+   0x04 - OCTET STRING       // May be used to store another ASN1 data
+   0x05 - NULL
+   0x06 - OBJECT IDENTIFIER
+   0x07 -
+   0x08 - 
+   0x09 - REAL
+   0x0A - ENUMERATED
+   0x16 - IA5String
+   0x30 - SEQUENCE (sub tree)   
 */
 // Returns offset to a next Element
 long _stdcall NextItemASN1(PBYTE DataPtr, PBYTE* Body, PBYTE Type, UINT* Size)
@@ -3005,7 +3024,14 @@ long _stdcall GetTypeFromASN1(PBYTE* DstPtr, PBYTE BufASN1, long LenASN1, UINT V
    long BlkLen = NextItemASN1(BufASN1, &Body, &Type, &Size);
 //   LOGMSG("Type: %02X, %u, %08X",Type, Size, BlkLen);
    if((BlkLen <= 0) || (Type == 0x05))return 0;   // 05 is NULL (Always terminates a group or may be placed there just for fun?)
-   if((Type == 0x30)||(Type == 0x31)||(Type == 0x04))     // 04:OCTET STRING  is used to store another ASN1 data
+   bool BitStr = (Type == 0x03);
+   if(BitStr && (*Body == 0))  // Only id full bytes
+    {
+     Type = 0x04;
+     Body++;
+    }
+     else BitStr = false;
+   if((Type == 0x30)||(Type == 0x31)||(Type == 0x04)||BitStr)     // 04:OCTET STRING  is used to store another ASN1 data
     {
      long len = GetTypeFromASN1(DstPtr, Body, Size, ValType, ValIdx);
      if(len != 0)return len;    // Break if found
@@ -3031,6 +3057,13 @@ void _stdcall DumpBufferASN1(PBYTE BufASN1, long LenASN1, int Depth)
    long BlkLen = NextItemASN1(BufASN1, &Body, &Type, &Size);
    LOGMSG("Depth=%u, Type=%02X, Size=%u, BlkLen=%08X",Depth, Type, Size, BlkLen);
    if((BlkLen <= 0) || (Type == 0x05))return;   // 05 is NULL (Always terminates a group or may be placed there just for fun?)
+   bool BitStr = (Type == 0x03);
+   if(BitStr && (*Body == 0))  // Only id full bytes
+    {
+     Type = 0x04;
+     Body++;
+    }
+     else BitStr = false;
    if((Type == 0x30)||(Type == 0x31)||(Type == 0x04))     // 04:OCTET STRING  is used to store another ASN1 data
     {
      DumpBufferASN1(Body, Size, Depth+1);

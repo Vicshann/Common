@@ -15,6 +15,9 @@
 */
 
 //---------------------------------------------------------------------------
+// INFO: https://nullprogram.com/blog/2017/10/06/
+// https://github.com/skeeto/branchless-utf8/blob/master/utf8.h
+
 struct NUTF
 {    // NOTE: Streams should emulate array access
 static const UINT32 maxUtf32 = 0x0010FFFFUL;

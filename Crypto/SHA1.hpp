@@ -1,8 +1,6 @@
 
 #pragma once
 
-#ifndef SHA1H
-#define SHA1H
 
 #if !defined(SHA1_LITTLE_ENDIAN) && !defined(SHA1_BIG_ENDIAN)
 #define SHA1_LITTLE_ENDIAN
@@ -15,8 +13,9 @@ public:
  static const int HashSize = 20;
 
 private:
-typedef unsigned char  UINT_8;
-typedef unsigned int   UINT_32;
+typedef unsigned char      UINT_8;
+typedef unsigned int       UINT_32;
+typedef unsigned long long UINT_64;
 
  // Member variables
  UINT_32 m_state[5];
@@ -140,6 +139,7 @@ void Final(void)
 }
 //------------------------------------------------------------------------------
 unsigned char* GetHash(void){return reinterpret_cast<unsigned char*>(&m_digest);}
+
 void GetHashStr(char* str, bool UpCase) // str size must be >= 65 bytes!
 {
  for(int ctr =0;ctr < HashSize;ctr++,str+=2)
@@ -153,4 +153,123 @@ void GetHashStr(char* str, bool UpCase) // str size must be >= 65 bytes!
 //------------------------------------------------------------------------------
 };
 
-#endif
+//==============================================================================
+//_finline __attribute__ ((optnone))
+/*static void SHA1_digest(uint8 *digest, const uint8 *data, size_t databytes)
+{
+  uint32 H[]  = {0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0};
+  uint32 didx = 0;
+  uint64 databits  = ((uint64)databytes) * 8;
+  uint32 loopcount = (databytes + 8) / 64 + 1;
+  uint32 tailbytes = 64 * loopcount - databytes;
+  uint8  datatail[128] = {0};
+
+  // Pre-processing of data tail (includes padding to fill out 512-bit chunk):
+  //   Add bit '1' to end of message (big-endian)
+  //   Add 64-bit message length in bits at very end (big-endian)
+  datatail[0] = 0x80;
+  datatail[tailbytes - 8] = (uint8) (databits >> 56 & 0xFF);
+  datatail[tailbytes - 7] = (uint8) (databits >> 48 & 0xFF);
+  datatail[tailbytes - 6] = (uint8) (databits >> 40 & 0xFF);
+  datatail[tailbytes - 5] = (uint8) (databits >> 32 & 0xFF);
+  datatail[tailbytes - 4] = (uint8) (databits >> 24 & 0xFF);
+  datatail[tailbytes - 3] = (uint8) (databits >> 16 & 0xFF);
+  datatail[tailbytes - 2] = (uint8) (databits >> 8  & 0xFF);
+  datatail[tailbytes - 1] = (uint8) (databits >> 0  & 0xFF);
+
+  // Process each 512-bit chunk
+  for (uint32 lidx = 0; lidx < loopcount; lidx++)
+  {
+    // Compute all elements in W
+    uint32 W[80];// = {0};
+    memset (W, 0, sizeof (W));
+    // Break 512-bit chunk into sixteen 32-bit, big endian words
+    for (uint32 widx = 0; widx <= 15; widx++)
+    {
+      int32 wcount = 24;
+      // Copy byte-per byte from specified buffer
+      while (didx < databytes && wcount >= 0)
+      {
+        W[widx] += (((uint32)data[didx]) << wcount);
+        didx++;
+        wcount -= 8;
+      }
+      // Fill out W with padding as needed
+      while (wcount >= 0)
+      {
+        W[widx] += (((uint32)datatail[didx - databytes]) << wcount);
+        didx++;
+        wcount -= 8;
+      }
+    }
+
+    // Extend the sixteen 32-bit words into eighty 32-bit words, with potential optimization from:
+    //   "Improving the Performance of the Secure Hash Algorithm (SHA-1)" by Max Locktyukhin
+    for (uint32 widx = 16; widx <= 31; widx++)
+    {
+      W[widx] = RotL<uint32> ((W[widx - 3] ^ W[widx - 8] ^ W[widx - 14] ^ W[widx - 16]), 1);
+    }
+    for (uint32 widx = 32; widx <= 79; widx++)
+    {
+      W[widx] = RotL<uint32> ((W[widx - 6] ^ W[widx - 16] ^ W[widx - 28] ^ W[widx - 32]), 2);
+    }
+
+    // Main loop
+    uint32 a = H[0];
+    uint32 b = H[1];
+    uint32 c = H[2];
+    uint32 d = H[3];
+    uint32 e = H[4];
+
+    for (uint32 idx = 0; idx <= 79; idx++)
+    {
+     uint32 f = 0;
+     uint32 k = 0;
+      if (idx <= 19)
+      {
+        f = (b & c) | ((~b) & d);
+        k = 0x5A827999;
+      }
+      else if (idx >= 20 && idx <= 39)
+      {
+        f = b ^ c ^ d;
+        k = 0x6ED9EBA1;
+      }
+      else if (idx >= 40 && idx <= 59)
+      {
+        f = (b & c) | (b & d) | (c & d);
+        k = 0x8F1BBCDC;
+      }
+      else if (idx >= 60 && idx <= 79)
+      {
+        f = b ^ c ^ d;
+        k = 0xCA62C1D6;
+      }
+      uint32 temp = RotL<uint32> (a, 5) + f + e + k + W[idx];
+      e = d;
+      d = c;
+      c = RotL<uint32> (b, 30);
+      b = a;
+      a = temp;
+    }
+
+    H[0] += a;
+    H[1] += b;
+    H[2] += c;
+    H[3] += d;
+    H[4] += e;
+  }
+
+  // Store binary digest in supplied buffer
+    for (uint32 idx = 0; idx < 5; idx++)
+    {
+      digest[idx * 4 + 0] = (uint8) (H[idx] >> 24);
+      digest[idx * 4 + 1] = (uint8) (H[idx] >> 16);
+      digest[idx * 4 + 2] = (uint8) (H[idx] >> 8);
+      digest[idx * 4 + 3] = (uint8) (H[idx]);
+    }
+}  */
+//==============================================================================
+
+
+

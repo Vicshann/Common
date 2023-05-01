@@ -2,14 +2,21 @@
 #pragma once
 
 //------------------------------------------------------------------------------------------------------------
+static _finline int GetMMapErrFromPtr(void* ptr)   // POSIX or linux specific???
+{
+ uint err = (uint)ptr & (MEMPAGESIZE - 1);
+ if(!err)return 0;
+ return -err & (MEMPAGESIZE - 1);
+}
+//------------------------------------------------------------------------------------------------------------
 // A Directory name must end with a path delimiter. Any file name is ignored
 // All paths are UTF-8
-int MakeDirPath(achar* Path, uint mode) // Must end with '/', may contain a filename at the end
+static int MakeDirPath(const achar* Path, uint mode) // Must end with '/', may contain a filename at the end
 {
  if(!Path || !*Path)return -1001;
- if(!NPTFM::NAPI::access(Path, PX::F_OK))return 0;   // The path is fully accessible already   // 'my/path' or 'my/path/file.txt'
- achar FullPath[NPTFM::PATH_MAX];
- ssize_t plen = NSTR::StrCopy(FullPath, Path, countof(FullPath));
+ if(!NPTM::NAPI::access(Path, PX::F_OK))return 0;   // The path is fully accessible already   // 'my/path' or 'my/path/file.txt'
+ achar FullPath[NPTM::PATH_MAX];
+ ssize_t plen = (ssize_t)NSTR::StrCopy(FullPath, Path, countof(FullPath));
  if(!plen)return -1002;  // Empty path
  plen = TrimFilePath(FullPath);    // Remove a file name if have any
  if(!plen)return -1003;  // Empty path
@@ -32,7 +39,7 @@ int MakeDirPath(achar* Path, uint mode) // Must end with '/', may contain a file
    if(IsFilePathDelim(FullPath[plen-1]))
     {
      while(plen && IsFilePathDelim(FullPath[plen-1]))FullPath[--plen]=0;   // Remove last slash from 'my/path/'
-     if(!NPTFM::NAPI::access(FullPath, PX::F_OK))break;    // This path level is already acessible
+     if(!NPTM::NAPI::access(FullPath, PX::F_OK))break;    // This path level is already acessible
      DirCtr++;
     }
      else plen--;
@@ -46,7 +53,7 @@ int MakeDirPath(achar* Path, uint mode) // Must end with '/', may contain a file
      FullPath[plen] = PATHDLMR;
      if(FullPath[plen+1] && !IsDirSpec(&FullPath[plen+1]))
       {
-       int res = NPTFM::NAPI::mkdir(FullPath, mode);  // A single slash is restored, try to make a directory
+       int res = NPTM::NAPI::mkdir(FullPath, (PX::mode_t)mode);  // A single slash is restored, try to make a directory
        if(res < 0)return res;
        DirCtr--;
       }

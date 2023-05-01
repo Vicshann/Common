@@ -31,12 +31,13 @@ static const inline uint8  UTF8_BYTES[] = {
     0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
     1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1, 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
     2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2, 3,3,3,3,3,3,3,3,4,4,4,4,5,5,5,5};
+// TODO: Make the table shorter by replacing values with their correspoindig counts: {192, 32, 16, 8, 4, 4}  for 0, 1, 2, 3, 4, 5
 //---------------------------------------------------------------------------
 // Convert UTF-32 character to UTF-16
 // Input:  1 UTF-32 char
 // Output: 1 - 2 UTF-16 chars
 // Return: Number of destination uint16 written
-template<typename TDst, typename TSrc> static int ChrUtf32To16(TDst Dst, TSrc Src, uint DstIdx=0, uint SrcIdx=0)
+template<typename TDst, typename TSrc> static uint ChrUtf32To16(TDst Dst, TSrc Src, uint DstIdx=0, uint SrcIdx=0)
 {
  constexpr uint32 highBegin = 0xD800;
  constexpr uint32 lowBegin  = 0xDC00;
@@ -66,36 +67,37 @@ template<typename TDst, typename TSrc> static int ChrUtf32To16(TDst Dst, TSrc Sr
 // Input:  1 UTF-32 char
 // Output: 1 - 4 UTF-8 chars
 // Return: Number of destination uint8 written
-template<typename TDst, typename TSrc> static int ChrUtf32To8(TDst Dst, TSrc Src, uint DstIdx=0, uint SrcIdx=0)
+template<typename TDst, typename TSrc> static uint ChrUtf32To8(TDst Dst, TSrc Src, uint DstIdx=0, uint SrcIdx=0)
 {
  constexpr uint32 bytemark = 0x80;
  constexpr uint32 bytemask = 0xBF;
+ using DType = typename RemoveRef<decltype(Dst[0])>::T;  // ???: static_assert on size of this type because it is expected to be of uint8 size? Or allow Dst to expand   // What type if multiple 'operator[]' is present?
 
 // short bytes;         // calculate bytes to write
  uint32 c = uint32(Src[SrcIdx]);   // No 0 detection here!
  const uint OrigIdx = DstIdx;
  if(c < 0x80)   // 1 byte         // Removed 'switch' with backward indexing to make it stream friendly
   {
-   Dst[DstIdx++] = uint8(c);   //  | FIRST_BYTE_MARK[bytes]      // {0x00, 0x00, 0xC0, 0xE0, 0xF0, 0xF8, 0xFC};
+   Dst[DstIdx++] = DType(uint8(c));   //  | FIRST_BYTE_MARK[bytes]      // {0x00, 0x00, 0xC0, 0xE0, 0xF0, 0xF8, 0xFC};
   }                                                              //  0     1     2     3     4     5     6
  else if(c < 0x800)  // 2 bytes
   {
-   Dst[DstIdx++] = uint8((c >> 6) | 0xC0);   // FIRST_BYTE_MARK[bytes]
-   Dst[DstIdx++] = uint8((c | bytemark) & bytemask);
+   Dst[DstIdx++] = DType(uint8((c >> 6) | 0xC0));   // FIRST_BYTE_MARK[bytes]
+   Dst[DstIdx++] = DType(uint8((c | bytemark) & bytemask));
   }
  else if(c < 0x10000)  // 3 bytes
   {
 BadChar:
-   Dst[DstIdx++] = uint8((c >> 12) | 0xE0);   // FIRST_BYTE_MARK[bytes]
-   Dst[DstIdx++] = uint8(((c >> 6) | bytemark) & bytemask);
-   Dst[DstIdx++] = uint8((c | bytemark) & bytemask);
+   Dst[DstIdx++] = DType(uint8((c >> 12) | 0xE0));   // FIRST_BYTE_MARK[bytes]
+   Dst[DstIdx++] = DType(uint8(((c >> 6) | bytemark) & bytemask));
+   Dst[DstIdx++] = DType(uint8((c | bytemark) & bytemask));
   }
  else if(c <= maxUtf32)   // 4 bytes
   {
-   Dst[DstIdx++] = uint8((c >> 18) | 0xF0);   // FIRST_BYTE_MARK[bytes]
-   Dst[DstIdx++] = uint8(((c >> 12) | bytemark) & bytemask);
-   Dst[DstIdx++] = uint8(((c >> 6) | bytemark) & bytemask);
-   Dst[DstIdx++] = uint8((c | bytemark) & bytemask);
+   Dst[DstIdx++] = DType(uint8((c >> 18) | 0xF0));   // FIRST_BYTE_MARK[bytes]
+   Dst[DstIdx++] = DType(uint8(((c >> 12) | bytemark) & bytemask));
+   Dst[DstIdx++] = DType(uint8(((c >> 6) | bytemark) & bytemask));
+   Dst[DstIdx++] = DType(uint8((c | bytemark) & bytemask));
   }
  else {c = IllegalChar[0]; goto BadChar;}  // 3 bytes, IllegalChar
  return DstIdx - OrigIdx;
@@ -105,7 +107,7 @@ BadChar:
 // Input:  1 - 2 UTF-16 chars
 // Output: 1 UTF-32 char
 // Return: Number of source uint16 read
-template<typename TDst, typename TSrc> static int ChrUtf16To32(TDst Dst, TSrc Src, uint DstIdx=0, uint SrcIdx=0)
+template<typename TDst, typename TSrc> static uint ChrUtf16To32(TDst Dst, TSrc Src, uint DstIdx=0, uint SrcIdx=0)
 {
  constexpr uint32 highBegin = 0xD800;
  constexpr uint32 highEnd   = 0xDBFF;
@@ -131,7 +133,7 @@ template<typename TDst, typename TSrc> static int ChrUtf16To32(TDst Dst, TSrc Sr
 // Input:  1 - 4(6?) UTF-8 chars
 // Output: 1 UTF-32 char
 // Return: Number of source uint8 read
-template<typename TDst, typename TSrc> static int ChrUtf8To32(TDst Dst, TSrc Src, uint DstIdx=0, uint SrcIdx=0)
+template<typename TDst, typename TSrc> static uint ChrUtf8To32(TDst Dst, TSrc Src, uint DstIdx=0, uint SrcIdx=0)
 {
  uint32 c = 0;
  uint8 bytes = UTF8_BYTES[uint8(Src[SrcIdx])];
@@ -188,7 +190,7 @@ template<typename TDst, typename TSrc> static uint32 ChrUtf16To8(TDst Dst, TSrc 
 //---------------------------------------------------------------------------
 // Convert UTF-32 to UTF-16
 // Return: Number of chars written to Dst
-template<typename TDst, typename TSrc> static size_t Utf32To16(TDst Dst, TSrc Src, size_t SrcChrCnt=-1, uint DstIdx=0, uint SrcIdx=0)
+template<typename TDst, typename TSrc> static size_t Utf32To16(TDst Dst, TSrc Src, size_t SrcChrCnt=(size_t)-1, uint DstIdx=0, uint SrcIdx=0)
 {
  const uint OrigIdx = DstIdx;
  for(;SrcChrCnt;SrcChrCnt--)
@@ -202,7 +204,7 @@ template<typename TDst, typename TSrc> static size_t Utf32To16(TDst Dst, TSrc Sr
 //---------------------------------------------------------------------------
 // Convert UTF-16 to UTF-32
 // Return: Number of chars written to Dst
-template<typename TDst, typename TSrc> static size_t Utf16To32(TDst Dst, TSrc Src, size_t SrcChrCnt=-1, uint DstIdx=0, uint SrcIdx=0)
+template<typename TDst, typename TSrc> static size_t Utf16To32(TDst Dst, TSrc Src, size_t SrcChrCnt=(size_t)-1, uint DstIdx=0, uint SrcIdx=0)
 {
  const uint OrigIdx = DstIdx;
  for(;SrcChrCnt;SrcChrCnt--)
@@ -217,7 +219,7 @@ template<typename TDst, typename TSrc> static size_t Utf16To32(TDst Dst, TSrc Sr
 //---------------------------------------------------------------------------
 // Convert UTF-32 to UTF-8
 // Return: Number of chars written to Dst
-template<typename TDst, typename TSrc> static size_t Utf32To8(TDst Dst, TSrc Src, size_t SrcChrCnt=-1, uint DstIdx=0, uint SrcIdx=0)
+template<typename TDst, typename TSrc> static size_t Utf32To8(TDst Dst, TSrc Src, size_t SrcChrCnt=(size_t)-1, uint DstIdx=0, uint SrcIdx=0)
 {
  const uint OrigIdx = DstIdx;
  for(;SrcChrCnt;SrcChrCnt--)
@@ -231,7 +233,7 @@ template<typename TDst, typename TSrc> static size_t Utf32To8(TDst Dst, TSrc Src
 //---------------------------------------------------------------------------
 // Convert UTF-8 to UTF-32
 // Return: Number of chars written to Dst
-template<typename TDst, typename TSrc> static size_t Utf8To32(TDst Dst, TSrc Src, size_t SrcChrCnt=-1, uint DstIdx=0, uint SrcIdx=0)
+template<typename TDst, typename TSrc> static size_t Utf8To32(TDst Dst, TSrc Src, size_t SrcChrCnt=(size_t)-1, uint DstIdx=0, uint SrcIdx=0)
 {
  const uint OrigIdx = DstIdx;
  for(;SrcChrCnt;SrcChrCnt--)
@@ -246,7 +248,7 @@ template<typename TDst, typename TSrc> static size_t Utf8To32(TDst Dst, TSrc Src
 //---------------------------------------------------------------------------
 // Convert UTF-16 to UTF-8
 // Return: Number of chars written to Dst
-template<typename TDst, typename TSrc> static size_t Utf16To8(TDst Dst, TSrc Src, size_t SrcChrCnt=-1, uint DstIdx=0, uint SrcIdx=0)
+template<typename TDst, typename TSrc> static size_t Utf16To8(TDst Dst, TSrc Src, size_t SrcChrCnt=(size_t)-1, uint DstIdx=0, uint SrcIdx=0)
 {
  const uint OrigIdx = DstIdx;
  for(;SrcChrCnt;SrcChrCnt--)
@@ -261,7 +263,7 @@ template<typename TDst, typename TSrc> static size_t Utf16To8(TDst Dst, TSrc Src
 //---------------------------------------------------------------------------
 // Convert UTF-8 to UTF-16
 // Return: Number of chars written to Dst
-template<typename TDst, typename TSrc> static size_t Utf8To16(TDst Dst, TSrc Src, size_t SrcChrCnt=-1, uint DstIdx=0, uint SrcIdx=0)
+template<typename TDst, typename TSrc> static size_t Utf8To16(TDst Dst, TSrc Src, size_t SrcChrCnt=(size_t)-1, uint DstIdx=0, uint SrcIdx=0)
 {
  const uint OrigIdx = DstIdx;
  for(;SrcChrCnt;SrcChrCnt--)

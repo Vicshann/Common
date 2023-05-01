@@ -769,7 +769,7 @@ int  ServerLoop()
 
 		bufso[0].pvBuffer  = NULL;
 		bufso[0].BufferType= SECBUFFER_TOKEN;
-      bufso[0].cbBuffer  = 0;
+        bufso[0].cbBuffer  = 0;
 		bufso[1].BufferType = SECBUFFER_EMPTY;
 		bufso[1].cbBuffer = 0;
 		bufso[1].pvBuffer = 0;
@@ -789,7 +789,7 @@ int  ServerLoop()
 			&sbout,
 			&flg,
 			0);
-
+	    DBGMSG("AcceptSecurityContext: %08X", ss);
 		InitContext = true;
 
 		if (ss == SEC_E_INCOMPLETE_MESSAGE)
@@ -909,7 +909,7 @@ void  NoFail(HRESULT hr)
 //		throw;
 	}
 //------------------------------------------------------------------------------
-PCCERT_CONTEXT  CreateOurCertificate()
+static PCCERT_CONTEXT  CreateOurCertificate(const wchar_t* Name=L"Certificate")
 {
 	// CertCreateSelfSignCertificate(0,&SubjectName,0,0,0,0,0,0);
 	HRESULT hr = 0;
@@ -926,8 +926,11 @@ PCCERT_CONTEXT  CreateOurCertificate()
 		char cb[1000] = {0};
 		sib.pbData = (BYTE*)cb; 
 		sib.cbData = 1000;
-		wchar_t*	szSubject= L"CN=Certificate";
-		if (!CertStrToNameW(CRYPT_ASN_ENCODING, szSubject,0,0,sib.pbData,&sib.cbData,NULL))return NULL;
+		wchar_t cnbuf[512];
+		lstrcpyW(cnbuf, L"CN=");
+		lstrcatW(cnbuf, Name);
+		//wchar_t*	szSubject= L"CN=Certificate";
+		if (!CertStrToNameW(CRYPT_ASN_ENCODING, cnbuf,0,0,sib.pbData,&sib.cbData,NULL))return NULL;
 			//throw;
 	
 
@@ -962,7 +965,7 @@ PCCERT_CONTEXT  CreateOurCertificate()
 
 		SYSTEMTIME et;
 		GetSystemTime(&et);
-		et.wYear += 1;
+		et.wYear += 1;	  // Default is +1 anyway
 
 		CERT_EXTENSIONS exts = {0};
 		p = CertCreateSelfSignCertificate(hProv,&sib,0,&kpi,NULL,NULL,&et,&exts);

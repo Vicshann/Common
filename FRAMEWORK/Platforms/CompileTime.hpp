@@ -91,68 +91,6 @@ template<typename T, int N, bool B = Flag<Tag<T, N>>{}.ReadSet() > struct Next
    constexpr static _finline auto FuncName(const char* s = __builtin_FUNCTION()) { return s; }    // Only the name itself, no arguments or a return type
 }; */
 //============================================================================================================
-// Packs bytes so that their in-memory representation will be same on the current platform
-template<typename T, typename V> constexpr static T RePackElements(V Arr, unsigned int BLeft)
-{
- using ElType = decltype(Arr[0]);
- static_assert(sizeof(T) > sizeof(ElType), "Destination type is smaller!");
- T Result = 0;
- if constexpr (IsBigEnd)
- {
-  for(unsigned int ctr = 0; BLeft && (ctr < (sizeof(T) / sizeof(ElType))); ctr++, BLeft--)
-   Result |= (T)Arr[ctr] << ((((sizeof(T) / sizeof(ElType))-1)-ctr) * (8*sizeof(ElType)));
- }
- else
- {
-  for(unsigned int ctr = 0; BLeft && (ctr < (sizeof(T) / sizeof(ElType))); ctr++, BLeft--)
-   Result |= (T)Arr[ctr] << (ctr * (8*sizeof(ElType)));
- }
- return Result;
-}
-//----  --------------------------------------------------------------------------------------------------------
-template<typename T> constexpr auto CTTypeChr(T* str){return *str;}  // Crashes CLANG if 'consteval'    // Returns first char of a string to use with decltype: decltype(CTTypeChr(str) // For some reason 'decltype(str[0])' does not works in template parameters
-template<typename T> consteval auto CTStrLen(T* str)
-{
- unsigned int idx = 0;
- for(;str[idx];)idx++;
- return idx;
-}
-
-// Stores a string in code instead data section(directly in instructions)
-//
-// NOTE: Even with -O1 CLANG and MSVC can pack the bytes by itself. GCC requires -O2 to pack the bytes. But the string may be put in data section because of XMM instructions
-// With manual packing, CLANG with -O2 will also puts the string into data section which makes them perfectly readable there. CLANG does not allow to set optimization modes selectively
-// MSVC, CLANG: -O0, -O1 only; GCC -O0, -O1, -O2; Or disable SSE: GCC, CLANG (-mno-sse2); MSVC (???)
-//
-template<typename T, uint N> struct CTStr
-{
- static const uint BytesLen = sizeof(T) * N;
- static const uint ArrSize  = (BytesLen / sizeof(uint)) + (bool)(BytesLen & (sizeof(uint) - 1));
-
- uint Array[ArrSize]; // size_t
-
- // A type is a literal type if: it has a trivial destructor... // A destructor is trivial if it is not user-provided... // Cannot use with the destructor as an user defined literal!
- //_finline ~CTStr() {for(uint idx=0,vo=N*sizeof(T);idx < ArrSize;vo=Array[idx],idx++)Array[idx] = (Array[idx] * N) ^ vo;}  // Implement stack cleaning on destruction  // <<<<<<<<<<<<< Move this to decrypted string holder
- consteval CTStr(const T* str, uint l) { Init(str, N); }  // Must have an useless arg to be different from another constructor
- consteval CTStr(const T(&str)[N]) { Init(str, N); }
- consteval void Init(const T* str, uint len)
- {
-  for(uint sidx = 0, didx = 0; sidx < N; didx++, sidx += sizeof(uint))Array[didx] = RePackElements<uint>(&str[sidx], N - sidx);
- }
- constexpr _finline operator const T* ()  const { return (T*)this->Array; }
- constexpr _finline const T* Ptr()  const { return (T*)this->Array; }        // (unsigned char*)"12345"_ps.Ptr()
-};
-
-// ps is embedded packed string or EncryptedString using C++20 (Fast, no index sequences required)
-template<CTStr str> consteval static const auto operator"" _ps() { return str; }   // must be in a namespace or global scope  // C++20, no inlining required if consteval and MSVC bug is finally fixed   // Examples: auto st = "Hello World!"_ps;  MyProc("Hello World!"_ps);
-
-// Examples: MyProc(_PS("Hello World!"));
-// I give up and use the ugly macro(At least it accesses 'str' only once). In C++ we cannot pass constexprness as a function argument and cannot pass 'const char*' as a template argument without complications
-//#define _PS(str) ({constexpr auto tsp = (str); CTStr<decltype(CTTypeChr(tsp)), CTStrLen(tsp)>(tsp,1);})   // In most cases this leaves an unreferenced string in data segment (Extra work for optimizer to remove it)
-#define _PS(str) NFWK::NCTM::CTStr<decltype(NFWK::NCTM::CTTypeChr(str)), NFWK::NCTM::CTStrLen(str)>(str,1)   // A clean result, but does three accesses to 'str' which may come from '__builtin_FUNCTION()', for example   // Had to use full fixed namespace paths here to be able to use thes macro anywhere
-
-// NOTE: _PS is can be encrypted if options is set but _ES is always encrypred
-// Encrypted strings should decrypt into a temporary object, not directly inplace(duplicate on stack, but allows them to be global)?
 //============================================================================================================
 /* -- Compile time counter
 using counter_A_0_1 = SCounter<struct TagA, 0, 1>;    // CtrA: struct TagA; CtrB: struct TagB; CtrC: struct TagC - You must provide an unique typename for each counter
@@ -213,7 +151,8 @@ template<typename T> constexpr _finline static T RevByteOrder(T Value) // Can be
  else return !str[i >> 3] ? ~result : CRC32A<msk, N, i + 1>(str, (result & 1) != (((unsigned char)str[i >> 3] >> (i & 7)) & 1) ? (result >> 1) ^ msk : result >> 1);
 }  */
 
-template<uint32 msk = 0xEDB88320, uint N, uint i = 0> constexpr _finline static uint32 CRC32A(const char (&str)[N], uint32 crc=0xFFFFFFFF)  // Unrolling bit hashing makes compilation speed OK again   // Only _finline can force it to compile time computation
+// constexpr version
+template<uint32 msk = 0xEDB88320, uint N, uint i = 0> constexpr _finline static uint32 CRC32(const char (&str)[N], uint32 crc=0xFFFFFFFF)  // Unrolling bit hashing makes compilation speed OK again   // Only _finline can force it to compile time computation
 {
 // int bidx = 0;
 // auto ChrCrc = [&](uint32 val) constexpr -> uint32 {return ((val & 1) != (((uint32)str[i] >> bidx++) & 1)) ? (val >> 1) ^ msk : val >> 1; };  // MSVC compiler choked on lambda and failed to inline it after fourth instance of CRC32A
@@ -228,16 +167,17 @@ template<uint32 msk = 0xEDB88320, uint N, uint i = 0> constexpr _finline static 
    crc = ((crc & 1) != (((uint32)str[i] >> 5) & 1)) ? (crc >> 1) ^ msk : crc >> 1;
    crc = ((crc & 1) != (((uint32)str[i] >> 6) & 1)) ? (crc >> 1) ^ msk : crc >> 1;
    crc = ((crc & 1) != (((uint32)str[i] >> 7) & 1)) ? (crc >> 1) ^ msk : crc >> 1;
-   return CRC32A<msk, N, i + 1>(str, crc);
+   return CRC32<msk, N, i + 1>(str, crc);
   }
  else return ~crc;
 }
-//----  --------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------
+// Runtime version
 // Because 'msk' is template param it is impossible to encrypt it  // Is it OK to leave it in a executable as is or better pass it as the function argument(right after decryption)?
-template<uint32 msk = 0xEDB88320> _finline static uint32 CRC32(char* Text, uint32 crc = 0xFFFFFFFF)   // Should it be here or moved to some other unit?  // Useful for some small injected pieces of code which do some string search
+template<uint32 msk = 0xEDB88320> constexpr _finline static uint32 Crc32(const char* Text, uint32 crc = 0xFFFFFFFF)   // Should it be here or moved to some other unit?  // Useful for some small injected pieces of code which do some string search
 {
  uint32 Val;
- for(uint i=0;(Val=Text[i]);i++)
+ for(uint i=0;(Val=uint32(Text[i]));i++)
   {
    crc = crc ^ Val;
    for(uint j=8;j;j--)crc = (crc >> 1) ^ (msk & -(crc & 1));   // TODO: Use some global magic macro to encrypt 'msk'?
@@ -245,9 +185,141 @@ template<uint32 msk = 0xEDB88320> _finline static uint32 CRC32(char* Text, uint3
  return ~crc;
 }
 
+template<uint32 msk = 0xEDB88320> constexpr _finline static uint32 Crc32(const unsigned char* Data, uint Size, uint32 crc = 0xFFFFFFFF)   // Should it be here or moved to some other unit?  // Useful for some small injected pieces of code which do some string search
+{
+ uint32 Val;
+ for(uint i=0;Size;Size--,i++)
+  {
+   crc = crc ^ Data[i];
+   for(uint j=8;j;j--)crc = (crc >> 1) ^ (msk & -(crc & 1));   // TODO: Use some global magic macro to encrypt 'msk'?
+  }
+ return ~crc;
+}
+//============================================================================================================
+
 //static_assert(CRC32A("Hello World!") == 0x1C291CA3);
 
 // TODO: CRC64
+//------------------------------------------------------------------------------------------------------------
+
+static const uint64 ctEncKey = ((uint64)CRC32(__TIME__ __DATE__) << 32) | CRC32(__DATE__ __TIME__);  //((~((unsigned int)(__DATE__[4]) * (unsigned int)(__DATE__[5])) & 0xFF) | ((~((unsigned int)(__TIME__[0]) * (unsigned int)(__TIME__[1])) & 0xFF) << 8) | ((~((unsigned int)(__TIME__[3]) * (unsigned int)(__TIME__[4])) & 0xFF) << 16) | ((~((unsigned int)(__TIME__[6]) * (unsigned int)(__TIME__[7])) & 0xFF) << 24));   // DWORD
+static const uint64 ExEncKey = 0xA1B2C3D41A2B3C4D;   // TODO: Must be same as a hardware calculated key
+
+_finline static constexpr  uint64 MakeExKeyPart(void) // Updates ExEncKeyRT // TODO: Hardware counter based
+{
+ return ExEncKey;//ExEncKeyRT;
+}
+//============================================================================================================
+// Packs bytes so that their in-memory representation will be same on the current platform
+template<typename T, typename V> constexpr static T RePackElements(V Arr, unsigned int BLeft)
+{
+ using ElType = decltype(Arr[0]);
+ static_assert(sizeof(T) > sizeof(ElType), "Destination type is smaller!");
+ T Result = 0;
+ if constexpr (IsBigEnd)
+ {
+  for(unsigned int ctr = 0; BLeft && (ctr < (sizeof(T) / sizeof(ElType))); ctr++, BLeft--)
+   Result |= (T)Arr[ctr] << ((((sizeof(T) / sizeof(ElType))-1)-ctr) * (8*sizeof(ElType)));
+ }
+ else
+ {
+  for(unsigned int ctr = 0; BLeft && (ctr < (sizeof(T) / sizeof(ElType))); ctr++, BLeft--)
+   Result |= (T)Arr[ctr] << (ctr * (8*sizeof(ElType)));
+ }
+ return Result;
+}
+//------------------------------------------------------------------------------------------------------------
+template<typename T> constexpr auto CTTypeChr(T* str){return *str;}  // Crashes CLANG if 'consteval'    // Returns first char of a string to use with decltype: decltype(CTTypeChr(str) // For some reason 'decltype(str[0])' does not works in template parameters
+template<typename T> consteval auto CTStrLen(T* str)
+{
+ unsigned int idx = 0;
+ for(;str[idx];)idx++;
+ return idx;
+}
+
+// Stores a string in code instead of data section(directly in instructions)
+//
+// NOTE: Even with -O1 CLANG and MSVC can pack the bytes by itself. GCC requires -O2 to pack the bytes. But the string may be put in data section because of XMM instructions
+// With manual packing, CLANG with -O2 will also puts the string into data section which makes them perfectly readable there. CLANG does not allow to set optimization modes selectively
+// MSVC, CLANG: -O0, -O1 only; GCC -O0, -O1, -O2; Or disable SSE: GCC, CLANG (-mno-sse2); MSVC (???)
+//
+template<typename T, uint N> struct alignas(8) CPStr
+{
+ static const uint BytesLen = sizeof(T) * N;
+ static const uint ArrSize  = ((BytesLen+(sizeof(uint)-1)) & ~(sizeof(uint)-1)) / sizeof(uint);   //(BytesLen / sizeof(uint)) + (bool)(BytesLen & (sizeof(uint) - 1));      //  AlignP2Frwd(BytesLen, sizeof(uint)); //
+
+ alignas(8) uint Array[ArrSize]; // size_t
+
+ // A type is a literal type if: it has a trivial destructor... // A destructor is trivial if it is not user-provided... // Cannot use with the destructor as an user defined literal!
+ //_finline ~CPStr() {for(uint idx=0,vo=N*sizeof(T);idx < ArrSize;vo=Array[idx],idx++)Array[idx] = (Array[idx] * N) ^ vo;}  // Implement stack cleaning on destruction  // <<<<<<<<<<<<< Move this to decrypted string holder
+ consteval CPStr(const T* str, uint l) { Init(str, N); }  // Must have an useless arg to be different from another constructor
+ consteval CPStr(const T(&str)[N]) { Init(str, N); }
+ consteval void Init(const T* str, uint len)
+ {
+  for(uint sidx = 0, didx = 0; sidx < N; didx++, sidx += sizeof(uint))Array[didx] = RePackElements<uint>(&str[sidx], N - sidx);
+ }
+
+ constexpr _finline operator const T* ()  const { return (const T*)this->Array; }
+ constexpr _finline const T* Ptr()  const { return (const T*)this->Array; }        // (unsigned char*)"12345"_ps.Ptr()
+
+};
+
+// ps is embedded packed string or EncryptedString using C++20 (Fast, no index sequences required)
+template<CPStr str> consteval static const auto operator"" _ps() { return str; }  // 'const auto' or 'auto&&' ???  // must be in a namespace or global scope  // C++20, no inlining required if consteval and MSVC bug is finally fixed   // Examples: auto st = "Hello World!"_ps;  MyProc("Hello World!"_ps);
+
+// Examples: MyProc(_PS("Hello World!"));
+// I give up and use the ugly macro(At least it accesses 'str' only once). In C++ we cannot pass constexprness as a function argument and cannot pass 'const char*' as a template argument without complications
+//#define _PS(str) ({constexpr auto tsp = (str); CPStr<decltype(CTTypeChr(tsp)), CTStrLen(tsp)>(tsp,1);})   // In most cases this leaves an unreferenced string in data segment (Extra work for optimizer to remove it)
+#define _PS(str) NFWK::NCTM::CPStr<decltype(NFWK::NCTM::CTTypeChr(str)), NFWK::NCTM::CTStrLen(str)>(str,1)   // A clean result, but does three accesses to 'str' which may come from '__builtin_FUNCTION()', for example   // Had to use full fixed namespace paths here to be able to use thes macro anywhere
+
+// NOTE: _PS can be encrypted if options is set but _ES is always encrypred
+// Encrypted strings should decrypt into a temporary object, not directly inplace(duplicate on stack, but allows them to be global)?
+
+//============================================================================================================
+template<typename T, uint N> struct alignas(8) CEStr
+{
+ using unit = uint;
+ static const uint BytesLen = sizeof(T) * N;
+ static const uint ArrSize  = ((BytesLen+(sizeof(unit)-1)) & ~(sizeof(unit)-1)) / sizeof(unit);  //  (BytesLen / sizeof(uint)) + (bool)(BytesLen & (sizeof(uint) - 1));    // AlignP2Frwd(BytesLen, sizeof(uint)); //
+ static const uint AsyKey   = ctEncKey * BytesLen;
+
+ alignas(8) unit Array[ArrSize]; // size_t    // Some systems require alignment to be 8   // volatile ? // mutable ?
+                                        // /*for(uint idx=0,vo=N*sizeof(T);idx < ArrSize;vo=Array[idx],idx++)Array[idx] = ((Array[idx] * N) ^ vo) * (__COUNTER__ * __LINE__);*/
+// _finline ~CEStr() {   }  // TODO: Implement stack cleaning on destruction  // <<<<<<<<<<<<< Move this to decrypted string holder
+ consteval CEStr(const T* str, uint l) { Init(str, N); }  // Must have an useless arg to be different from another constructor
+ consteval CEStr(const T(&str)[N]) { Init(str, N); }
+ consteval void Init(const T* str, uint len)
+ {
+  for(uint sidx = 0, didx = 0, xkey=ctEncKey ^ ExEncKey; sidx < N; didx++, sidx += sizeof(uint), xkey=RotL(xkey, 1))Array[didx] = (RePackElements<uint>(&str[sidx], N - sidx) - 0) ^ RotR(xkey, -didx & 0x0F);
+//  static_assert(Array[ArrSize-1] >> ((sizeof(uint)-1)*8) );  // Not constant expression for some reason
+ }
+//---------------------------------------------------------
+ bool _finline IsEncrypted(void) const {return ((char*)&this->Array[ArrSize])[-1];}   // Last byte should be zero when decrypted  // TODO: Make sure that encryption not leaves it as Zero (Xor is safe, +/- not)
+//---------------------------------------------------------
+_finline  const T* Decrypt(void) const
+ {
+  volatile uint* arr = (volatile uint*)UnbindPtr(this->Array); // &const_cast<CEStr<T,N>* >(this)->Array[0];  // NOTE: Without 'volatile' this entire function may be optimized away and strings will be left unencrypted
+#pragma clang loop unroll(full)  //#pragma unroll  // No effect: it will not unroll unless an optimization mode 1,2 or 3 is enabled
+  for(uint ctr=0,xkey=RotR(~ctEncKey ^ MakeExKeyPart(),3);ctr < ArrSize;ctr++, xkey=RotL(xkey, 1))arr[ctr] = (arr[ctr] ^ RotR(~RotL(xkey, 3), -ctr & 0x0F)) + 0;    // Xor key itself is encrypted
+  return (const T*)this->Array;    // NOTE: Stays unencrypted // TODO: Return CPStr which can clean itself on destruction.
+ }
+//---------------------------------------------------------
+ T operator [](int idx) const      // TODO: Decrypt by char?  // = delete;   // Why is this operator exist implicitly? It allows accesses as *Val and Val[idx] which is incorrect
+ {
+  if(idx >= N)return 0;
+  if(this->IsEncrypted())this->Decrypt();
+  return ((T*)&this->Array)[idx];       // All chars are packed sequentially
+ }
+//---------------------------------------------------------
+ constexpr _finline operator const T* ()  const { return const_cast<CEStr<T,N>* >(this)->Decrypt(); }  // constness of 'this' pointer is removed
+// constexpr _finline operator const T* ()  const { return (T*)this->Array; }
+ constexpr _finline const T* Ptr()  const { return (T*)this->Array; }
+};
+
+template<CEStr str> consteval static const auto operator"" _es() { return str; }
+
+#define _ES(str) NFWK::NCTM::CEStr<decltype(NFWK::NCTM::CTTypeChr(str)), NFWK::NCTM::CTStrLen(str)>(str,1)
+
 //============================================================================================================
 // If array type is not UINT8 then last(first?) value have padding (because of alignment) with number of bytes to exclude from full size
 // C++17 'Class Template Argument Deduction' is useless here because an extra parameters are needed
@@ -257,17 +329,17 @@ template<typename T, uint N> struct CEncArr
  static constexpr uint FullKey  = 0;//MakeUniqueKey(~((sizeof(T)*5) | (N << 23)) * N);  //~((uint)Key * (uint)ExKey);
  static constexpr bool IsBigEnd = false;
  static constexpr int  DataSize = sizeof(T) * N;
- static constexpr int  ArrSize  = AlignP2Frwd(DataSize, sizeof(uint)) / sizeof(uint);   //(sizeof(T) < sizeof(void*))?(AlignP2Frwd(sizeof(T) * N, sizeof(uint)) / sizeof(uint)):((sizeof(T) > sizeof(void*))?(N * 2):(N)); // Input array of UINT8, UINT16, UINT32, UINT64 will be packed to SIZE_T and encrypted
+ static constexpr int  ArrSize  = ((DataSize+(sizeof(uint)-1)) & ~(sizeof(uint)-1)) / sizeof(uint);   //AlignP2Frwd(DataSize, sizeof(uint)) / sizeof(uint);   //(sizeof(T) < sizeof(void*))?(AlignP2Frwd(sizeof(T) * N, sizeof(uint)) / sizeof(uint)):((sizeof(T) > sizeof(void*))?(N * 2):(N)); // Input array of UINT8, UINT16, UINT32, UINT64 will be packed to SIZE_T and encrypted
 
  uint Array[ArrSize];   // Type must be always SIZE_T to avoid calling some math functions at runtime decryption  // A source byte array is Compile-time packed to target platform byte-ordered SIZE_T
 
-//----  --------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------
 // Highest bit is expected to be a sign bit in signed types
 static constexpr _finline uint EncryptDataBlk(const uint Datb, uint Key, uint Idx)
 {
  return (uint)((sint)Datb + (sint)RotR(Key, (Idx+1) & 0x1F)) ^ ~(uint)((sint)Key + ~((sint)Idx * (sint)Idx));  // Good enough (Tested on AllZeroes)
 }
-//----  --------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------
 static constexpr _finline uint DecryptDataBlk(const uint Datb, uint Key, uint Idx)
 {
  return (uint)((sint)(Datb ^ ~(uint)((sint)Key + ~((sint)Idx * (sint)Idx))) - (sint)RotR(Key, (Idx+1) & 0x1F));
@@ -308,7 +380,7 @@ explicit constexpr _finline CEncArr(const T (&arr)[N]): Array{}   // Is it possi
   }
  else for(int Idx=0;Idx < N;Idx++)this->Array[Idx] = EncryptDataBlk(arr[Idx],FullKey,Idx);  // Same size
 }
-//----  --------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------
 constexpr _finline uint Size(const bool Encrypted=true)
 {
  uint padd = this->Array[ArrSize-1];
@@ -316,10 +388,10 @@ constexpr _finline uint Size(const bool Encrypted=true)
  if constexpr (sizeof(T) < sizeof(uint))padd >>= (sizeof(uint) - sizeof(T)) * 8;       // If merged, skip alignment bytes(No padding is added there)
  return DataSize - (padd & 0xFF);
 }
-//----  --------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------
 constexpr _finline uint BufSize(void){return ArrSize;}  // Returns size of a buffer required for decryption
 constexpr _finline void* Data(void){return this->Array;}
-//----  --------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------
 constexpr _finline void* Encrypt(void* Buf=nullptr, uint Size=0) const  // In case you need to hide an encrypted data on stack or to restore encryption of a global data  // Has to be const if the class ever instantiated as 'constexpr CEncArr MyData(0x5678ba12, 0x34de6795, {1,2,3});'
 {
  uint* DstArr = Buf?((uint*)Buf):(const_cast<uint*>(this->Array));   // If the instance declared as global or 'constexpr static' then writing to the array will result in access fault because the data is most likely has been put into a read-only section
@@ -328,11 +400,11 @@ constexpr _finline void* Encrypt(void* Buf=nullptr, uint Size=0) const  // In ca
   {
    uint val = DstArr[Idx];
    if constexpr (!IsBigEnd)RevByteOrder(val);  // SwapBytes
-   DstArr[Idx] = EncryptDataBlk(val,FullKey,Idx);;
+   DstArr[Idx] = EncryptDataBlk(val,FullKey,Idx);
   }
  return Buf;
 }
-//----  --------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------
 constexpr _finline void* Decrypt(void* Buf=nullptr, uint Size=0) const   // Has to be const if the class ever instantiated as 'constexpr CEncArr MyData(0x5678ba12, 0x34de6795, {1,2,3});'
 {
  uint* DstArr = Buf?((uint*)Buf):(const_cast<uint*>(this->Array));   // If the instance declared as global or 'constexpr static' then writing to the array will result in access fault because the data is most likely has been put into a read-only section
@@ -345,7 +417,7 @@ constexpr _finline void* Decrypt(void* Buf=nullptr, uint Size=0) const   // Has 
   }
  return Buf;
 }
-//----  --------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------
 /*uint BuildBlkArrayStr(char* Buffer, void* Data, uint DataLen, int BlkLen=4, int BlkOnLine=64, bool IsStatic=false, char* Name=nullptr)   // TODO: Use embedded strings class
 {
  if((BlkLen != 1)&&(BlkLen != 2)&&(BlkLen != 4)&&(BlkLen != 8))return 0;
@@ -384,7 +456,7 @@ constexpr _finline void* Decrypt(void* Buf=nullptr, uint Size=0) const   // Has 
  Buffer[Offs++] = ' '; Buffer[Offs++] = '}'; Buffer[Offs++] = ')'; Buffer[Offs++] = ';'; Buffer[Offs++] = '\r'; Buffer[Offs++] = '\n';
  return Offs;
 } */
-//----  --------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------
 
 };
 //============================================================================================================

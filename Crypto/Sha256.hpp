@@ -1,83 +1,95 @@
 // //////////////////////////////////////////////////////////
-// sha256.cpp
+// sha256.h
 // Copyright (c) 2014,2015 Stephan Brumme. All rights reserved.
 // see http://create.stephan-brumme.com/disclaimer.html
 //
 
-#include "sha256.h"
+#pragma once
+
+//#include "hash.h"
+//#include <string>
 
 // big endian architectures need #define __BYTE_ORDER __BIG_ENDIAN
 #ifndef _MSC_VER
 #include <endian.h>
 #endif
 
+// define fixed size integer types
+#ifdef _MSC_VER
+// Windows
+typedef unsigned __int8  uint8_t;
+typedef unsigned __int32 uint32_t;
+typedef unsigned __int64 uint64_t;
+#else
+// GCC
+#include <stdint.h>
+#endif
 
-/// same as reset()
-SHA256::SHA256()
+
+/// compute SHA256 hash
+/** Usage:
+    SHA256 sha256;
+    std::string myHash  = sha256("Hello World");     // std::string
+    std::string myHash2 = sha256("How are you", 11); // arbitrary data, 11 bytes
+
+    // or in a streaming fashion:
+
+    SHA256 sha256;
+    while (more data available)
+      sha256.add(pointer to fresh data, number of new bytes);
+    std::string myHash3 = sha256.getHash();
+  */
+/// split into 64 byte blocks (=> 512 bits), hash is 32 bytes long
+class CSha256 //: public Hash
 {
-  reset();
+  enum { BlockSize = 512 / 8, HashBytes = 32 };
+  enum { HashValues = HashBytes / 4 };
+
+  /// size of processed data in bytes
+  uint64_t m_numBytes;
+  /// valid bytes in m_buffer
+  size_t   m_bufferSize;
+  /// bytes not processed yet
+  uint8_t  m_buffer[BlockSize];
+
+  /// hash, stored as integers
+  uint32_t m_hash[HashValues];
+
+
+static inline uint32_t rotate(uint32_t a, uint32_t c)
+{
+  return (a >> c) | (a << (32 - c));
 }
-
-
-/// restart
-void SHA256::reset()
+//------------------------------------------------------------------------------
+static inline uint32_t swap(uint32_t x)
 {
-  m_numBytes   = 0;
-  m_bufferSize = 0;
-
-  // according to RFC 1321
-  m_hash[0] = 0x6a09e667;
-  m_hash[1] = 0xbb67ae85;
-  m_hash[2] = 0x3c6ef372;
-  m_hash[3] = 0xa54ff53a;
-  m_hash[4] = 0x510e527f;
-  m_hash[5] = 0x9b05688c;
-  m_hash[6] = 0x1f83d9ab;
-  m_hash[7] = 0x5be0cd19;
-}
-
-
-namespace
-{
-  inline uint32_t rotate(uint32_t a, uint32_t c)
-  {
-    return (a >> c) | (a << (32 - c));
-  }
-
-  inline uint32_t swap(uint32_t x)
-  {
 #if defined(__GNUC__) || defined(__clang__)
     return __builtin_bswap32(x);
 #endif
 #ifdef MSC_VER
     return _byteswap_ulong(x);
 #endif
-
-    return (x >> 24) |
-          ((x >>  8) & 0x0000FF00) |
-          ((x <<  8) & 0x00FF0000) |
-           (x << 24);
-  }
-
-  // mix functions for processBlock()
-  inline uint32_t f1(uint32_t e, uint32_t f, uint32_t g)
-  {
-    uint32_t term1 = rotate(e, 6) ^ rotate(e, 11) ^ rotate(e, 25);
-    uint32_t term2 = (e & f) ^ (~e & g); //(g ^ (e & (f ^ g)))
-    return term1 + term2;
-  }
-
-  inline uint32_t f2(uint32_t a, uint32_t b, uint32_t c)
-  {
-    uint32_t term1 = rotate(a, 2) ^ rotate(a, 13) ^ rotate(a, 22);
-    uint32_t term2 = ((a | b) & c) | (a & b); //(a & (b ^ c)) ^ (b & c);
-    return term1 + term2;
-  }
+ return (x >> 24) | ((x >>  8) & 0x0000FF00) | ((x <<  8) & 0x00FF0000) | (x << 24);
 }
-
-
+//------------------------------------------------------------------------------
+  // mix functions for processBlock()
+static inline uint32_t f1(uint32_t e, uint32_t f, uint32_t g)
+{
+  uint32_t term1 = rotate(e, 6) ^ rotate(e, 11) ^ rotate(e, 25);
+  uint32_t term2 = (e & f) ^ (~e & g); //(g ^ (e & (f ^ g)))
+  return term1 + term2;
+}
+//------------------------------------------------------------------------------
+static inline uint32_t f2(uint32_t a, uint32_t b, uint32_t c)
+{
+  uint32_t term1 = rotate(a, 2) ^ rotate(a, 13) ^ rotate(a, 22);
+  uint32_t term2 = ((a | b) & c) | (a & b); //(a & (b ^ c)) ^ (b & c);
+  return term1 + term2;
+}
+//------------------------------------------------------------------------------
+//------------------------------------------------------------------------------
 /// process 64 bytes
-void SHA256::processBlock(const void* data)
+void processBlock(const void* data)
 {
   // get last hash
   uint32_t a = m_hash[0];
@@ -235,54 +247,10 @@ void SHA256::processBlock(const void* data)
   m_hash[6] += g;
   m_hash[7] += h;
 }
-
-
-/// add arbitrary number of bytes
-void SHA256::add(const void* data, size_t numBytes)
-{
-  const uint8_t* current = (const uint8_t*) data;
-
-  if (m_bufferSize > 0)
-  {
-    while (numBytes > 0 && m_bufferSize < BlockSize)
-    {
-      m_buffer[m_bufferSize++] = *current++;
-      numBytes--;
-    }
-  }
-
-  // full buffer
-  if (m_bufferSize == BlockSize)
-  {
-    processBlock(m_buffer);
-    m_numBytes  += BlockSize;
-    m_bufferSize = 0;
-  }
-
-  // no more data ?
-  if (numBytes == 0)
-    return;
-
-  // process full blocks
-  while (numBytes >= BlockSize)
-  {
-    processBlock(current);
-    current    += BlockSize;
-    m_numBytes += BlockSize;
-    numBytes   -= BlockSize;
-  }
-
-  // keep remaining bytes in buffer
-  while (numBytes > 0)
-  {
-    m_buffer[m_bufferSize++] = *current++;
-    numBytes--;
-  }
-}
-
-
+//------------------------------------------------------------------------------
+/// process everything left in the internal buffer
 /// process final block, less than 64 bytes
-void SHA256::processBuffer()
+void processBuffer(void)
 {
   // the input bytes are considered as bits strings, where the first bit is the most significant bit of the byte
 
@@ -345,31 +313,88 @@ void SHA256::processBuffer()
   if (paddedLength > BlockSize)
     processBlock(extra);
 }
+//------------------------------------------------------------------------------
 
-
-/// return latest hash as 64 hex characters
-/*std::string SHA256::getHash()
+public:
+//------------------------------------------------------------------------------
+/// same as reset()
+CSha256(void)
 {
-  // compute hash (as raw bytes)
-  unsigned char rawHash[HashBytes];
-  getHash(rawHash);
+ this->Reset();
+}
+//------------------------------------------------------------------------------
+/// restart
+void Reset(void)
+{
+  m_numBytes   = 0;
+  m_bufferSize = 0;
 
-  // convert to hex string
-  std::string result;
-  result.reserve(2 * HashBytes);
-  for (int i = 0; i < HashBytes; i++)
+  // according to RFC 1321
+  m_hash[0] = 0x6a09e667;
+  m_hash[1] = 0xbb67ae85;
+  m_hash[2] = 0x3c6ef372;
+  m_hash[3] = 0xa54ff53a;
+  m_hash[4] = 0x510e527f;
+  m_hash[5] = 0x9b05688c;
+  m_hash[6] = 0x1f83d9ab;
+  m_hash[7] = 0x5be0cd19;
+}
+//------------------------------------------------------------------------------
+
+  /// compute SHA256 of a memory block
+//  std::string operator()(const void* data, size_t numBytes);
+  /// compute SHA256 of a string, excluding final zero
+//  std::string operator()(const std::string& text);
+
+  /// add arbitrary number of bytes
+/// add arbitrary number of bytes
+void Update(const void* data, size_t numBytes)
+{
+  const uint8_t* current = (const uint8_t*) data;
+
+  if (m_bufferSize > 0)
   {
-    static const char dec2hex[16+1] = "0123456789abcdef";
-    result += dec2hex[(rawHash[i] >> 4) & 15];
-    result += dec2hex[ rawHash[i]       & 15];
+    while (numBytes > 0 && m_bufferSize < BlockSize)
+    {
+      m_buffer[m_bufferSize++] = *current++;
+      numBytes--;
+    }
   }
 
-  return result;
-} */
+  // full buffer
+  if (m_bufferSize == BlockSize)
+  {
+    processBlock(m_buffer);
+    m_numBytes  += BlockSize;
+    m_bufferSize = 0;
+  }
 
+  // no more data ?
+  if (numBytes == 0)
+    return;
 
+  // process full blocks
+  while (numBytes >= BlockSize)
+  {
+    processBlock(current);
+    current    += BlockSize;
+    m_numBytes += BlockSize;
+    numBytes   -= BlockSize;
+  }
+
+  // keep remaining bytes in buffer
+  while (numBytes > 0)
+  {
+    m_buffer[m_bufferSize++] = *current++;
+    numBytes--;
+  }
+}
+//------------------------------------------------------------------------------
+  /// return latest hash as 64 hex characters
+//  std::string getHash();
+  /// return latest hash as bytes
 /// return latest hash as bytes
-void SHA256::getHash(unsigned char buffer[SHA256::HashBytes])
+void Final(unsigned char buffer[HashBytes])
 {
   // save old hash if buffer is partially filled
   uint32_t oldHash[HashValues];
@@ -391,21 +416,6 @@ void SHA256::getHash(unsigned char buffer[SHA256::HashBytes])
     m_hash[i] = oldHash[i];
   }
 }
+//------------------------------------------------------------------------------
 
-
-/// compute SHA256 of a memory block
-/*std::string SHA256::operator()(const void* data, size_t numBytes)
-{
-  reset();
-  add(data, numBytes);
-  return getHash();
-}
-
-
-/// compute SHA256 of a string, excluding final zero
-std::string SHA256::operator()(const std::string& text)
-{
-  reset();
-  add(text.c_str(), text.size());
-  return getHash();
-}*/
+};

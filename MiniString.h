@@ -465,6 +465,33 @@ int Count(BYTE chr, int from=0)
    return true;
   }
 //----------------------
+UINT RemoveChars(char* Chars)
+{
+ UINT FullSize = this->SLength;
+ UINT MatchCtr = 0;
+ for(UINT idx=0;idx < FullSize;idx++)
+  {
+   BYTE ChrA = this->Data[idx];
+   BYTE ChrB = 0;
+   bool LastMatch = false;
+   for(UINT ctr=0;ChrB=Chars[ctr];ctr++)
+    {
+	 LastMatch = (ChrB == ChrA);
+	 if(LastMatch){MatchCtr++; break;}
+	}
+   if(MatchCtr && !LastMatch)
+	{
+	 memmove(&this->Data[idx-MatchCtr], &this->Data[idx], this->SLength-idx);
+	 idx -=	MatchCtr;
+	 FullSize -= MatchCtr;
+	 MatchCtr  = 0;
+	}
+  }
+ this->SLength = FullSize - MatchCtr;
+ this->ResizeFor(this->SLength);
+ return this->SLength;
+}
+//----------------------
  bool FromFile(PVOID FileName)     // Corrpts CMiniStr when trying to load a 140mb file!
   {
    HANDLE hFile;

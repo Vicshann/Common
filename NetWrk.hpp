@@ -21,7 +21,7 @@
 //#include <windows.h>
 //#include <Winsock2.h>
 //#include <Wininet.h>
-#include "ssl.hpp"
+#include "SSL\ssl.hpp"
 #ifndef NETWNOGZ
 #include "gzip.h"
 #endif
@@ -195,6 +195,7 @@ static void SplitURL(LPSTR Url, CMiniStr& Host, CMiniStr& Path)
    Path = ppage;
   }
    else if(phost)Host = phost;
+          else Host = Url;
 }
 //------------------------------------------------------------------------------------------------------------
 static int GetHttpHeaderParam(char* ParName, CMiniStr& Header, CMiniStr& ParVal, bool CaseSens=false)
@@ -314,9 +315,10 @@ int GetResponse(CMiniStr& Rsp)
 static int GetResponseContent(CMiniStr& Rsp, CMiniStr& Content, bool NeedOK=false)    // TODO: Decode Url encoded content?
 {
  Content.Clear();
- if((Rsp.Length() < 5) || (NSTR::CompareIC("HTTP/", Rsp.c_str()) >= 0)){Content = Rsp; return 1;}
+ int LnEnd = NSTR::CharOffsetSC(Rsp.c_str(), '\r', 0, Rsp.Length());
+ if((Rsp.Length() < 5) || (NSTR::StrOffset<NSTR::ChrOpSiLC<> >(Rsp.c_str(), "HTTP/", 0, LnEnd) < 0)){Content = Rsp; return 1;}         //(NSTR::CompareIC("HTTP/", Rsp.c_str()) >= 0)
  int epos = NSTR::StrOffset<NSTR::ChrOpSiLC<> >((CHAR*)Rsp.c_data(), "\r\n\r\n", 0, Rsp.Length());
- if(NeedOK)
+ if(NeedOK)   // Response only
   {
    int rpos = NSTR::StrOffset<NSTR::ChrOpSiLC<> >((CHAR*)Rsp.c_data(), "200 OK", 0, (epos > 0)?(epos):(Rsp.Length()));
    if(rpos < 0)

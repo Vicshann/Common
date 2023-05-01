@@ -1,7 +1,7 @@
 #pragma once
 
 //============================================================================================================
-/*#ifdef _ARCH_X32
+/*#ifdef ARCH_X32
 static void* PXCALL mmap(void* addr, size_t length, int prot, int flags, int fd, size_t offset)
 {
  return mmap(addr, length, prot, flags, fd, offset / MEMPAGESIZE);

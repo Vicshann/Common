@@ -14,7 +14,7 @@ CWndForm(void)
  this->Flags |= flDerWndForm;   
 }
 //------------------------------------------------------------------------------------------------------------
-int Create(LPCWSTR WndName, SWDim& Wdim, HWND hParentWnd, DWORD Style=0, DWORD ExStyle=0, HICON hWndIcon=LoadIconW(NULL, (LPCWSTR)IDI_APPLICATION), HBRUSH hBgrBrush=GetSysColorBrush(COLOR_BTNFACE))
+int Create(SWDim& Wdim, LPCWSTR WndName=L"", DWORD Style=0, DWORD ExStyle=0, HWND hParentWnd=NULL, HICON hWndIcon=LoadIconW(NULL, (LPCWSTR)IDI_APPLICATION), HBRUSH hBgrBrush=GetSysColorBrush(COLOR_BTNFACE))
 {
  WNDCLASSEXW wcls; 
  WCHAR WCName[256];
