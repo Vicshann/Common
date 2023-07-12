@@ -740,6 +740,7 @@ bool Truncate(UINT NewCnt)
    bool format = (Flags & coFormat);
    bool scopedtp  = false;
    bool knowntype = true;
+  // CMiniStr str;	  // To speed up things
    if(format){if(str.Length())str += "\r\n";str.AddChars(0x20,indent);}
    if(this->Name){str += NormalStrToJsonStr(this->Name,0,nouc); str.AddChars(':');}   // Or check if Parent is an Object    // Masking chars in names IS reqoired by JSON standard?
    switch(this->Type)
@@ -823,6 +824,7 @@ bool Truncate(UINT NewCnt)
 	 Buf[20] = 0;
 	 str += Val;
 	}
+  // dst += str;
   }
 //--------------
  void ToString(CMiniStr &str, UINT Flags=coNone) // The resulting String is copied?

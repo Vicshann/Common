@@ -7,7 +7,7 @@
 _SYSENTRY sint _scall AppEntryPoint(vptr ArgA, vptr ArgB, vptr ArgC) noexcept  // On Windows ArgA is PEB ptr
 {
  NPTM::SFWCTX ctx;
- ctx.Initialize(GETSTKFRAME(), ArgA, ArgB, ArgC, InitCon);
+ ctx.Initialize(GETSTKFRAME(), ArgA, ArgB, ArgC, NCFG::InitCon);
  CAppMain app;           // Included somewhere above
  sint stat = -10000;
  if(app.Initialize(ArgA, ArgB, ArgC) >= 0)

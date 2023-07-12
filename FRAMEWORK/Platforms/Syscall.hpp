@@ -3,11 +3,13 @@
 
 struct NSYSC
 {
+//===========================================================================
+//                              SYSCALL TABLE
 //---------------------------------------------------------------------------
 // TODO: Implement obfuscation
 //namespace NPRIVATE
 //{
-#if defined(SYS_UNIX) || defined(SYS_ANDROID) || defined(SYS_MACOS)
+#if defined(PLT_LIN_USR) || defined(PLT_MAC_USR)
 
 template<int x86_32, int x86_64, int arm_32, int arm_64, int BSD_MAC> struct DSC   // Can be used for Kernel too
 {
@@ -167,13 +169,25 @@ enum class ESysCNum: int { //                   x86_32  x86_64  arm_32  arm_64  
                            fdatasync =    DSC<  148,    75,     148,    83,     -2        >::V,
                            fcntl =        DSC<  55,     72,     55,     25,     -2        >::V,
                            dup3 =         DSC<  330,    292,    358,    24,     -2        >::V,   // was added to Linux in version 2.6.27
-                           dup =          DSC<  41,     32,     41,     23,     -2        >::V
+                           dup =          DSC<  41,     32,     41,     23,     -2        >::V,
+//                   --- DATE/TIME
+                           gettimeofday = DSC<  78,     96,     78,     169,    -2        >::V,
+                           settimeofday = DSC<  79,     164,    79,     170,    -2        >::V,
 };
 #endif
-
-static constexpr const int MaxStubSize = 16;
+//===========================================================================
+//                                  STUBS
 //---------------------------------------------------------------------------
-#if defined(SYS_MACOS)
+static constexpr const int MaxStubSize =
+#ifdef FWK_OLD_UBOOT
+48;
+#else
+16;
+#endif
+//---------------------------------------------------------------------------
+//                              MacOS
+//---------------------------------------------------------------------------
+#if defined(PLT_MAC_USR)
 /* https://embeddedartistry.com/blog/2019/05/20/exploring-startup-implementations-os-x/
 
 #define SYSCALL_CLASS_NONE  0   // Invalid
@@ -213,12 +227,14 @@ static constexpr inline uint SYSCALLMASK = 0;
 #  error "Unsupported MacOS architecture(ARM or X32)!"
 #  endif
 //---------------------------------------------------------------------------
-#elif defined(SYS_WINDOWS)
+//                              Windows
+//---------------------------------------------------------------------------
+#elif defined(PLT_WIN_USR)
 #  if defined(CPU_X86)
 #    if defined(ARCH_X64)
 
-//static consteval uint64 MakeProcID(uint64 DllHash, auto&& ProcName){return (uint64)NCTM::CRC32(ProcName)|(DllHash << 32);} 
-#define WPROCID(lh,pn) ((uint64)NCTM::CRC32(pn)|((uint64)lh << 32))
+//static consteval uint64 MakeProcID(uint64 DllHash, auto&& ProcName){return (uint64)NCRYPT::CRC32(ProcName)|(DllHash << 32);}
+#define WPROCID(lh,pn) ((uint64)NCRYPT::CRC32(pn)|((uint64)lh << 32))
 
 // 48 8B4424 30  mov rax,qword ptr ss:[rsp+30]  // NtProtectVirtualMemory(HANDLE ProcessHandle, PPVOID BaseAddress, PSIZE_T RegionSize, ULONG NewProtect, PULONG OldProtect, Syscall_Num);
 // B8 50000000   mov eax,50
@@ -243,10 +259,10 @@ static constexpr inline uint SYSCALLMASK = 0;
 // In native x32 syscalls you call NTDLL::KiFastSystemCall and system returns to NTDLL::KiFastSystemCallRet:
 //   KiFastSystemCall:
 //       B800000000 mov eax, 0
-//       8BD4       mov edx, esp                            
-//       0F34       sysenter  
+//       8BD4       mov edx, esp
+//       0F34       sysenter
 //   KiFastSystemCallRet:
-//       C3         ret                                                     
+//       C3         ret
 //
 //
 // ??? x86-32
@@ -255,7 +271,9 @@ static constexpr inline uint SYSCALLMASK = 0;
 #  error "Unsupported Windows architecture(ARM)!"
 #  endif
 //---------------------------------------------------------------------------
-#elif defined(SYS_LINUX)
+//                              Linux
+//---------------------------------------------------------------------------
+#elif defined(PLT_LIN_USR)
 /* https://stackoverflow.com/questions/2535989/what-are-the-calling-conventions-for-unix-linux-system-calls-and-user-space-f?noredirect=1&lq=1
 https://stackoverflow.com/questions/46087730/what-happens-if-you-use-the-32-bit-int-0x80-linux-abi-in-64-bit-code
 
@@ -310,6 +328,80 @@ static constexpr inline uint SYSCALLMASK = 0;
      #endif
 #  endif
 //---------------------------------------------------------------------------
+//                                U-BOOT
+//---------------------------------------------------------------------------
+#elif defined(PLT_UBOOT)
+static constexpr inline uint8 syscall_tmpl[MaxStubSize] = {  // Used as a template for all syscalls
+#  if defined(CPU_ARM)
+#    if defined(ARCH_X64)
+   0x4B,0x00,0x00,0x58,   // LDR  X11, [PC,8]
+   0x60,0x01,0x1F,0xD6,   // BR   X11
+   0,0,0,0,
+   0,0,0,0
+};   // Arm64
+static constexpr inline uint SYSCALLOFFS = 8;  // Offset of uint32 in bytes
+static constexpr inline uint SYSCALLSFTL = 0;  // Offset of value in bits (Left shift)
+static constexpr inline uint SYSCALLMASK = 0;
+#    else       // Arm32      // No safe temporary registers on Arm32?
+#ifdef FWK_OLD_UBOOT           // An old U-BOOT uses R8 as its context register but Clang explicitly supports only -ffixed-r9
+   0x24,0xE0,0x8F,0xE5,        //  STR             LR, off_48
+   0x08,0xE0,0xA0,0xE1,        //  MOV             LR, R8
+   0x09,0x80,0xA0,0xE1,        //  MOV             R8, R9
+   0x0E,0x90,0xA0,0xE1,        //  MOV             R9, LR
+   0x00,0xE0,0x8F,0xE2,        //  ADR             LR, loc_34
+   0x0C,0xF0,0x9F,0xE5,        //  LDR             PC, =sub_0
+   0x09,0xE0,0xA0,0xE1,        //  MOV             LR, R9
+   0x08,0x90,0xA0,0xE1,        //  MOV             R9, R8
+   0x0E,0x80,0xA0,0xE1,        //  MOV             R8, LR
+   0x00,0xF0,0x9F,0xE5,        //  LDR             PC, =sub_0
+   0,0,0,0,                    //  ProcPtr
+   0,0,0,0,                    //  OrigLR
+};
+/*
+__asm volatile (        // NOTE: This stub will not support hooks (recursion)
+  "str LR, OrigLR\n"    // Save original return addr
+  "mov LR, R8\n"        // Clang uses R8 for something and expects it to be preserved
+  "mov R8, R9\n"        // UBOOT context
+  "mov R9, LR\n"        // Original R8
+  "adr LR, RetStub\n"   // R14
+  "ldr PC, ProcPtr\n"   // R15
+  "RetStub: mov LR, R9\n"
+  "mov R9, R8\n"
+  "mov R8, LR\n"
+  "ldr PC, OrigLR\n"
+  "ProcPtr: .word 0\n"
+  "OrigLR:  .word 0\n"  // R14   // Any return stub will do so hooks will be OK
+);
+*/
+#pragma message(">>> OLD U-BOOT!")
+static constexpr inline uint SYSCALLOFFS = 40;
+#else
+   0x00,0xF0,0x9F,0xE5,      // LDR  R15, [PC,8]  // R15 is PC
+   0,0,0,0,
+   0,0,0,0,
+   0,0,0,0,
+};
+static constexpr inline uint SYSCALLOFFS = 8;
+#endif
+static constexpr inline uint SYSCALLSFTL = 0;
+static constexpr inline uint SYSCALLMASK = 0;
+#    endif    // ARCH_X64
+#  elif defined(CPU_X86)
+#    if defined(ARCH_X64)     // X86-64
+1,2,3,4
+};
+static constexpr inline uint SYSCALLOFFS = 0;
+static constexpr inline uint SYSCALLSFTL = 0;
+static constexpr inline uint SYSCALLMASK = 0;
+     #else   // X86-32
+1,2,3,4
+};  // x86_32
+static constexpr inline uint SYSCALLOFFS = 0;
+static constexpr inline uint SYSCALLSFTL = 0;
+static constexpr inline uint SYSCALLMASK = 0;
+     #endif
+#  endif
+//---------------------------------------------------------------------------
 #else
 #error "Unimplemented platform!"
 #endif
@@ -326,6 +418,7 @@ static constexpr inline uint SYSCALLSTUBLEN = sizeof(syscall_tmpl);
 
 #define SYSC_FILL 0xFF      // TODO: Change at compile time
 #define DECL_SYSCALL(id,Func,Name) SC_STUB_DEF NSYSC::SFuncStub<(uint32)id,decltype(Func)> Name alignas(16);
+#define DECL_SYSCALLVA(id,Func,Name) SC_STUB_DEF NSYSC::SFuncStubVA<(uint32)id,decltype(Func)> Name alignas(16);
 
 // No nesting:(
 // https://cplusplus.com/forum/general/87429/
@@ -334,25 +427,21 @@ static constexpr inline uint SYSCALLSTUBLEN = sizeof(syscall_tmpl);
 
 // TODO: Try to avoid duplicates and use generic syscall code, and store only a jmp in SFuncStub
 
-//template<class> struct SFuncStub;
-template<uint64, class> struct SFuncStub;
-template<uint64 val, class TRet, class... TPar> struct SFuncStub<val, TRet(TPar...)>
+template<uint64 val> struct SStubBase
 {
 // TODO: On Windows X32 Calculate size of arguments and update last two bytes in the stub if last instr is retn (3 bytes, 0xC2)
-// using BType    = SFuncStub<0,int(int)>;  // Base type to access members
- using TFuncPtr = TRet (*)(TPar...);
+
  SCVR uint32 ID       = val;
  SCVR uint32 ExID     = val >> 32;
- SCVR int    ArgNum   = sizeof...(TPar);
  SCVR int    StubSize = SYSCALLSTUBLEN;   // Let it be copyable with __m256 ? Why?
  SCVR uint8  StubFill = SYSC_FILL;
  alignas(16) uint8 Stub[StubSize];      // TFuncPtr ptr;  // TReturn (*ptr)(TParameter...);
 
 //-------------------------
- consteval inline SFuncStub(void)  // TODO: Fill with random if PROTECT is enabled?   // TODO: Spread 'val' bits across the stub (by 2 bits, from low, store in first and last)
+ consteval inline SStubBase(void)  // TODO: Fill with random if PROTECT is enabled?   // TODO: Spread 'val' bits across the stub (by 2 bits, from low, store in first and last)
  {
   static_assert((sizeof(*this) % 16) == 0, "Stub size is inappropriate!");
-  if constexpr (InitSyscalls)    // Not on Windows
+  if constexpr (NCFG::InitSyscalls)    // Not on Windows
    {
     for(uint ctr=0;ctr < StubSize;ctr++)this->Stub[ctr] = syscall_tmpl[ctr];  // memcpy(&this->Stub, &syscall_tmpl, StubSize);   // NOTE: Should be inlined
     uint32 IVal = uint32(this->Stub[SYSCALLOFFS]) | uint32(this->Stub[SYSCALLOFFS+1] << 8) | uint32(this->Stub[SYSCALLOFFS+2] << 16) | uint32(this->Stub[SYSCALLOFFS+3] << 24);        // LE
@@ -371,9 +460,8 @@ template<uint64 val, class TRet, class... TPar> struct SFuncStub<val, TRet(TPar.
      }
  }
 //-------------------------
-_finline TRet operator()(TPar... params) const {return ((const TFuncPtr)&Stub)(params...);}     //return ptr(params...);  // asm volatile ("nop" ::: "memory")
-//-------------------------
 template<typename T> _finline T GetPtr(void) const {return (T)&Stub;}
+template<typename T> _finline T GetPtrSC(void) const {return (T)&Stub[SYSCALLOFFS];}
 //-------------------------
 // On Windows it has to be called at runtime, after real syscall numbers are found
 /* constexpr _finline void StoreID(uint32 id=val) const
@@ -411,6 +499,33 @@ template<uint Size> static _finline void InitStubArray(void* StubsArr)
  static_assert((Size % sizeof(BType)) == 0, "Stub array size is inappropriate!");
  for (uint ctr=0,total=Size/sizeof(BType);ctr < total;ctr++)(((BType*)StubsArr)[ctr]).Init();
 } */
+//-------------------------
+};
+//---------------------------------------------------------------------------
+
+
+//template<class> struct SFuncStub;
+template<uint64, class> struct SFuncStub;
+template<uint64 val, class TRet, class... TPar> struct SFuncStub<val, TRet(TPar...)>: public SStubBase<val>
+{
+// using BType    = SFuncStub<0,int(int)>;  // Base type to access members
+ using TFuncPtr  = TRet (*)(TPar...);
+ SCVR int ArgNum = sizeof...(TPar);
+
+//-------------------------
+_finline TRet operator()(TPar... params) const {return ((const TFuncPtr)&this->Stub)(params...);}     //return ptr(params...);  // asm volatile ("nop" ::: "memory")
+//-------------------------
+};
+//------------------------------------------------------------------------------------------------------------
+template<uint64, class> struct SFuncStubVA;
+template<uint64 val, class TRet, class... TPar> struct SFuncStubVA<val, TRet(TPar...)>: public SStubBase<val>
+{
+// using BType    = SFuncStub<0,int(int)>;  // Base type to access members
+ using TFuncPtr  = TRet (*)(TPar..., ...);
+ SCVR int ArgNum = sizeof...(TPar);
+
+//-------------------------
+template<typename... VA> _finline TRet operator()(TPar... params, VA... vp) const {return ((const TFuncPtr)&this->Stub)(params..., vp...);}     //return ptr(params...);  // asm volatile ("nop" ::: "memory")
 //-------------------------
 };
 

@@ -13,10 +13,13 @@ struct NPTM    // Can`t be 'struct' if we want that stubs go in the real executa
 #include "ModFmtPE.hpp"
 #include "NtDll.hpp"
 #include "POSIX.hpp"
+#include "TZif.hpp"
 
 // Anything that may have a different set of system API is put here
-#if    defined(PLT_EFI)
+#if    defined(PLT_EFI)     // SYS_WINDOWS
 // TODO
+#elif  defined(PLT_UBOOT)   // SYS_LINUX
+#include "PlatUBT/Impl.hpp"
 #elif  defined(PLT_WEBASM)
 // TODO
 #elif  defined(PLT_LIN_USR)    // Put BSD support here(similair startup, ELF format)?

@@ -29,6 +29,7 @@ template<uint vLinux, uint BSD_MAC> struct DCV   // Can be used for Kernel too
 
  using PVOID    = SPTR<void,   PHT>;    // All of this is to be able to call X64 syscalls from X32 code
  using PCHAR    = SPTR<pchar,  PHT>;
+ using PCVOID   = SPTR<const void,   PHT>;
  using PCCHAR   = SPTR<const pchar,  PHT>;
  using PPCHAR   = SPTR<const pchar*, PHT>;    // achar**
 //using HANDLE   = PVOID;
@@ -45,8 +46,10 @@ template<uint vLinux, uint BSD_MAC> struct DCV   // Can be used for Kernel too
  using mode_t   = int32;  //uint32;
  using fdsc_t   = int32;
  using dev_t    = uint32;    // See makedev macro
+ //using off_t    = int64;
  using pid_t    = int;
  //using fd_t     = int;
+ using time_t   = SSIZE_T;
 
 SCVR int EOF    = -1;
 SCVR int BadFD  = -1;
@@ -272,10 +275,10 @@ enum ENode     // for mknod
 {
  S_IFMT   = 0x0000F000, // 00170000
  S_IFSOCK = 0x0000C000, // 0140000
- S_IFLNK     = 0x0000A000, // 0120000
- S_IFREG  = 0x00008000, // 0100000
+ S_IFLNK  = 0x0000A000, // 0120000    // Link
+ S_IFREG  = 0x00008000, // 0100000    // Regular file
  S_IFBLK  = 0x00006000, // 0060000
- S_IFDIR  = 0x00004000, // 0040000
+ S_IFDIR  = 0x00004000, // 0040000    // Directory
  S_IFCHR  = 0x00002000, // 0020000
  S_IFIFO  = 0x00001000, // 0010000
 // S_ISUID  = 0x00000800, // 0004000
@@ -355,17 +358,13 @@ enum ESeek
 // Repositions the file offset of the open file description associated with the file descriptor fd to the argument offset according to the directive whence
 static SSIZE_T PXCALL lseek(fdsc_t fd, SSIZE_T offset, ESeek whence);   // This definition is not good for X32, use UINT64 and llseek wrapper on X32
 
+static int64 PXCALL lseekGD(fdsc_t fd, int64 offset, ESeek whence);   // Generic definition, wraps llseek on x32
+
 // x32 only(Not present on x64)!
 static int PXCALL llseek(fdsc_t fd, uint32 offset_high, uint32 offset_low, PUINT64 result, ESeek whence);
 
 // Attempts to create a directory named pathname.
 static int PXCALL mkdir(PCCHAR pathname, mode_t mode);
-
-// Deletes a name from the filesystem.  If that name was the last link to a file and no processes have the file open, the file is deleted and the space it was using is made available for reuse.
-// If the name was the last link to a file but any processes still have the file open, the file will remain in existence until the last file descriptor referring to it is closed.
-// If the name referred to a symbolic link, the link is removed.
-// If the name referred to a socket, FIFO, or device, the name for it is removed but processes which have the object open may continue to use it.
-static int PXCALL unlink(PCCHAR pathname);
 
 // Deletes a directory, which must be empty
 static int PXCALL rmdir(PCCHAR pathname);
@@ -373,10 +372,27 @@ static int PXCALL rmdir(PCCHAR pathname);
 // Renames a file, moving it between directories if required.  Any other hard links to the file (as created using link(2)) are unaffected.  Open file descriptors for oldpath are also unaffected.
 static int PXCALL rename(PCCHAR oldpath, PCCHAR newpath);
 
-// Places the contents of the symbolic link pathname in the buffer buf, which has size bufsiz.  readlink() does not append a terminating null byte to buf.  It will (silently) truncate the contents (to a length of bufsiz characters), in case the buffer is too small to hold all of the contents.
+// Places the contents of the SYMBOLIC link pathname in the buffer buf, which has size bufsiz.  readlink() does not append a terminating null byte to buf.  It will (silently) truncate the contents (to a length of bufsiz characters), in case the buffer is too small to hold all of the contents.
 // On success return the number of bytes placed in buf. (If the returned value equals bufsiz, then truncation may have occurred.)
-static SSIZE_T PXCALL readlink(PCCHAR pathname, PCHAR buf, SIZE_T bufsiz);
+static SSIZE_T PXCALL readlink(PCCHAR pathname, PCHAR buf, SIZE_T bufsize);
 
+// Deletes a name from the filesystem.  If that name was the last link to a file and no processes have the file open, the file is deleted and the space it was using is made available for reuse.
+// If the name was the last link to a file but any processes still have the file open, the file will remain in existence until the last file descriptor referring to it is closed.
+// If the name referred to a SYMBOLIC link, the link is removed.
+// If the name referred to a socket, FIFO, or device, the name for it is removed but processes which have the object open may continue to use it.
+static int PXCALL unlink(PCCHAR pathname);
+
+// creates a new link (also known as a hard link (INODE on current FS)) to an existing file.
+// File`s Hard links all refer to same data (identified by INODE) so any of them can be moved freely within the FS
+// The file itself exist while at least one Hard Link to its INODE exists and there is open descriptors to it
+// since kernel 2.0, Linux does not do so: if oldpath is a symbolic link, then newpath is created as a (hard) link to the same symbolic link file (i.e., newpath becomes a symbolic link to the same file that oldpath refers to).
+static int PXCALL link(PCCHAR oldpath, PCCHAR newpath);
+
+// creates a SYMBOLIC link named linkpath which contains the string target.
+// Symbolic links are interpreted at run time as if the contents of the link had been substituted into the path being followed tofind a file or directory.
+// Symbolic links may contain ..  path components, which (if used at the start of the link) refer to the parent directories of that in which the link resides.
+// A symbolic link (also known as a soft link) may point to an existing file or to a nonexistent one; the latter case is known as a dangling link.
+static int PXCALL symlink(PCCHAR target, PCCHAR linkpath);
 
 enum EAcss
 {
@@ -459,12 +475,29 @@ static int PXCALL fdatasync(fdsc_t fd);
 static int PXCALL flock(fdsc_t fd, int operation);
 
 
-/*typedef long  suseconds_t;    // signed # of microseconds
-struct timeval
+// https://en.cppreference.com/w/c/chrono/timespec
+template<typename T> struct STSpec        // nanosleep, fstat (SFStat)
 {
- time_t      tv_sec;   // seconds
- suseconds_t tv_usec;  // microseconds
-};*/
+ T sec;   // Seconds      // time_t ???
+ T nsec;  // Nanoseconds  // valid values are [0, 999999999]   // long (long ong on some platforms?)
+};
+using timespec = STSpec<time_t>;
+
+template<typename T> struct STVal      // gettimeofday
+{
+ T sec;   // seconds         // time_t (long)
+ T usec;  // microseconds    // suseconds_t (long)
+};
+using timeval = STVal<time_t>;
+
+struct timezone 
+{
+ int minuteswest;     // minutes west of Greenwich 
+ int dsttime;         // type of DST correction 
+};
+
+static int PXCALL gettimeofday(timeval* tv, timezone* tz);   // Returns 0 in timezone on Linux
+static int PXCALL settimeofday(timeval* tv, timezone* tz);
 
 struct pollfd
 {
@@ -483,59 +516,73 @@ struct fd_set     // Each bit represents a triggered file descriptor. Total bits
 using nfds_t = uint32;
 static int PXCALL poll(pollfd* fds, nfds_t nfds, int timeout);   // Volatile (Flags only?)
 
+
 // https://unix.stackexchange.com/questions/84227/limits-on-the-number-of-file-descriptors
 // https://stackoverflow.com/questions/18952564/understanding-fd-set-in-unix-sys-select-h
 //static int PXCALL select(int nfds, fd_set* readfds, fd_set* writefds, fd_set* exceptfds, timeval* timeout);    // Volatile and complicated   // Ignore it completely, poll is just faster because there is no need to parse bitfields
 
 // /arch/{ARCH}/include/uapi/asm/stat.h
 // https://stackoverflow.com/questions/29249736/what-is-the-precise-definition-of-the-structure-passed-to-the-stat-system-call
-//
-struct SFStat    // Too volatile to use crossplatform?
+// Since kernel 2.5.48, the stat structure supports nanosecond resolution for the three file timestamp fields.
+// Too volatile to use crossplatform?
+struct SFStat      // x64
 {
- SIZE_T    st_dev;        // inode's device
- SIZE_T    st_ino;        // inode's number
- SIZE_T    st_nlink;      // number of hard links
-
- unsigned int  de;        // inode protection mode
- unsigned int  st_uid;    // user ID of the file's owner
- unsigned int  st_gid;    // group ID of the file's group
- unsigned int  _pad0;
- SSIZE_T     st_rdev;
- SSIZE_T     st_size;     // file size, in bytes
- SSIZE_T     st_blksize;  // optimal blocksize for I/O
- SSIZE_T     st_blocks;   // Number 512-byte blocks allocated for file
-
- SIZE_T    st_atime;      // time of last access
- SIZE_T    st_atime_nsec;
- SIZE_T    st_mtime;      // time of last data modification
- SIZE_T    st_mtime_nsec;
- SIZE_T    st_ctime;      // time of last file status change
- SIZE_T    st_ctime_nsec;
- SSIZE_T   _unused[3];
+ uint64 st_dev;
+ uint64 st_ino;
+ uint64 st_nlink;
+ uint32 st_mode;
+ uint32 st_uid;
+ uint32 st_gid;
+ uint32 __pad0;
+ uint64 st_rdev;
+ int64  st_size;
+ int64  st_blksize;
+ int64  st_blocks;  // Number 512-byte blocks allocated. 
+ STSpec<uint64> st_atime;  // The field st_atime is changed by file accesses, for example, by execve(2), mknod(2), pipe(2), utime(2) and read(2) (of more than zero bytes)
+ STSpec<uint64> st_mtime;  // The field st_mtime is changed by file modifications, for example, by mknod(2), truncate(2), utime(2) and write(2) (of more than zero bytes)
+ STSpec<uint64> st_ctime;  // The field st_ctime is changed by writing or by setting inode information (i.e., owner, group, link count, mode, etc.)
+ int64  __unused[3];
 };
 
-/*
-struct stat {
-    dev_t     st_dev;     // ID of device containing file
-    ino_t     st_ino;     // inode number
-    mode_t    st_mode;    // protection
-    nlink_t   st_nlink;   // number of hard links
-    uid_t     st_uid;     // user ID of owner
-    gid_t     st_gid;     // group ID of owner
-    dev_t     st_rdev;    // device ID (if special file)
-    off_t     st_size;    // total size, in bytes
-    blksize_t st_blksize; // blocksize for file system I/O
-    blkcnt_t  st_blocks;  // number of 512B blocks allocated
-    time_t    st_atime;   // time of last access
-    time_t    st_mtime;   // time of last modification
-    time_t    st_ctime;   // time of last status change
+struct SFStat64    // x32
+{
+ uint64  st_dev;         // ID of device containing file
+ uint8   __pad0[4];
+ uint32  __st_ino;       // inode number
+ uint32  st_mode;        // protection
+ uint32  st_nlink;       // number of hard links
+ uint32  st_uid;         // user ID of owner
+ uint32  st_gid;         // group ID of owner
+ uint64  st_rdev;        // device ID (if special file)
+ uint8   __pad3[4];
+ int64   st_size;        // total size, in bytes
+ uint32  st_blksize;     // blocksize for file system I/O
+ uint64  st_blocks;      // Number 512-byte blocks allocated. 
+ STSpec<uint32>  st_atime;       // time of last access
+ STSpec<uint32>  st_mtime;       // time of last modification  
+ STSpec<uint32>  st_ctime;       // time of last status change
+ uint64  st_ino;         // inode number
 };
-*/
 
-using PFStat = SPTR<SFStat, PHT>;
+// st_mode:
+// xxxx xxxx  xxxx xxxx  xxxx xxxOOOGGGTTT
+// O - Owner 
+// G - Group
+// T - Other
+//
+//
 
-static int PXCALL stat(PCCHAR path, PFStat buf);    // stat64 for x32 only
-static int PXCALL fstat(int fildes, PFStat buf);   // fstat64 for x32 only
+using PFStat   = SPTR<SFStat, PHT>;
+using PFStat64 = SPTR<SFStat64, PHT>;
+
+static int PXCALL stat(PCCHAR path, PFStat buf);    
+static int PXCALL stat64(PCCHAR path, PFStat64 buf);    // stat64 for x32 only
+
+static int PXCALL fstat(fdsc_t fildes, PFStat buf);   
+static int PXCALL fstat64(fdsc_t fildes, PFStat64 buf);    // fstat64 for x32 only
+
+static int PXCALL fstatat(fdsc_t dirfd, PCCHAR pathname, PFStat buf, int flags);  // newfstatat
+static int PXCALL fstatat64(fdsc_t dirfd, PCCHAR pathname, PFStat64 buf, int flags);  // stat64 for x32 only
 
 enum EATExtra
 {
@@ -546,14 +593,15 @@ enum EATExtra
 };
 
 // New, For Arm64
-static int PXCALL openat(int dirfd, PCCHAR pathname, int flags, mode_t mode);
-static int PXCALL mknodat(int dirfd, PCCHAR pathname, mode_t mode, dev_t dev);
-static int PXCALL mkdirat(int dirfd, PCCHAR pathname, mode_t mode);
-static int PXCALL unlinkat(int dirfd, PCCHAR pathname, int flags);
-static int PXCALL renameat(int olddirfd, PCCHAR oldpath, int newdirfd, PCCHAR newpath);
-static int PXCALL readlinkat(int dirfd, PCCHAR pathname, PCHAR buf, SIZE_T bufsiz);
-static int PXCALL faccessat(int dirfd, PCCHAR pathname, int mode, int flags);
-static int PXCALL fstatat(int dirfd, PCCHAR pathname, PFStat buf, int flags);
+static int PXCALL openat(fdsc_t dirfd, PCCHAR pathname, int flags, mode_t mode);
+static int PXCALL mknodat(fdsc_t dirfd, PCCHAR pathname, mode_t mode, dev_t dev);
+static int PXCALL mkdirat(fdsc_t dirfd, PCCHAR pathname, mode_t mode);
+static int PXCALL linkat(fdsc_t olddirfd, PCCHAR oldpath, fdsc_t newdirfd, PCCHAR newpath, int flags);
+static int PXCALL unlinkat(fdsc_t dirfd, PCCHAR pathname, int flags);
+static int PXCALL renameat(fdsc_t olddirfd, PCCHAR oldpath, fdsc_t newdirfd, PCCHAR newpath);
+static int PXCALL symlinkat(PCCHAR target, fdsc_t newdirfd, PCCHAR linkpath);
+static int PXCALL readlinkat(fdsc_t dirfd, PCCHAR pathname, PCHAR buf, SIZE_T bufsiz);
+static int PXCALL faccessat(fdsc_t dirfd, PCCHAR pathname, int mode, int flags);
 
 // =========================================== MEMORY ===========================================
 enum EMapProt
@@ -577,9 +625,9 @@ enum EMapFlg
  MAP_SHARED     = 0x01,                // Share changes.
  MAP_PRIVATE    = 0x02,                // Changes are private.
 
- MAP_FIXED      = 0x10,                // Interpret addr exactly.
+ MAP_FIXED      = 0x10,                // Interpret addr exactly.  MAP_FIXED_NOREPLACE is preferrable (since Linux 4.17)
  MAP_ANONYMOUS  = DCV< 0x20, 0x1000  >::V,                 // Don't use a file.  // BSD?
- MAP_ANON           = MAP_ANONYMOUS,          // allocated from memory, swap space
+ MAP_ANON       = MAP_ANONYMOUS,       // allocated from memory, swap space
  MAP_32BIT      = DCV< 0x40, 0x8000  >::V,                 // Only give out 32-bit addresses(< 4GB). // BSD?
  MAP_FILE       = 0x00,                // map from file (default)
 
@@ -600,14 +648,14 @@ enum EMapFlg
 };
 
 // Provides the same interface as mmap, except that the final argument specifies the offset into the file in 4096-byte units
-static PVOID PXCALL mmapGD(PVOID addr, SIZE_T length, uint prot, uint flags, int fd, uint64 pgoffset);    // Generic definition for x32/x64
+static PVOID PXCALL mmapGD(PVOID addr, SIZE_T length, uint prot, uint flags, fdsc_t fd, uint64 pgoffset);    // Generic definition for x32/x64
 
-static PVOID PXCALL mmap2(PVOID addr, SIZE_T length, uint prot, uint flags, int fd, SIZE_T pgoffset);     // This system call does not exist on x86-64 and ARM64
+static PVOID PXCALL mmap2(PVOID addr, SIZE_T length, uint prot, uint flags, fdsc_t fd, SIZE_T pgoffset);     // This system call does not exist on x86-64 and ARM64
 
 // Creates a new mapping in the virtual address space of the calling process.
 // Offset must be a multiple of the page size
 // Check a returned addr as ((size_t)addr & 0xFFF) and if it is non zero then we have an error code which we red as -((ssize_t)addr)
-static PVOID PXCALL mmap(PVOID addr, SIZE_T length, uint prot, uint flags, int fd, SIZE_T offset);     // Last 4 args are actually int32 (on x64 too!)   // Since kernel 2.4 glibc mmap() invokes mmap2 with an adjusted value for offset
+static PVOID PXCALL mmap(PVOID addr, SIZE_T length, uint prot, uint flags, fdsc_t fd, SIZE_T offset);     // Last 4 args are actually int32 (on x64 too!)   // Since kernel 2.4 glibc mmap() invokes mmap2 with an adjusted value for offset
 
 // Deletes the mappings for the specified address range, and causes further references to addresses within the range to generate invalid memory references.
 // The address addr must be a multiple of the page size (but length need not be).
@@ -643,6 +691,10 @@ enum EMadv
 
 // Used to give advice or directions to the kernel about the address range beginning at address addr and with size length bytes In most cases, the goal of such advice is to improve system or application performance.
 static int PXCALL madvise(PVOID addr, SIZE_T length, EMadv advice);
+
+static int PXCALL msync(PVOID addr, SIZE_T len, int flags);
+static int PXCALL mlock(PCVOID addr, SIZE_T len);
+static int PXCALL munlock(PCVOID addr, SIZE_T len);
 
 // =========================================== SOCKET ==================================
 enum ESockCall  // socketcall calls  (x86_32 only)

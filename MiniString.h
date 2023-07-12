@@ -29,11 +29,33 @@
 
 class CMiniStr
 {
+ static const UINT SizeMsk = 0x07FFFFFF;
  LPSTR  Data;
  UINT   SLength;
- //UINT   Allocated;
+// UINT   Allocated;
 
-
+//----------------------
+void SetSizeVal(UINT Len)
+{
+ this->SLength = (this->SLength & ~SizeMsk) | (Len & SizeMsk);
+}
+//----------------------
+UINT GetSizeVal(void) const
+{
+ return this->SLength & SizeMsk;
+}
+//----------------------
+void SetAllocVal(UINT Len)	 // Find pow2 tofit required size
+{
+ UINT Idx = 0;
+ while((1 << Idx) < Len)Idx++;	  // Optimize?
+ this->SLength = (this->SLength & SizeMsk) | (Idx << 27);
+}
+//----------------------
+UINT GetAllocVal(void) const	 // As pow 2
+{
+ return 1 << (this->SLength >> 27);
+}
 //----------------------
 void movemem(PBYTE Dst, PBYTE Src, UINT Len) // C++Builder`s function is broken!!!
 {
@@ -57,8 +79,19 @@ void movemem(PBYTE Dst, PBYTE Src, UINT Len) // C++Builder`s function is broken!
 //----------------------
  LPSTR ResizeFor(UINT Len)    // Do not updates SLength
  {
-  if(Len && this->Data)this->Data = (LPSTR)HeapReAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,this->Data,Len+8);
-	else if(!this->Data)this->Data = (LPSTR)HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,Len+8);
+  if(Len && this->Data)
+   {
+	UINT AlO = this->GetAllocVal();
+	this->SetAllocVal(Len);
+	UINT AlN = this->GetAllocVal();
+	if(AlO != AlN)this->Data = (LPSTR)HeapReAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,this->Data,AlN+8);
+   }
+	else if(!this->Data)
+	 {
+	  this->SetAllocVal(Len);	
+	  Len = this->GetAllocVal();
+      this->Data = (LPSTR)HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,Len+8);
+	 }
 	  else if(!Len && this->Data){HeapFree(GetProcessHeap(),0,this->Data);this->Data=NULL;}
 
   /*if(Len >= this->Allocated)
@@ -82,10 +115,12 @@ void movemem(PBYTE Dst, PBYTE Src, UINT Len) // C++Builder`s function is broken!
 public:
  LPSTR sAssign(const CMiniStr &str)
  {
-  if(!this->ResizeFor(str.Length())){this->Clear();return NULL;}  // +1 For a Zero Term char
-  memcpy(this->Data,str.Data,str.SLength); 	  //strcpy(this->Data,str.c_str());
-  this->SLength = str.SLength;
-  this->Data[this->SLength] = 0;
+  UINT len = str.Length();
+  if(!this->ResizeFor(len)){this->Clear();return NULL;}  // +1 For a Zero Term char
+  memcpy(this->Data,str.Data,len); 	  //strcpy(this->Data,str.c_str());
+  this->SetSizeVal(len); 
+  this->SetAllocVal(len);
+  this->Data[len] = 0;
   return this->Data;
  }
 //----------------------
@@ -101,8 +136,9 @@ public:
 	this->ResizeFor(Len);
 	if(!this->Data){this->SLength = 0; return NULL;}
    }
-  this->SLength = Len;
-  this->Data[this->SLength] = 0;
+  this->SetSizeVal(Len); 
+  this->SetAllocVal(Len);
+  this->Data[Len] = 0;
   return this->Data;
  }
 //----------------------
@@ -112,8 +148,9 @@ public:
   if(!Len)Len = lstrlen(str);      // Will compiler inline this function and remove this condition if it known true (when default used)?
   if(!this->ResizeFor(Len)){this->Clear();return NULL;}  // +1 For a Zero Term char
   memcpy(this->Data,str,Len); 	              // strcpy(this->Data,str);
-  this->SLength = Len;
-  this->Data[this->SLength] = 0;
+  this->SetSizeVal(Len); 
+  this->SetAllocVal(Len);
+  this->Data[Len] = 0;
   return this->Data;
  }
 //----------------------
@@ -126,10 +163,12 @@ public:
 //----------------------
  LPSTR sAppend(const CMiniStr &str)
  {
-  if(!this->ResizeFor(str.Length()+this->SLength))return NULL;
-  memcpy(&this->Data[this->SLength],str.Data,str.SLength);     //  strcpy(&this->Data[this->SLength],str.c_str());
-  this->SLength += str.SLength;
-  this->Data[this->SLength] = 0;
+  UINT len = str.Length() + this->Length();
+  if(!this->ResizeFor(len))return NULL;
+  memcpy(&this->Data[this->Length()],str.Data,str.Length());     //  strcpy(&this->Data[this->SLength],str.c_str());
+  this->SetSizeVal(len); 
+  this->SetAllocVal(len);
+  this->Data[len] = 0;
   return this->Data;
  }
 //----------------------
@@ -137,16 +176,18 @@ public:
  {
   if(!str /*|| !str[0]*/)return NULL; // str[0] - Allow for: str = "";
   if(!Len)Len = lstrlenW(str);      // Will compiler inline this function and remove this condition if it known true (when default used)?
-  if(!this->ResizeFor(Len+this->SLength))return NULL;
-  int ulen = WideCharToMultiByte(CP_ACP,0,str,Len,(LPSTR)&this->Data[this->SLength],Len,NULL,NULL);
+  if(!this->ResizeFor(Len+this->Length()))return NULL;
+  int ulen = WideCharToMultiByte(CP_ACP,0,str,Len,(LPSTR)&this->Data[this->Length()],Len,NULL,NULL);
   if(ulen < Len)
    {
 	Len = ulen;
-	this->ResizeFor(Len+this->SLength);
+	this->ResizeFor(Len+this->Length());
 	if(!this->Data){this->SLength = 0; return NULL;}
    }
-  this->SLength += Len;
-  this->Data[this->SLength] = 0;
+  UINT len = this->Length() + Len;
+  this->SetSizeVal(len); 
+  this->SetAllocVal(len);
+  this->Data[len] = 0;
   return this->Data;
  }
 //----------------------
@@ -154,11 +195,14 @@ public:
  {
   if(!Len && str)Len = lstrlen(str);      // Will compiler inline this function and remove this condition if it known true (when default used)?
   if(!Len)return this->Data; 
-  if(!this->ResizeFor(Len+this->SLength))return NULL;
-  LPSTR Dst = &this->Data[this->SLength];
+  if(!this->ResizeFor(Len+this->Length()))return NULL;
+  LPSTR Dst = &this->Data[this->Length()];
   if(str)memcpy(Dst,str,Len);    //       strcpy(&this->Data[this->SLength],str);
-  this->SLength += Len;
-  this->Data[this->SLength] = 0;
+
+  UINT len = this->Length() + Len;
+  this->SetSizeVal(len); 
+  this->SetAllocVal(len);
+  this->Data[len] = 0;
   return Dst;    // Returns ptr to beginning of an appended string
  }
 //----------------------
@@ -195,14 +239,17 @@ public:
 //----------------------
  LPSTR cInsert(const char* str, UINT Pos, UINT Len=0)
  {
-  if(Pos >= this->SLength)return this->cAppend(str, Len);   // Or just return a NULL instead?
+  if(Pos >= this->Length())return this->cAppend(str, Len);   // Or just return a NULL instead?
   if(!Len && str)Len = lstrlen(str);      // Will compiler inline this function and remove this condition if it known true (when default used)?
   if(!Len)return this->Data; 
-  if(!this->ResizeFor(Len+this->SLength))return NULL;
-  movemem((PBYTE)&this->Data[Pos+Len],(PBYTE)&this->Data[Pos],(this->SLength-Pos)+1);  // +1 for a Zero term char   // memmove
+  if(!this->ResizeFor(Len+this->Length()))return NULL;
+  movemem((PBYTE)&this->Data[Pos+Len],(PBYTE)&this->Data[Pos],(this->Length()-Pos)+1);  // +1 for a Zero term char   // memmove
   LPSTR Dst = &this->Data[Pos];
   if(str)memmove(Dst,str,Len);
-  this->SLength += Len;
+  
+  UINT len = this->Length() + Len;
+  this->SetSizeVal(len); 
+  this->SetAllocVal(len);
   return Dst;  // Returns ptr to beginning of an inserted string
  }
 //----------------------
@@ -258,7 +305,7 @@ typedef bool (_fastcall *COMPARATOR)(BYTE ChrA, BYTE ChrB);
 //----------------------
  void  Clear(void){this->ResizeFor(0); this->Initialize();}
 //----------------------
- UINT  Length(void) const {return this->SLength;}
+ UINT  Length(void) const {return this->GetSizeVal();}
 //----------------------
  PBYTE c_data(void) const {return (PBYTE)this->Data;}
 //----------------------
@@ -294,11 +341,12 @@ typedef bool (_fastcall *COMPARATOR)(BYTE ChrA, BYTE ChrB);
 
 const CMiniStr& SetLength(UINT NewLen, char fill=0x20)   // NOTE: Generates a huge and ugly code!!!
 {
- if(NewLen >  this->SLength)return this->AddChars(fill,(NewLen - this->SLength));
- if(NewLen != this->SLength)
+ if(NewLen >  this->Length())return this->AddChars(fill,(NewLen - this->Length()));
+ if(NewLen != this->Length())
   {
    this->ResizeFor(NewLen);
-   this->SLength = NewLen;
+   this->SetSizeVal(NewLen); 
+   this->SetAllocVal(NewLen);
    if(this->Data)this->Data[NewLen] = 0;
   }
  return *this;
@@ -334,8 +382,8 @@ const CMiniStr& SplitLines(UINT Width, LPSTR Delim="\r\n")
 {
  CMiniStr temps = *this;
  int dellen = lstrlen(Delim);
- this->SetLength(temps.SLength + ((temps.SLength / Width)*dellen));
- for(UINT spos = 0, dpos=0;spos < temps.SLength;)
+ this->SetLength(temps.Length() + ((temps.Length() / Width)*dellen));
+ for(UINT spos = 0, dpos=0;spos < temps.Length();)
   {
    if(spos && !(spos % Width)){memcpy(&this->Data[dpos],Delim,dellen);dpos+=dellen;}
    this->Data[dpos++] = temps[spos++];
@@ -426,48 +474,53 @@ int Count(BYTE chr, int from=0)
 //----------------------
  const CMiniStr& Delete(UINT offs, UINT cnt)
   {
-   if(offs >= this->SLength)return *this; // Nothing to delete
-   if((offs+cnt) > this->SLength){this->SetLength(offs);return *this;}
-   memmove(&this->Data[offs],&this->Data[offs+cnt],(this->SLength-(offs+cnt))+1);  // +1 for a Zero term char
-   this->SLength -= cnt;
-   this->ResizeFor(this->SLength);
+   if(offs >= this->Length())return *this; // Nothing to delete
+   if((offs+cnt) > this->Length()){this->SetLength(offs);return *this;}
+   memmove(&this->Data[offs],&this->Data[offs+cnt],(this->Length()-(offs+cnt))+1);  // +1 for a Zero term char
+   UINT len = this->Length() - cnt;
+   this->SetSizeVal(len); 
+   this->SetAllocVal(len); 
+   this->ResizeFor(len);
    return *this;
   }
 //----------------------
  bool ToWide(void)
   {
-   UINT  TmpLen = (this->SLength*sizeof(WCHAR));   // twice as size of current string
+   UINT  TmpLen = (this->Length()*sizeof(WCHAR));   // twice as size of current string
    PBYTE TmpBuf = (PBYTE)HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,TmpLen+64);
    if(!TmpBuf)return false;
-   int wlen = MultiByteToWideChar(CP_ACP,0,this->Data,this->SLength,(PWSTR)TmpBuf,this->SLength);
+   int wlen = MultiByteToWideChar(CP_ACP,0,this->Data,this->Length(),(PWSTR)TmpBuf,this->Length());
    if(wlen <= 0){HeapFree(GetProcessHeap(),0,TmpBuf); return false;}
-   this->SLength = wlen * 2;
-   this->ResizeFor(this->SLength);
-   memcpy(this->Data,TmpBuf,this->SLength);
+   UINT len = wlen * 2;
+   this->SetSizeVal(len); 
+   this->SetAllocVal(len); 
+   this->ResizeFor(len);
+   memcpy(this->Data,TmpBuf,len);
    HeapFree(GetProcessHeap(),0,TmpBuf);
    return true;
   }
 //----------------------
  bool ConvertCodePage(UINT FromCP, UINT ToCP)
   {
-   UINT  TmpLen = (this->SLength*sizeof(WCHAR));   // twice as size of current string
+   UINT  TmpLen = (this->Length()*sizeof(WCHAR));   // twice as size of current string
    PBYTE TmpBuf = (PBYTE)HeapReAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,this->Data,(TmpLen*2)+64);
    if(!TmpBuf)return false;
-   int wlen = MultiByteToWideChar(FromCP,0,this->Data,this->SLength,(PWSTR)TmpBuf,(TmpLen/2));
+   int wlen = MultiByteToWideChar(FromCP,0,this->Data,this->Length(),(PWSTR)TmpBuf,(TmpLen/2));
    if(wlen <= 0){HeapFree(GetProcessHeap(),0,TmpBuf); return false;}
    int ulen = WideCharToMultiByte(ToCP,0,(PWSTR)TmpBuf,wlen,(LPSTR)&TmpBuf[TmpLen],TmpLen,NULL,NULL);
    if(ulen <= 0){HeapFree(GetProcessHeap(),0,TmpBuf); return false;}
    this->ResizeFor(ulen); // Don`t subtract 1 from 'ulen', the manual is WRONG
-   this->SLength = ulen;
+   this->SetSizeVal(ulen); 
+   this->SetAllocVal(ulen);
    memcpy(this->Data,&TmpBuf[TmpLen],ulen); // lstrcpy(this->Data,(LPSTR)&TmpBuf[TmpLen]);
-   this->Data[this->SLength] = 0;
+   this->Data[ulen] = 0;
    HeapFree(GetProcessHeap(),0,TmpBuf); 
    return true;
   }
 //----------------------
 UINT RemoveChars(char* Chars)
 {
- UINT FullSize = this->SLength;
+ UINT FullSize = this->Length();
  UINT MatchCtr = 0;
  for(UINT idx=0;idx < FullSize;idx++)
   {
@@ -481,15 +534,18 @@ UINT RemoveChars(char* Chars)
 	}
    if(MatchCtr && !LastMatch)
 	{
-	 memmove(&this->Data[idx-MatchCtr], &this->Data[idx], this->SLength-idx);
+	 memmove(&this->Data[idx-MatchCtr], &this->Data[idx], this->Length()-idx);
 	 idx -=	MatchCtr;
 	 FullSize -= MatchCtr;
 	 MatchCtr  = 0;
 	}
   }
- this->SLength = FullSize - MatchCtr;
- this->ResizeFor(this->SLength);
- return this->SLength;
+
+ UINT len = FullSize - MatchCtr;
+ this->SetSizeVal(len); 
+ this->SetAllocVal(len); 
+ this->ResizeFor(len);
+ return len;
 }
 //----------------------
  bool FromFile(PVOID FileName)     // Corrpts CMiniStr when trying to load a 140mb file!
@@ -513,9 +569,9 @@ UINT RemoveChars(char* Chars)
      else hFile = CreateFileA((LPSTR)FileName,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
    if(hFile == INVALID_HANDLE_VALUE)return false;
    DWORD Result   = 0;
-   WriteFile(hFile,this->Data,this->SLength,&Result,NULL);
+   WriteFile(hFile,this->Data,this->Length(),&Result,NULL);
    CloseHandle(hFile);
-   return (Result == this->SLength);
+   return (Result == this->Length());
   }
 
 

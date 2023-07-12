@@ -10,7 +10,7 @@
 class CSHA1       // NOTE: Base independant
 {
 public:
- static const int HashSize = 20;
+ static inline const int HashSize = 20;    // TODO: Check that it is not occupies space anywhere when used outside of this class
 
 private:
  // Member variables

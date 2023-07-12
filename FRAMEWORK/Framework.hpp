@@ -1,8 +1,8 @@
 
 #pragma once
 
-//#ifndef _FRAMEWORK_    // These macro are used to check which header file included
-//#define _FRAMEWORK_    // Now we just use __has_include 	- a preprocessor operator to check whether an inclusion is possible. // C++17
+#ifndef _FRAMEWORK_    // These macro are used to check which header file included
+#define _FRAMEWORK_    // Now we just use __has_include 	- a preprocessor operator to check whether an inclusion is possible. // C++17  // __has_include requires include search directories to be passed to the compiler
 
 // Must be outside any namespace. This is the only external dependancy. It is header-only and very compiler specific
 //#include <intrin.h>         // Only for windows?  // Unfortunately <intrin.h> is a mess
@@ -45,11 +45,19 @@ namespace NFWK      // Must be a namespace because we are adding some namespaces
 #endif
 
 #include "Platforms/Common.hpp"       // Contains type definitions, must be in namespace to allow their inclusion with 'using namespace'
+#include "Platforms/BitOps.hpp"
+#include "Platforms/MemOps.hpp"
+namespace NCRYPT
+{
+#include "Crypto/Crc32.hpp"
+}
 #include "Platforms/CompileTime.hpp"  // Have access only to Common.hpp, everything else is 'invisible'
+#include "Platforms/ArbiNum.hpp"
 
 #include "Math.hpp"
 #include "UTF.hpp"
 #include "NumCnv.hpp"
+#include "DateTime.hpp"
 #include "StrUtils.hpp"
 #include "StrFmt.hpp"
 #include "Platforms/Platform.hpp"     // All API is defined here and inaccessible before!
@@ -68,7 +76,13 @@ using PX64 = NPTM::PX64;
 //#include "StrPool.hpp"
 #include "Arrays.hpp"
 
-#include "Crypto.hpp"
+namespace NCRYPT     // https://github.com/abbbaf/Compile-time-hash-functions
+{
+#include "Crypto/TEA.hpp"
+#include "Crypto/RC4.hpp"
+#include "Crypto/SHA1.hpp"
+#include "Crypto/Rijndael.hpp"
+};
 
 #include "AppDef.hpp"
 
@@ -79,5 +93,5 @@ using NFWK::NCTM::operator""_es;
 
 #include "Platforms/RTL.hpp"    // Must be in global namespace for the compiler to find it // Comment this out if you linking with a default Run Time Library
 
-//#endif
+#endif
 

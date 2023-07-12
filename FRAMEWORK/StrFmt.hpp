@@ -30,6 +30,116 @@ enum EFlags {
  FLAGS_ADAPT_EXP = (1U << 11U)
 };
 
+//---------------------------------------------------------------------------
+static constexpr _finline int8 ValIdxToSize(uint8 ValIdx)
+{
+ return 1 << ValIdx;
+}
+//---------------------------------------------------------------------------
+// For values of 1,2,4,8 bytes
+static consteval _finline int8 ValSizeToIdx(const int ValSize)
+{
+//                0  1  2   3  4   5   6   7  8
+// int8 sizes[] = {-1, 0, 1, -1, 2, -1, -1, -1, 3};
+
+ if(ValSize==2)return 1;      // 01
+ else if(ValSize==4)return 2; // 10
+ else if(ValSize==8)return 3; // 11
+ return 0;
+} 
+//---------------------------------------------------------------------------
+// Max 32 elements is supported. Last element is skipped (expected to be a terminating 0)
+template<typename T, uint N>static consteval _finline uint64 PackSizeBits(const T(&&arr)[N])
+{
+ uint64 res = 0;
+ for(int idx=0;idx < (N-1);idx++)res |= (uint64)ValSizeToIdx(arr[idx]) << (idx << 1);
+ return res;
+}
+//---------------------------------------------------------------------------
+// Allows 255 items for ArgNum
+static consteval size_t MakeArgCtrVal(uint ArgNum, uint64 SizeBits)
+{
+ if constexpr (IsArchX32)return ArgNum | ((SizeBits >> (sizeof(size_t)*8)) << 8);        // On x32, gets high 32 bits and stores them in the counter value
+ return ArgNum;
+}
+//---------------------------------------------------------------------------
+/*static consteval _finline int8 GetValSizeIdx(auto&& Value)
+{  
+ using VT = typename RemoveConst<typename RemoveRef<decltype(Value)>::T>::T;  // May be const
+ if constexpr (sizeof(VT)==2)return 1;      // 01
+ else if constexpr (sizeof(VT)==4)return 2; // 10
+ else if constexpr (sizeof(VT)==8)return 3; // 11 
+ return 0;
+} */
+//---------------------------------------------------------------------------
+// Returns take address of an ref objects but returns pointers as is
+// Needed because conditional expressions do not work with incompatible types which is required in folding: {((IsPtrType<RemoveRef<decltype(args)>::T>::V)?(args):(&args))...};
+static constexpr _finline vptr GetValAddr(auto&& Value)
+{
+ using VT = typename RemoveConst<typename RemoveRef<decltype(Value)>::T>::T;  // May be const
+ if constexpr (IsPtrType<VT>::V)return (vptr)Value;
+ return (vptr)&Value;
+}
+//---------------------------------------------------------------------------
+static _finline vptr* DecodeArgArray(vptr* ArgArr, uint& ArgNum, uint64& SizeBits)
+{
+ ArgNum = (size_t)ArgArr[0] & 0xFF; 
+ if constexpr (IsArchX32)SizeBits = ((uint64)((size_t)ArgArr[0] >> 8) << 32)|(size_t)ArgArr[1];
+  else SizeBits = (size_t)ArgArr[1];
+ return &ArgArr[2];
+}
+//---------------------------------------------------------------------------
+// NOTE: T is type of argument is stored in ArgList, no type of argument to be read into
+template<typename T> static constexpr _finline T GetArgAsType(uint& ArgIdx, void** ArgList, uint64 SizeBits)   // TODO: Make lambda and capture ArgList
+{
+ if constexpr (IsPtrType<T>::V)return (T)ArgList[ArgIdx++];  // Read it as a pointer itself, not pointer to a pointer variable
+  else
+  {
+   int asize = (SizeBits >> (ArgIdx << 1)) & 3;   //ValIdxToSize((SizeBits >> (ArgIdx << 1)) & 3);
+// Recover as floats
+   if constexpr (SameTypes<T, flt32>::V)
+    {
+     if(asize == 2)return *(flt32*)ArgList[ArgIdx++];   // Read as is
+    }
+   else if constexpr (SameTypes<T, flt64>::V)
+    {
+     if(asize == 3)return *(flt64*)ArgList[ArgIdx++];   // Read as is
+      else if(asize == 2)return *(flt32*)ArgList[ArgIdx++];   // Read as is
+    }
+// Recover as integers
+   if constexpr((T)-1 < 0)
+    {
+     if(asize == 0)return *(int8*)ArgList[ArgIdx++];
+     else if(asize == 1)return *(int16*)ArgList[ArgIdx++];
+     else if(asize == 2)return *(int32*)ArgList[ArgIdx++];
+     else if(asize == 3)return *(int64*)ArgList[ArgIdx++];
+    }
+   else
+    {
+     if(asize == 0)return *(uint8*)ArgList[ArgIdx++];
+     else if(asize == 1)return *(uint16*)ArgList[ArgIdx++];
+     else if(asize == 2)return *(uint32*)ArgList[ArgIdx++];
+     else if(asize == 3)return *(uint64*)ArgList[ArgIdx++];
+    }
+  }
+ return 0;  // Should not be reached
+}
+//---------------------------------------------------------------------------
+// Can store sizes for max 32 values
+// DO NOT USE! - SizeBits calrulation won`t be at compile time
+//
+/*static constexpr _finline void* GetValAddrAndSizeUpd(auto&& Value, uint64& SizeBits)
+{
+ using VT = typename RemoveConst<typename RemoveRef<decltype(Value)>::T>::T;  // May be const
+ if constexpr (IsPtrType<VT>::V)return (void*)Value;
+
+ SizeBits <<= 2;
+ if(sizeof(VT)==2)SizeBits |= 1;      // 01
+ else if(sizeof(VT)==4)SizeBits |= 2; // 10
+ else if(sizeof(VT)==8)SizeBits |= 3; // 11
+ return (void*)&Value;
+}  */
+//---------------------------------------------------------------------------
 static inline bool _is_digit(char ch)
 {
  return (ch >= '0') && (ch <= '9');
@@ -137,22 +247,23 @@ template<typename T> static size_t _ntoa(char* buffer, size_t idx, size_t maxlen
  return idx;
 }
 //---------------------------------------------------------------------------
-// NOTE: T is type of argument is stored in ArgList, no type of argument to be read into
-template<typename T> static constexpr _finline T GetArgAsType(uint& ArgIdx, void** ArgList)   // TODO: Make lambda and capture ArgList
-{
- if constexpr (IsPtrType<T>::V)return (T)ArgList[ArgIdx++];  // Read it as a pointer itself, not pointer to a pointer variable
- return *(T*)ArgList[ArgIdx++];
-}
-//---------------------------------------------------------------------------
 // TODO: Put this and all num-to-str/str-to-num functions into Format.hpp (mamespace NFMT)
 // TODO: Use a template to generate a type validation string from all passed arguments
 // TODO: Repeated chars
 // TODO: Indexed arg reuse
+// Arg sizes(bin): 00=1,01=2,10=4,11=8
+// ArgList format:
+//  size_t ArgNum
+//  size_t ArgSizes;  // Max 28(x32)/32(x64) (may be extended in the future)
+//  void*  Args...
 //
-_ninline static sint FormatToBuffer(char*  format, char* buffer, uint maxlen, uint ArgNum, void** ArgList)
+_ninline static sint FormatToBuffer(char* format, char* buffer, uint maxlen, vptr* ArgList)
 {
  size_t idx = 0U;
  uint ArgIdx = 0;
+ uint ArgNum;
+ uint64 SizeBits;
+ ArgList = DecodeArgArray(ArgList, ArgNum, SizeBits);
  while(*format && (idx < (size_t)maxlen))   // format specifier?  %[flags][width][.precision][length]
   {
    // Check if the next 4 bytes contain %(0x25) or end of string. Using the 'hasless' trick: https://graphics.stanford.edu/~seander/bithacks.html#HasLessInWord
@@ -180,7 +291,7 @@ _ninline static sint FormatToBuffer(char*  format, char* buffer, uint maxlen, ui
     unsigned int width = 0U;
     if (_is_digit(*format))width = _atoi(&format);
     else if (*format == '*') {
-      const int w = GetArgAsType<int>(ArgIdx, ArgList);  // va_arg(va, int);
+      const int w = GetArgAsType<int>(ArgIdx, ArgList, SizeBits);  // va_arg(va, int);
       if (w < 0) {flags |= FLAGS_LEFT; width = (unsigned int)-w;}    // reverse padding
       else  width = (unsigned int)w;
       format++;
@@ -193,7 +304,7 @@ _ninline static sint FormatToBuffer(char*  format, char* buffer, uint maxlen, ui
       format++;
       if (_is_digit(*format))precision = _atoi(&format);
       else if (*format == '*') {
-        const int prec = GetArgAsType<int>(ArgIdx, ArgList);  // (int)va_arg(va, int);
+        const int prec = GetArgAsType<int>(ArgIdx, ArgList, SizeBits);  // (int)va_arg(va, int);
         precision = prec > 0 ? (unsigned int)prec : 0U;
         format++;
       }
@@ -247,23 +358,23 @@ _ninline static sint FormatToBuffer(char*  format, char* buffer, uint maxlen, ui
         // convert the integer
         if (*format == 'i') {   // signed         //  || (*format == 'd')
           if (flags & FLAGS_LONG_LONG) {
-            const long long value = GetArgAsType<long long>(ArgIdx, ArgList);  // va_arg(va, long long);
+            const long long value = GetArgAsType<long long>(ArgIdx, ArgList, SizeBits);  // va_arg(va, long long);
             idx = _ntoa<unsigned long long>(buffer, idx, maxlen, (unsigned long long)(value > 0 ? value : 0 - value), value < 0, base, precision, width, flags);
           }
           else if (flags & FLAGS_LONG) {
-            const long value = GetArgAsType<long>(ArgIdx, ArgList);  // va_arg(va, long);
+            const long value = GetArgAsType<long>(ArgIdx, ArgList, SizeBits);  // va_arg(va, long);
             idx = _ntoa<unsigned long>(buffer, idx, maxlen, (unsigned long)(value > 0 ? value : 0 - value), value < 0, base, precision, width, flags);
           }
           else {
-            const int value = (flags & FLAGS_CHAR) ? GetArgAsType<char>(ArgIdx, ArgList) : (flags & FLAGS_SHORT) ? GetArgAsType<short int>(ArgIdx, ArgList) : GetArgAsType<int>(ArgIdx, ArgList);
+            const int value = (flags & FLAGS_CHAR) ? GetArgAsType<char>(ArgIdx, ArgList, SizeBits) : (flags & FLAGS_SHORT) ? GetArgAsType<short int>(ArgIdx, ArgList, SizeBits) : GetArgAsType<int>(ArgIdx, ArgList, SizeBits);
             idx = _ntoa<unsigned long>(buffer, idx, maxlen, (unsigned int)(value > 0 ? value : 0 - value), value < 0, base, precision, width, flags);
           }
         }
         else {   // unsigned
-          if (flags & FLAGS_LONG_LONG)idx = _ntoa<unsigned long long>(buffer, idx, maxlen, GetArgAsType<unsigned long long>(ArgIdx, ArgList), false, base, precision, width, flags);   // va_arg(va, unsigned long long)
-          else if (flags & FLAGS_LONG)idx = _ntoa<unsigned long>(buffer, idx, maxlen, GetArgAsType<unsigned long>(ArgIdx, ArgList), false, base, precision, width, flags);    // va_arg(va, unsigned long)
+          if (flags & FLAGS_LONG_LONG)idx = _ntoa<unsigned long long>(buffer, idx, maxlen, GetArgAsType<unsigned long long>(ArgIdx, ArgList, SizeBits), false, base, precision, width, flags);   // va_arg(va, unsigned long long)
+          else if (flags & FLAGS_LONG)idx = _ntoa<unsigned long>(buffer, idx, maxlen, GetArgAsType<unsigned long>(ArgIdx, ArgList, SizeBits), false, base, precision, width, flags);    // va_arg(va, unsigned long)
           else {
-            const unsigned int value = (flags & FLAGS_CHAR) ? GetArgAsType<unsigned char>(ArgIdx, ArgList) : (flags & FLAGS_SHORT) ? GetArgAsType<unsigned short int>(ArgIdx, ArgList) : GetArgAsType<unsigned int>(ArgIdx, ArgList);
+            const unsigned int value = (flags & FLAGS_CHAR) ? GetArgAsType<unsigned char>(ArgIdx, ArgList, SizeBits) : (flags & FLAGS_SHORT) ? GetArgAsType<unsigned short int>(ArgIdx, ArgList, SizeBits) : GetArgAsType<unsigned int>(ArgIdx, ArgList, SizeBits);
             idx = _ntoa<unsigned long>(buffer, idx, maxlen, value, false, base, precision, width, flags);
           }
         }
@@ -277,7 +388,7 @@ _ninline static sint FormatToBuffer(char*  format, char* buffer, uint maxlen, ui
         if(flags & FLAGS_HASH)prec |= 0x8000;       // ffZeroPad                      // ffCommaSep  // Or may be ffZeroPad 0x8000?
         size_t len = 0;
         char buf[52];
-        char* ptr = NCNV::ftoa_simple(GetArgAsType<double>(ArgIdx, ArgList), prec, buf, sizeof(buf), &len);   // After this we have some space at beginning of the buffer    // va_arg(va, double)
+        char* ptr = NCNV::ftoa_simple(GetArgAsType<double>(ArgIdx, ArgList, SizeBits), prec, buf, sizeof(buf), &len);   // After this we have some space at beginning of the buffer    // va_arg(va, double)
         bool negative = (*ptr == '-');
         if (!(flags & FLAGS_LEFT) && (flags & FLAGS_ZEROPAD)) {
           if (width && (negative || (flags & (FLAGS_PLUS | FLAGS_SPACE)))) width--;
@@ -309,7 +420,7 @@ _ninline static sint FormatToBuffer(char*  format, char* buffer, uint maxlen, ui
       case 'c' : {
         unsigned int l = 1U;
         if (!(flags & FLAGS_LEFT)){while (l++ < width)buffer[idx++] = ' ';}  // pre padding         //  TODO: Buffer limit
-        buffer[idx++] = GetArgAsType<char>(ArgIdx, ArgList);  // va_arg(va, int);  // char output       // out((char)va_arg(va, int), buffer, idx++, maxlen);
+        buffer[idx++] = GetArgAsType<char>(ArgIdx, ArgList, SizeBits);  // va_arg(va, int);  // char output       // out((char)va_arg(va, int), buffer, idx++, maxlen);
         if (flags & FLAGS_LEFT){while (l++ < width)buffer[idx++] = ' ';}    // post padding
         format++;
         break;
@@ -321,12 +432,12 @@ _ninline static sint FormatToBuffer(char*  format, char* buffer, uint maxlen, ui
         unsigned int l;
         if(flags & FLAGS_LONG)
          {
-          wp = GetArgAsType<wchar_t*>(ArgIdx, ArgList);  // va_arg(va, wchar_t*);
+          wp = GetArgAsType<wchar_t*>(ArgIdx, ArgList, SizeBits);  // va_arg(va, wchar_t*);
           l  = _strnlen_s(wp, precision ? precision : (size_t)-1);    // precision or a full size
          }
         else
          {
-          cp = GetArgAsType<char*>(ArgIdx, ArgList);  // va_arg(va, char*);
+          cp = GetArgAsType<char*>(ArgIdx, ArgList, SizeBits);  // va_arg(va, char*);
           l  = _strnlen_s(cp, precision ? precision : (size_t)-1);    // precision or a full size
          }
         unsigned int f = l;    // Full len  of the string
@@ -342,7 +453,7 @@ _ninline static sint FormatToBuffer(char*  format, char* buffer, uint maxlen, ui
       case 'd' :                     // LOGMSG("\r\n%#*.32D",Size,Src);
       case 'D' : {   // Width is data block size, precision is line size(single line if not specified)  // '%*D' counted dump
         if(*format == 'D')flags |= FLAGS_UPPERCASE;
-        unsigned char* DPtr  = GetArgAsType<unsigned char*>(ArgIdx, ArgList);  // va_arg(va, unsigned char*);
+        unsigned char* DPtr  = GetArgAsType<unsigned char*>(ArgIdx, ArgList, SizeBits);  // va_arg(va, unsigned char*);
         unsigned int   RLen  = precision?precision:width;   // If no precision is specified then write everything in one line
         unsigned int DelMult = (flags & FLAGS_SPACE)?3:2;
         for(unsigned int offs=0,roffs=0,rpos=0;idx < maxlen;offs++,roffs++)
@@ -385,14 +496,14 @@ _ninline static sint FormatToBuffer(char*  format, char* buffer, uint maxlen, ui
 //        width = sizeof(void*) * 2U;
         flags |= FLAGS_ZEROPAD | FLAGS_UPPERCASE;
         const bool is_ll = (sizeof(void*) == sizeof(long long)) || (flags & FLAGS_LONG);
-        if (is_ll)idx = _ntoa<unsigned long long>(buffer, idx, maxlen, (unsigned long long)GetArgAsType<void*>(ArgIdx, ArgList), false, 16U, precision, width=sizeof(long long)*2, flags);  //  (unsigned long long)va_arg(va, unsigned long long)
-          else idx = _ntoa<unsigned long>(buffer, idx, maxlen, (unsigned long)GetArgAsType<void*>(ArgIdx, ArgList), false, 16U, precision, width=sizeof(long)*2, flags); //  (unsigned long)va_arg(va, unsigned long)
+        if (is_ll)idx = _ntoa<unsigned long long>(buffer, idx, maxlen, (unsigned long long)GetArgAsType<void*>(ArgIdx, ArgList, SizeBits), false, 16U, precision, width=sizeof(long long)*2, flags);  //  (unsigned long long)va_arg(va, unsigned long long)
+          else idx = _ntoa<unsigned long>(buffer, idx, maxlen, (unsigned long)GetArgAsType<void*>(ArgIdx, ArgList, SizeBits), false, 16U, precision, width=sizeof(long)*2, flags); //  (unsigned long)va_arg(va, unsigned long)
         format++;
         break;
       }
 
       case 'n': {       // Nothing printed. The number of characters written so far is stored in the pointed location.
-        int* p = GetArgAsType<int*>(ArgIdx, ArgList);  // va_arg(va, int*);
+        int* p = GetArgAsType<int*>(ArgIdx, ArgList, SizeBits);  // va_arg(va, int*);
         *p = idx; }
         break;
 
@@ -416,6 +527,13 @@ Exit:
  va_end(args);
  return MSize;
 }*/
+//---------------------------------------------------------------------------
+static sint _finline StrFmt(achar* buffer, uint maxlen, achar* format, auto&&... args)
+{
+ constexpr uint64 sbits = NFMT::PackSizeBits((int[]){sizeof(args)...,0});  // Last 0 needed in case of zero args number (No zero arrays allowed)  
+ constexpr size_t arnum = NFMT::MakeArgCtrVal(sizeof...(args), sbits);
+ return FormatToBuffer(format, buffer, maxlen, (vptr[]){(vptr)arnum,(vptr)sbits,(NFMT::GetValAddr(args))...}); 
+}
 //---------------------------------------------------------------------------
 
 };

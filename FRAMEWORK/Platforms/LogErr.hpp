@@ -78,7 +78,12 @@ static inline volatile LDSC* CurrLog = nullptr;  // &GLog;  // No pointer assign
 //
 
 // Is overloading possible when using marcos?
-static _finline sint LogMessage(volatile LDSC* Ctx, uint32 EFlags, const char* ProcName, const achar* MsgFmt, auto&&... args) { return LogProc(MsgFmt, sizeof...(args), (void*[]){(NFWK::GetValAddr(args))...}, EFlags, Ctx, ProcName); }
+static _finline sint LogMessage(volatile LDSC* Ctx, uint32 EFlags, const char* ProcName, const achar* MsgFmt, auto&&... args)
+{
+ constexpr uint64 sbits = NFMT::PackSizeBits((int[]){sizeof(args)...,0});  // Last 0 needed in case of zero args number (No zero arrays allowed)
+ constexpr size_t arnum = NFMT::MakeArgCtrVal(sizeof...(args), sbits);
+ return LogProc(MsgFmt, (vptr[]){(vptr)arnum,(vptr)sbits,(NFMT::GetValAddr(args))...}, EFlags, Ctx, ProcName);
+}
 
 /*{
  static constexpr int NumbOfArgs = sizeof...(args);
@@ -92,15 +97,18 @@ static _finline sint LogMessage(volatile LDSC* Ctx, uint32 EFlags, const char* P
 
 // Waiting for C++25?: https://www.cppstories.com/2021/non-terminal-variadic-args/
 
-#define LOGL(flg,msg,...) NFWK::NPTM::NLOG::LogMessage(NFWK::NPTM::NLOG::CurrLog,NFWK::NPTM::NLOG::BaseMsgModes|NFWK::NPTM::NLOG::ll##flg,SRC_FUNC,msg __VA_OPT__(,) __VA_ARGS__)  // Custom leveled
-#define LOGMSG(msg,...) NFWK::NPTM::NLOG::LogMessage(NFWK::NPTM::NLOG::CurrLog,NFWK::NPTM::NLOG::BaseMsgModes,SRC_FUNC,msg __VA_OPT__(,) __VA_ARGS__)       // Unleveled
-#define LOGFAL(msg,...) NFWK::NPTM::NLOG::LogMessage(NFWK::NPTM::NLOG::CurrLog,NFWK::NPTM::NLOG::BaseMsgModes|NFWK::NPTM::NLOG::llLogFail,   SRC_FUNC,msg __VA_OPT__(,) __VA_ARGS__)
-#define LOGERR(msg,...) NFWK::NPTM::NLOG::LogMessage(NFWK::NPTM::NLOG::CurrLog,NFWK::NPTM::NLOG::BaseMsgModes|NFWK::NPTM::NLOG::llLogError,  SRC_FUNC,msg __VA_OPT__(,) __VA_ARGS__)
-#define LOGWRN(msg,...) NFWK::NPTM::NLOG::LogMessage(NFWK::NPTM::NLOG::CurrLog,NFWK::NPTM::NLOG::BaseMsgModes|NFWK::NPTM::NLOG::llLogWarning,SRC_FUNC,msg __VA_OPT__(,) __VA_ARGS__)
-#define LOGNTE(msg,...) NFWK::NPTM::NLOG::LogMessage(NFWK::NPTM::NLOG::CurrLog,NFWK::NPTM::NLOG::BaseMsgModes|NFWK::NPTM::NLOG::llLogNote,   SRC_FUNC,msg __VA_OPT__(,) __VA_ARGS__)
-#define LOGINF(msg,...) NFWK::NPTM::NLOG::LogMessage(NFWK::NPTM::NLOG::CurrLog,NFWK::NPTM::NLOG::BaseMsgModes|NFWK::NPTM::NLOG::llLogInfo,   SRC_FUNC,msg __VA_OPT__(,) __VA_ARGS__)
-#define LOGDBG(msg,...) NFWK::NPTM::NLOG::LogMessage(NFWK::NPTM::NLOG::CurrLog,NFWK::NPTM::NLOG::BaseMsgModes|NFWK::NPTM::NLOG::llLogDebug,  SRC_FUNC,msg __VA_OPT__(,) __VA_ARGS__)
-#define LOGTRC(msg,...) NFWK::NPTM::NLOG::LogMessage(NFWK::NPTM::NLOG::CurrLog,NFWK::NPTM::NLOG::BaseMsgModes|NFWK::NPTM::NLOG::llLogTrace,  SRC_FUNC,msg __VA_OPT__(,) __VA_ARGS__)
+#define LOGL(flg,msg,...) NFWK::NPTM::NLOG::LogMessage(NFWK::NPTM::NLOG::CurrLog, NFWK::NPTM::NLOG::BaseMsgModes|NFWK::NPTM::NLOG::BaseMsgFlags|NFWK::NPTM::NLOG::ll##flg,SRC_FUNC,msg __VA_OPT__(,) __VA_ARGS__)  // Custom leveled
+#define LOGMSG(msg,...) NFWK::NPTM::NLOG::LogMessage(NFWK::NPTM::NLOG::CurrLog, NFWK::NPTM::NLOG::BaseMsgModes|NFWK::NPTM::NLOG::BaseMsgFlags,SRC_FUNC,msg __VA_OPT__(,) __VA_ARGS__)       // Unleveled
+#define LOGFAL(msg,...) NFWK::NPTM::NLOG::LogMessage(NFWK::NPTM::NLOG::CurrLog, NFWK::NPTM::NLOG::BaseMsgModes|NFWK::NPTM::NLOG::BaseMsgFlags|NFWK::NPTM::NLOG::llLogFail,   SRC_FUNC,msg __VA_OPT__(,) __VA_ARGS__)
+#define LOGERR(msg,...) NFWK::NPTM::NLOG::LogMessage(NFWK::NPTM::NLOG::CurrLog, NFWK::NPTM::NLOG::BaseMsgModes|NFWK::NPTM::NLOG::BaseMsgFlags|NFWK::NPTM::NLOG::llLogError,  SRC_FUNC,msg __VA_OPT__(,) __VA_ARGS__)
+#define LOGWRN(msg,...) NFWK::NPTM::NLOG::LogMessage(NFWK::NPTM::NLOG::CurrLog, NFWK::NPTM::NLOG::BaseMsgModes|NFWK::NPTM::NLOG::BaseMsgFlags|NFWK::NPTM::NLOG::llLogWarning,SRC_FUNC,msg __VA_OPT__(,) __VA_ARGS__)
+#define LOGNTE(msg,...) NFWK::NPTM::NLOG::LogMessage(NFWK::NPTM::NLOG::CurrLog, NFWK::NPTM::NLOG::BaseMsgModes|NFWK::NPTM::NLOG::BaseMsgFlags|NFWK::NPTM::NLOG::llLogNote,   SRC_FUNC,msg __VA_OPT__(,) __VA_ARGS__)
+#define LOGINF(msg,...) NFWK::NPTM::NLOG::LogMessage(NFWK::NPTM::NLOG::CurrLog, NFWK::NPTM::NLOG::BaseMsgModes|NFWK::NPTM::NLOG::BaseMsgFlags|NFWK::NPTM::NLOG::llLogInfo,   SRC_FUNC,msg __VA_OPT__(,) __VA_ARGS__)
+#define LOGDBG(msg,...) NFWK::NPTM::NLOG::LogMessage(NFWK::NPTM::NLOG::CurrLog, NFWK::NPTM::NLOG::BaseMsgModes|NFWK::NPTM::NLOG::BaseMsgFlags|NFWK::NPTM::NLOG::llLogDebug,  SRC_FUNC,msg __VA_OPT__(,) __VA_ARGS__)
+#define LOGTRC(msg,...) NFWK::NPTM::NLOG::LogMessage(NFWK::NPTM::NLOG::CurrLog, NFWK::NPTM::NLOG::BaseMsgModes|NFWK::NPTM::NLOG::BaseMsgFlags|NFWK::NPTM::NLOG::llLogTrace,  SRC_FUNC,msg __VA_OPT__(,) __VA_ARGS__)
+
+#define OUTMSG(msg,...) NFWK::NPTM::NLOG::LogMessage(NFWK::NPTM::NLOG::CurrLog, NFWK::NPTM::NLOG::BaseMsgModes|NFWK::NPTM::NLOG::lfLineBreak, nullptr,msg __VA_OPT__(,) __VA_ARGS__)
+#define OUTTXT(msg,...) NFWK::NPTM::NLOG::LogMessage(NFWK::NPTM::NLOG::CurrLog, NFWK::NPTM::NLOG::BaseMsgModes, nullptr,msg __VA_OPT__(,) __VA_ARGS__)
 
 #ifdef DBGBUILD    // Log only in debug build
 #define DBGL    LOGL
@@ -124,8 +132,8 @@ static _finline sint LogMessage(volatile LDSC* Ctx, uint32 EFlags, const char* P
 #define DBGTRC(msg,...)
 #endif
 //------------------------------------------------------------------------------------------------------------
-// ArgNum may be RawTextSize if ArgArray is NULL and lfRawTextMsg is specified
-_ninline static sint _fcall LogProc(const achar* Message, uint ArgNum, void** ArgList, uint32 MsgFlags=BaseMsgFlags, volatile LDSC* Ctx=CurrLog, const char* ProcName=SRC_FUNC)
+// ArgList may be RawTextSize if ArgArray is NULL and lfRawTextMsg is specified
+_ninline static sint _fcall LogProc(const achar* Message, void** ArgList, uint32 MsgFlags=BaseMsgFlags, volatile LDSC* Ctx=CurrLog, const char* ProcName=SRC_FUNC)
 {
 #ifndef NOLOG
 // static volatile ULONG  MsgIdx  = 0;
@@ -147,11 +155,11 @@ _ninline static sint _fcall LogProc(const achar* Message, uint ArgNum, void** Ar
 
  // Split flags:
  uint32 LogFlag = (MsgFlags & lfMask) | (Ctx->LogModes & lfMask);  // Add from LDSC (Usually 0 in LDSC)
- uint32 LogMode = (MsgFlags & lmMask) & (Ctx->LogModes & lmMask);  // LogModes in LDSC have higher priority than in MsgFlags
+ uint32 LogMode = (MsgFlags & lmMask) & (Ctx->LogModes & lmMask);  // LogModes in LDSC have higher priority than in MsgFlags   // Anything that is not enabled in LogModes should stay disabled
 
  if(!LogMode)return -4;   // NULL text string
 
- uint32 MIndex = 0;    //_InterlockedIncrement((long*)&MsgIdx);  Ctx->MsgIndex
+ uint32 MIndex = 0;       //_InterlockedIncrement((long*)&MsgIdx);  Ctx->MsgIndex
  if(!(LogFlag & lfRawText))   // Format a normal message
   {
    MPtr = TmpBuf;
@@ -159,20 +167,20 @@ _ninline static sint _fcall LogProc(const achar* Message, uint ArgNum, void** Ar
    if(LogFlag & lfLogTime)
     {
      uint64 PrvTime = 0;  // <<<<<<< TODO // NNTDLL::GetAbstractTimeStamp(&PrvTime);           // NNTDLL::GetTicks();
-     NCNV::ConvertToHexStr(PrvTime, 16, TmpBuf, true, &Len); // Ticks time
+     NCNV::NumToHexStr(PrvTime, 16, TmpBuf, true, &Len); // Ticks time
      MSize += Len;
      TmpBuf[MSize++] = 0x20;
     }
    if(LogFlag & lfLogMsgIdx)
     {
-     NCNV::ConvertToHexStr(MIndex, 8, &TmpBuf[MSize], true, &Len);  // Message Index (For message order detection)
+     NCNV::NumToHexStr(MIndex, 8, &TmpBuf[MSize], true, &Len);  // Message Index (For message order detection)
      MSize += Len;
      TmpBuf[MSize++] = 0x20;
     }
    if(LogFlag & lfLogThID)
     {
      uint ThId = 0;  // NtCurrentThreadId()   // Should show PID too, in case of bad Fork?
-     NCNV::ConvertToHexStr(ThId, 6, &TmpBuf[MSize], true, &Len);   // Thread ID
+     NCNV::NumToHexStr(ThId, 6, &TmpBuf[MSize], true, &Len);   // Thread ID
      MSize += Len;
      TmpBuf[MSize++] = 0x20;
     }
@@ -201,7 +209,7 @@ _ninline static sint _fcall LogProc(const achar* Message, uint ArgNum, void** Ar
      TmpBuf[MSize++] = 0x20;
     }
    // TODO: Use split buffer (writev) instead of formatting everything to some buffer and dealing with overflows and allocations
-   MSize += NFMT::FormatToBuffer((char*)Message, &TmpBuf[MSize], (sizeof(TmpBuf)-3)-MSize, ArgNum, ArgList);          //    FormatToBuffer(Message, &TmpBuf[MSize], (sizeof(TmpBuf)-3)-MSize, args);  // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+   MSize += NFMT::FormatToBuffer((char*)Message, &TmpBuf[MSize], (sizeof(TmpBuf)-3)-MSize, ArgList);          //    FormatToBuffer(Message, &TmpBuf[MSize], (sizeof(TmpBuf)-3)-MSize, args);  // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<
    if(LogFlag & lfLineBreak)
     {
      TmpBuf[MSize++] = '\r';

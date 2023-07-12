@@ -1,9 +1,9 @@
 
 #pragma once
 
-template<typename T> class CArr    // TODO: Allocator based?
+template<typename T, int ATerm=-1> class CArr    // TODO: Allocator based?
 {
- using Self = CArr<T>;
+ using Self = CArr<T,ATerm>;
  static constexpr const uint SizeIdx  = -1;
  static constexpr const uint ASizeIdx = -2;
  static constexpr const uint BeginIdx = (16/sizeof(uint));   // 2 on x64, 4 on x32
@@ -15,7 +15,7 @@ static bool DeAllocate(vptr Ptr)      // TODO: Use allocator
 {
  if(!Ptr)return true;
  uint* DPtr = (uint*)Ptr;
- if(NPTM::NAPI::munmap(&DPtr[-BeginIdx], DPtr[ASizeIdx]) < 0){ DBGERR("Error: Failed to deallocate!"); return false; }
+ if(NPTM::NAPI::munmap(&DPtr[-BeginIdx], DPtr[ASizeIdx]) < 0){ DBGERR("Failed to deallocate!"); return false; }
  return true;
 }
 //----------------------------------------------------------
@@ -67,7 +67,7 @@ void TakeFrom(Self& arr)
  arr.AData = nullptr;
 }
 //----------------------------------------------------------
-bool Assign(void* Items, uint Cnt)     // In Bytes
+bool Assign(void* Items, uint Cnt)     // Cnt is in Items
 {
  uint NewLen = Cnt * sizeof(T);
  if(!this->SetLength(NewLen))return false;
@@ -75,12 +75,13 @@ bool Assign(void* Items, uint Cnt)     // In Bytes
  return true;
 }
 //----------------------------------------------------------
-bool Append(void* Items, uint Cnt)     // In Bytes
+bool Append(void* Items, uint Cnt)     // Cnt is in Items
 {
  uint OldSize = this->Size();
  uint NewLen  = Cnt * sizeof(T);
  if(!this->SetLength(OldSize+NewLen))return false;
  if(Items)memcpy(&((uint8*)this->AData)[OldSize], Items, NewLen);
+ LOGMSG("DST=%p, SRC=%p, LEN=%08X",&((uint8*)this->AData)[OldSize], Items, NewLen);
  return true;
 }
 //----------------------------------------------------------
@@ -89,6 +90,18 @@ bool Append(void* Items, uint Cnt)     // In Bytes
  //CArr<T>& operator += (const wchar_t* str){this->Append((void*)str, lstrlenW(str)); return *this;}
 //----------------------
 inline Self& operator += (const Self& arr){this->Append(arr.AData, arr.Size()); return *this;}
+template<typename A, uint N> inline Self& operator += (const A(&str)[N])
+{
+ static_assert(sizeof(A) == sizeof(T));  // At least size must match!
+ uint len; // = N;  //(N && (sizeof(*str) == 1) && !str[N-1])?(N-1):(N);
+ if constexpr (ATerm >= 0)
+  {
+   for(len=0;(str[len] != (A)ATerm)&&(len < N);)len++;
+  }
+   else len = N;
+ this->Append((vptr)&str, len);
+ return *this;
+}
 //----------------------------------------------------------
 inline bool Resize(uint Cnt){return this->SetLength(Cnt*sizeof(T));}  // In Elements
 bool SetLength(uint Len)    // In bytes!
@@ -112,11 +125,11 @@ sint FromFile(achar* FileName)
 {
  int df = NPTM::NAPI::open(FileName,PX::O_RDONLY,0);
  if(df < 0){ DBGERR("Error: Failed to open the file %i: %s!",df,FileName); return -1; }
- sint flen = NPTM::NAPI::lseek(df, 0, PX::SEEK_END);
- NPTM::NAPI::lseek(df, 0, PX::SEEK_SET);
+ sint flen = NPTM::NAPI::lseek(df, 0, PX::SEEK_END);    // TODO: Use fstat
+ NPTM::NAPI::lseek(df, 0, PX::SEEK_SET);     // Set the file position back
  if(flen < 0){NPTM::NAPI::close(df); return -2;}
  if(this->SetLength(flen) < 0){NPTM::NAPI::close(df); return -3;}
- sint rlen = NPTM::NAPI::read(df, this->AData, this->Size);
+ sint rlen = NPTM::NAPI::read(df, this->AData, this->Size());
  NPTM::NAPI::close(df);
  if(rlen < 0)return -4;
  if(rlen != flen){ DBGERR("Error: Data size mismatch!"); return -5; }
@@ -135,7 +148,7 @@ sint ToFile(achar* FileName, uint Length=0, uint Offset=0)       // TODO: Bool A
  sint wlen = NPTM::NAPI::write(df, &((uint8*)this->AData)[Offset], Length);
  NPTM::NAPI::close(df);
  if(wlen < 0)return -2;
- if((size_t)wlen != this->Size){ DBGERR("Error: Data size mismatch!"); return -3; }
+ if((size_t)wlen != this->Size()){ DBGERR("Error: Data size mismatch!"); return -3; }
  return (wlen / sizeof(T));
 }
 //----------------------------------------------------------

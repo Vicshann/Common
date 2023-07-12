@@ -261,7 +261,7 @@ static BOOL NTAPI DeviceIsRunning(IN PWSTR DeviceName)
 }
 //------------------------------------------------------------------------------------
 static NTSTATUS NativeDeleteFile(PWSTR FileName)     // NtDeleteFile
-{
+{           
  HANDLE hFile;
  OBJECT_ATTRIBUTES attr;
  IO_STATUS_BLOCK iost;

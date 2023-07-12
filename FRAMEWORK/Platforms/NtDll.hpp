@@ -58,26 +58,26 @@ SCVR HANDLE NtCurrentProcess = ((HANDLE)(size_t)-1);
 enum EMFlags
 {
 // Memory protection flags
- PAGE_NOACCESS          = 0x00000001,
- PAGE_READONLY          = 0x00000002,
- PAGE_READWRITE         = 0x00000004,
- PAGE_WRITECOPY         = 0x00000008,
- PAGE_EXECUTE           = 0x00000010,
- PAGE_EXECUTE_READ      = 0x00000020,
- PAGE_EXECUTE_READWRITE = 0x00000040,
- PAGE_EXECUTE_WRITECOPY = 0x00000080,
- PAGE_GUARD             = 0x00000100,
- PAGE_NOCACHE           = 0x00000200,
- PAGE_WRITECOMBINE      = 0x00000400,
+ PAGE_NOACCESS          = 0x00000001,   // Disables all access to the committed region of pages. An attempt to read from, write to, or execute the committed region results in an access violation.
+ PAGE_READONLY          = 0x00000002,   // Enables read-only access to the committed region of pages. An attempt to write to the committed region results in an access violation.
+ PAGE_READWRITE         = 0x00000004,   // Enables read-only or read/write access to the committed region of pages.
+ PAGE_WRITECOPY         = 0x00000008,   // Enables read-only or copy-on-write access to a mapped view of a file mapping object. An attempt to write to a committed copy-on-write page results in a private copy of the page being made for the process. The private page is marked as PAGE_READWRITE, and the change is written to the new page.
+ PAGE_EXECUTE           = 0x00000010,   // Enables execute access to the committed region of pages. An attempt to write to the committed region results in an access violation.
+ PAGE_EXECUTE_READ      = 0x00000020,   // Enables execute or read-only access to the committed region of pages. An attempt to write to the committed region results in an access violation.
+ PAGE_EXECUTE_READWRITE = 0x00000040,   // Enables execute, read-only, or read/write access to the committed region of pages.
+ PAGE_EXECUTE_WRITECOPY = 0x00000080,   // Enables execute, read-only, or copy-on-write access to a mapped view of a file mapping object. An attempt to write to a committed copy-on-write page results in a private copy of the page being made for the process. The private page is marked as PAGE_EXECUTE_READWRITE, and the change is written to the new page.
+ PAGE_GUARD             = 0x00000100,   // Pages in the region become guard pages. Any attempt to access a guard page causes the system to raise a STATUS_GUARD_PAGE_VIOLATION exception and turn off the guard page status.
+ PAGE_NOCACHE           = 0x00000200,   // Sets all pages to be non-cachable. Applications should not use this attribute except when explicitly required for a device.
+ PAGE_WRITECOMBINE      = 0x00000400,   // Sets all pages to be write-combined. Applications should not use this attribute except when explicitly required for a device. 
 
 // Memory type flags (AllocationType)
- MEM_COMMIT             = 0x00001000,
- MEM_RESERVE            = 0x00002000,
+ MEM_COMMIT             = 0x00001000,   // Indicates committed pages for which physical storage has been allocated, either in memory or in the paging file on disk.
+ MEM_RESERVE            = 0x00002000,   // Indicates reserved pages where a range of the process's virtual address space is reserved without any physical storage being allocated.
  MEM_DECOMMIT           = 0x00004000,
  MEM_RELEASE            = 0x00008000,
- MEM_FREE               = 0x00010000,
- MEM_PRIVATE            = 0x00020000,
- MEM_MAPPED             = 0x00040000,
+ MEM_FREE               = 0x00010000,   // Indicates free pages not accessible to the calling process and available to be allocated.
+ MEM_PRIVATE            = 0x00020000,   // Indicates that the memory pages within the region are private (that is, not shared by other processes).
+ MEM_MAPPED             = 0x00040000,   // Indicates that the memory pages within the region are mapped into the view of a section.
  MEM_RESET              = 0x00080000,
  MEM_TOP_DOWN           = 0x00100000,
  MEM_WRITE_WATCH        = 0x00200000,
@@ -96,7 +96,7 @@ enum EMFlags
  SEC_WRITECOMBINE       = 0x40000000,
  SEC_LARGE_PAGES        = 0x80000000,
 
- MEM_IMAGE              = SEC_IMAGE
+ MEM_IMAGE              = SEC_IMAGE     // Indicates that the memory pages within the region are mapped into the view of an image section.
 };
 
 enum EFileFlg     // winnt.h
@@ -407,11 +407,6 @@ enum FILE_INFORMATION_CLASS
 };
 using PFILE_INFORMATION_CLASS = SPTR<FILE_INFORMATION_CLASS, PHT>;
 
-struct FILE_DISPOSITION_INFORMATION
-{
- BOOLEAN DeleteFile;
-};
-using PFILE_DISPOSITION_INFORMATION = SPTR<FILE_DISPOSITION_INFORMATION, PHT>;
 
 enum MEMORY_INFORMATION_CLASS
 {
@@ -554,6 +549,82 @@ struct FILE_POSITION_INFORMATION
 };
 using PFILE_POSITION_INFORMATION = SPTR<FILE_POSITION_INFORMATION, PHT>;
 
+struct FILE_INTERNAL_INFORMATION 
+{
+ LARGE_INTEGER IndexNumber;
+};
+
+struct FILE_EA_INFORMATION 
+{
+ ULONG EaSize;
+};
+
+struct FILE_ACCESS_INFORMATION 
+{
+ ACCESS_MASK AccessFlags;
+};
+
+struct FILE_MODE_INFORMATION 
+{
+ ULONG Mode;
+};
+
+struct FILE_ALIGNMENT_INFORMATION 
+{
+ ULONG AlignmentRequirement;
+};
+
+struct FILE_NAME_INFORMATION 
+{
+ ULONG FileNameLength;
+ WCHAR FileName[1];
+};
+
+struct FILE_ATTRIBUTE_TAG_INFORMATION 
+{
+ ULONG FileAttributes;
+ ULONG ReparseTag;
+};
+
+struct FILE_DISPOSITION_INFORMATION 
+{
+ BOOLEAN DeleteFile;
+};
+
+struct FILE_END_OF_FILE_INFORMATION 
+{
+ LARGE_INTEGER EndOfFile;
+};
+
+struct FILE_VALID_DATA_LENGTH_INFORMATION 
+{
+ LARGE_INTEGER ValidDataLength;
+};
+
+/*
+#define FILE_BYTE_ALIGNMENT 0x00000000
+#define FILE_WORD_ALIGNMENT 0x00000001
+#define FILE_LONG_ALIGNMENT 0x00000003
+#define FILE_QUAD_ALIGNMENT 0x00000007
+#define FILE_OCTA_ALIGNMENT 0x0000000f
+*/
+
+// ntfs.h
+struct FILE_ALL_INFORMATION 
+{
+  FILE_BASIC_INFORMATION     BasicInformation;
+  FILE_STANDARD_INFORMATION  StandardInformation;
+  FILE_INTERNAL_INFORMATION  InternalInformation;
+  FILE_EA_INFORMATION        EaInformation;
+  FILE_ACCESS_INFORMATION    AccessInformation;
+  FILE_POSITION_INFORMATION  PositionInformation;
+  FILE_MODE_INFORMATION      ModeInformation;
+  FILE_ALIGNMENT_INFORMATION AlignmentInformation;
+  FILE_NAME_INFORMATION      NameInformation;
+};
+using PFILE_ALL_INFORMATION = SPTR<FILE_ALL_INFORMATION, PHT>;
+
+
 union FILE_SEGMENT_ELEMENT              // Define segment buffer structure for scatter/gather read/write.
 {
  PVOID64   Buffer;
@@ -582,6 +653,8 @@ static NTSTATUS _scall NtQueryAttributesFile(POBJECT_ATTRIBUTES ObjectAttributes
 
 static NTSTATUS _scall NtQueryInformationFile(HANDLE FileHandle, PIO_STATUS_BLOCK IoStatusBlock, PVOID FileInformation, ULONG Length, FILE_INFORMATION_CLASS FileInformationClass);
 
+static NTSTATUS _scall NtSetInformationFile(HANDLE FileHandle, PIO_STATUS_BLOCK IoStatusBlock, PVOID FileInformation, ULONG Length, FILE_INFORMATION_CLASS FileInformationClass);
+
 static NTSTATUS _scall NtOpenSection(PHANDLE SectionHandle, ACCESS_MASK DesiredAccess, POBJECT_ATTRIBUTES ObjectAttributes);
 
 static NTSTATUS _scall NtCreateSection(PHANDLE SectionHandle, ACCESS_MASK DesiredAccess, POBJECT_ATTRIBUTES ObjectAttributes, PLARGE_INTEGER MaximumSize, ULONG SectionPageProtection, ULONG AllocationAttributes, HANDLE FileHandle);
@@ -592,6 +665,9 @@ static NTSTATUS _scall NtUnmapViewOfSection(HANDLE ProcessHandle, PVOID BaseAddr
 
 static NTSTATUS _scall NtQuerySection(HANDLE SectionHandle, SECTION_INFORMATION_CLASS SectionInformationClass, PVOID SectionInformation, SIZE_T SectionInformationLength, PSIZE_T ReturnLength);
 
+static NTSTATUS _scall NtCreateSymbolicLinkObject(PHANDLE LinkHandle, ACCESS_MASK DesiredAccess, POBJECT_ATTRIBUTES ObjectAttributes, PUNICODE_STRING DestinationName);
+static NTSTATUS _scall NtOpenSymbolicLinkObject(PHANDLE LinkHandle, ACCESS_MASK DesiredAccess, POBJECT_ATTRIBUTES ObjectAttributes);
+static NTSTATUS _scall NtQuerySymbolicLinkObject(HANDLE LinkHandle, PUNICODE_STRING LinkTarget, PULONG ReturnedLength);
 
 static NTSTATUS _scall NtDelayExecution(BOOLEAN Alertable, PLARGE_INTEGER DelayInterval);
 static NTSTATUS _scall NtTerminateProcess(HANDLE ProcessHandle, NTSTATUS ExitStatus);
@@ -600,6 +676,11 @@ static NTSTATUS _scall NtTerminateThread(HANDLE ThreadHandle, NTSTATUS ExitStatu
 static NTSTATUS _scall NtLoadDriver(PUNICODE_STRING DriverServiceName);
 static NTSTATUS _scall NtUnloadDriver(PUNICODE_STRING DriverServiceName);
 
+// Object manipulation
+
+// A temporary object has a name only as long as its handle count is greater than zero. When the handle count reaches zero, the system deletes the object name and appropriately adjusts the object's pointer count.
+static NTSTATUS _scall NtMakeTemporaryObject(HANDLE Handle);
+static NTSTATUS _scall NtMakePermanentObject(HANDLE Handle);
 
 //------------------------------------------------------------------------------------------------------------
 //  Doubly linked list structure.  Can be used as either a list head, or as link words.

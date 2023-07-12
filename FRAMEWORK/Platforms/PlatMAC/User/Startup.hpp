@@ -10,7 +10,6 @@ struct SSINF
  achar**          CLArgs;  // Points to ARGV array  // Not split on windows!
  achar**          EVVars;  // Points to EVAR array (cannot cache this pointer?)
  achar**          AuxInf;  // Auxilary vector (Not for MacOS or Windows)     // LINUX/BSD: ELF::SAuxVecRec*   // MacOS: Apple info (Additional Name=Value list)
- uint32           UTCOffs; // In seconds
 
  void*  TheModBase;
  size_t TheModSize;
@@ -21,49 +20,33 @@ struct SSINF
 // Current directory(at startup)   // Required?
 // Working dir (Not have to be same as current dir)
 // Temp path
-} static inline fwsinf = {};
+} static inline SInfo = {};
 //------------------------------------------------------------------------------------------------------------
 
 #if defined(SYS_UNIX) || defined(SYS_ANDROID)  //|| defined(_SYS_BSD)
 static ELF::SAuxVecRec* GetAuxVRec(size_t Type)
 {
- for(ELF::SAuxVecRec* Rec=(ELF::SAuxVecRec*)fwsinf.AuxInf;Rec->type != ELF::AT_NULL;Rec++)
+ for(ELF::SAuxVecRec* Rec=(ELF::SAuxVecRec*)SInfo.AuxInf;Rec->type != ELF::AT_NULL;Rec++)
   {
    if(Rec->type == Type)return Rec;
   }
  return nullptr;
 }
 #endif
-
-//------------------------------------------------------------------------------------------------------------
-//------------------------------------------------------------------------------------------------------------
-static _finline size_t GetArgC(void){return (size_t)fwsinf.CLArgs[-1];}   // On Windows should be always 1? // Be careful with access to SInfo using casts. Clang may optimize out ALL! code because of it
-static _finline const achar** GetArgV(void){return (const achar**)fwsinf.CLArgs;}
-static _finline const achar** GetEnvP(void){return (const achar**)fwsinf.EVVars;}
-static int UpdateTZOffsUTC(sint64 CurTimeUTC)
-{
- int df = NAPI::open("/etc/localtime",PX::O_RDONLY,0);
-//  LOGMSG("TZFILE open: %i",df);
- if(df < 0)return df;
- uint8 TmpBuf[2048];       // Should be enough for V1 header
- sint rlen = NAPI::read(df, &TmpBuf, sizeof(TmpBuf));
- NAPI::close(df);
- if(rlen <= 44)return PX::ENODATA;     // sizeof(SHdrTZ)
- sint32 offs = STZF::GetTimeZoneOffset(&TmpBuf,CurTimeUTC);
-//    LOGMSG("TZFILE offs: %i",offs);
- if(offs < 0)return PX::EINVAL;
- fwsinf.UTCOffs = offs;
- return 0;
-}
 public:
+//------------------------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------
+static _finline size_t GetArgC(void){return (size_t)SInfo.CLArgs[-1];}   // On Windows should be always 1? // Be careful with access to SInfo using casts. Clang may optimize out ALL! code because of it
+static _finline const achar** GetArgV(void){return (const achar**)SInfo.CLArgs;}
+static _finline const achar** GetEnvP(void){return (const achar**)SInfo.EVVars;}
 //------------------------------------------------------------------------------------------------------------
 static _finline PX::fdsc_t GetStdIn(void)  {return PX::STDIN; }  // 0
 static _finline PX::fdsc_t GetStdOut(void) {return PX::STDOUT;}  // 1
 static _finline PX::fdsc_t GetStdErr(void) {return PX::STDERR;}  // 2
 //------------------------------------------------------------------------------------------------------------
-static _finline sint32 GetTZOffsUTC(void){return fwsinf.UTCOffs;}
-static _finline bool   IsLoadedByLdr(void) {return fwsinf.HaveLoader;}    // OnWindows, Any DLL that loaded by loader
-static _finline bool   IsDynamicLib(void) {return false;}
+
+static _finline bool IsLoadedByLdr(void) {return SInfo.HaveLoader;}    // OnWindows, Any DLL that loaded by loader
+static _finline bool IsDynamicLib(void) {return false;}
 //------------------------------------------------------------------------------------------------------------
 // %rdi, %rsi, %rdx, %rcx, %r8 and %r9
 // DescrPtr must be set to 'ELF Auxiliary Vectors' (Stack pointer at ELF entry point)
@@ -103,7 +86,7 @@ static sint GetEnvVar(const achar* Name, achar* DstBuf, size_t BufCCnt)
   {
    int spos = NSTR::CharOffsetIC(evar, '=');
    if(spos < 0)continue;  // No separator!
-   if((!spos && Unnamed) || NSTR::IsStrEqualSC(Name, evar, spos))return NSTR::StrCopy(DstBuf, &evar[spos+1], BufCCnt);
+   if((!spos && Unnamed) || NSTR::IsStrEqualSC(Name, &evar[spos+1]))return NSTR::StrCopy(DstBuf, &evar[spos+1]);
   }
  return -1;
 }
@@ -118,13 +101,13 @@ static sint GetSysInfo(uint InfoID, void* DstBuf, size_t BufSize)
 //
 static _finline void* GetModuleBase(void)
 {
- return fwsinf.TheModBase;
+ return SInfo.TheModBase;
 }
 //------------------------------------------------------------------------------------------------------------
 //
 static _finline size_t GetModuleSize(void)
 {
- return fwsinf.TheModSize;
+ return SInfo.TheModSize;
 }
 //------------------------------------------------------------------------------------------------------------
 // Returns full path to current module and its name in UTF8
@@ -134,70 +117,78 @@ static size_t _finline GetModulePath(achar* DstBuf, size_t BufSize=-1)
  return GetCmdLineArg(aoffs, DstBuf, BufSize);       // Will work for now
 }
 //------------------------------------------------------------------------------------------------------------
+// MacOS 'dyld main' args: ACnt, Args, EVars, AVars
+// Without the -osx_min_version flag to ld, arguments are indeed passed on stack to _start ????????????????
+//
 static sint InitStartupInfo(void* StkFrame=nullptr, void* ArgA=nullptr, void* ArgB=nullptr, void* ArgC=nullptr)
 {
- DBGDBG("StkFrame=%p, ArgA=%p, ArgB=%p, ArgC=%p",StkFrame,ArgA,ArgB,ArgC);
+ DBGDBG("StkFrame=%p, ArgA=%p, ArgB=%p, ArgC=%p",StkFrame,ArgA,ArgB,ArgC);    // On Windows syscalls are not initialized yet at this point!
  IFDBG{ DBGDBG("Stk[0]=%p, Stk[1]=%p, Stk[2]=%p, Stk[3]=%p, Stk[4]=%p", ((void**)StkFrame)[0], ((void**)StkFrame)[1], ((void**)StkFrame)[2], ((void**)StkFrame)[3], ((void**)StkFrame)[4]); }
 
-  // LOGMSG("StkFrame=%p, ArgA=%p, ArgB=%p, ArgC=%p",StkFrame,ArgA,ArgB,ArgC);
- //  LOGMSG("Stk[0]=%p, Stk[1]=%p, Stk[2]=%p, Stk[3]=%p, Stk[4]=%p", ((void**)StkFrame)[0], ((void**)StkFrame)[1], ((void**)StkFrame)[2], ((void**)StkFrame)[3], ((void**)StkFrame)[4]);
  /*if(!APtr)  // Try to get AUXV from '/proc/self/auxv'
   {
    return -1;
   }
    // It may not be known if we are in a shared library
 */
- /*if(StkFrame) // NOTE: C++ Clang enforces the stack frame to contain some EntryPoints`s saved registers
+ if constexpr(IsSysWindows)
   {
-//   TODO: detect if this is a DLL loaded by loader, or if the EXE started from loader
-   if constexpr (IsArchX64)
+
+
+  }
+ else if constexpr(IsSysMacOS)
+  {
+   if(StkFrame)
     {
-     if constexpr(IsCpuARM)StkFrame = &((void**)StkFrame)[4]; // ARM 64: Stores X19,X29,X30 and aligns to 16   // __builtin_frame_address does not return the frame address as it was at the function entry
-       else StkFrame = &((void**)StkFrame)[1];  // Untested  // No ret addr on stack, only stack frame ptr
-
-    }
-     else
+     // ArgA and ArgB may be ArgC and ArgV from main if the exe is built with LC_MAIN and dyld
+     if(((size_t*)StkFrame)[0] > 0xFFF)            // Return to dyld or argc   //   ArgB && ArgA && ((size_t)ArgA < 256) && ((size_t)ArgB > (size_t)StkFrame) && (((size_t)ArgB - (size_t)StkFrame) < 1024))
       {
-       if constexpr(IsCpuARM)StkFrame = &((void**)StkFrame)[2]; // ARM 32: PUSH {R11,LR} - 0: RetAddr, 1:StackFramePtr   // __builtin_frame_address does not return the frame address as it was at the function entry
-         else StkFrame = &((void**)StkFrame)[1];  // No ret addr on stack, only stack frame ptr
+       SInfo.HaveLoader = true;
+       StkFrame = &((size_t*)ArgB)[-1];  // Make it point to 'argc' again  // Real stack frame as passed from the kernel
+       SInfo.TheModBase = ((void**)StkFrame)[-1];  // Not for DLL, try something else
       }
-  }*/
- if(StkFrame)
+       else SInfo.TheModBase = nullptr;  // Probably can get it from ArgA or ArgB, should be add somwhere in this module`s header
+    }
+     else return -1;  // For now, no DLL support
+  }
+ else if constexpr(IsSysLinux)
   {
-   // TODO: If loaded by loader then on X86 there are return address on stack?
-   // More complicated!
-
-   fwsinf.STInfo = StkFrame;
-   uint ArgNum  = ((size_t*)StkFrame)[0];           // Number of command line arguments
-   fwsinf.CLArgs = (char**)&((void**)StkFrame)[1];   // Array of cammond line arguments
-   fwsinf.EVVars = &fwsinf.CLArgs[ArgNum+1];          // Array of environment variables
-   void*  APtr  = nullptr;
-   char** Args  = fwsinf.EVVars;
-   uint ParIdx  = 0;
-   do{APtr=Args[ParIdx++];}while(APtr);  // Skip until AUX vector
-   fwsinf.AuxInf = &Args[ParIdx];
+   if(StkFrame)
+    {
+//   TODO: detect if this is a DLL loaded by loader, or if the EXE started from loader
+     if constexpr(IsCpuARM)StkFrame = &((void**)StkFrame)[2]; // ARM: PUSH {R11,LR} - 0: RetAddr, 1:StackFramePtr   // __builtin_frame_address does not return the frame address as it was at the function entry
+      else StkFrame = &((void**)StkFrame)[1];  // No ret addr on stack, only stack frame ptr
+    }
   }
 
- //PX::timezone tz = {};
- //if(!NAPI::gettimeofday(nullptr, &tz))fwsinf.UTCOffs = tz.minuteswest;
- PX::timeval tv = {};
- if(!NAPI::gettimeofday(&tv, nullptr))UpdateTZOffsUTC(tv.sec);    // Log any errors?
- //LOGMSG("TZFILE offs: %i",tz.minuteswest);
-
-  // DbgLogStartupInfo();
- DBGDBG("STInfo=%p, CLArgs=%p, EVVars=%p, AuxInf=%p",fwsinf.STInfo,fwsinf.CLArgs,fwsinf.EVVars,fwsinf.AuxInf);
+ if constexpr(!IsSysWindows)
+  {
+   if(StkFrame)
+    {
+     SInfo.STInfo = StkFrame;
+     uint ArgNum  = ((size_t*)StkFrame)[0];
+     SInfo.CLArgs = (char**)&((void**)StkFrame)[1];
+     SInfo.EVVars = &SInfo.CLArgs[ArgNum+1];
+     void*  APtr = nullptr;
+     char** Args = SInfo.EVVars;
+     uint ParIdx = 0;
+     do{APtr=Args[ParIdx++];}while(APtr);
+     SInfo.AuxInf = &Args[ParIdx];
+    }
+  }
+ DBGDBG("STInfo=%p, CLArgs=%p, EVVars=%p, AuxInf=%p",SInfo.STInfo,SInfo.CLArgs,SInfo.EVVars,SInfo.AuxInf);
  return 0;
 }
 //============================================================================================================
 static void DbgLogStartupInfo(void)
 {
- if(!fwsinf.STInfo)return;
+ if(!SInfo.STInfo)return;
  // Log command line arguments
- if(fwsinf.CLArgs)
+ if(SInfo.CLArgs)
   {
-   void*   APtr = nullptr;
-   achar** Args = fwsinf.CLArgs;
-   uint  ParIdx = 0;
+   void*  APtr = nullptr;
+   char** Args = SInfo.CLArgs;
+   uint ParIdx = 0;
    LOGDBG("CArguments: ");
    for(uint idx=0;(APtr=Args[ParIdx++]);idx++)
     {
@@ -205,11 +196,11 @@ static void DbgLogStartupInfo(void)
     }
   }
  // Log environment variables
- if(fwsinf.EVVars)
+ if(SInfo.EVVars)
   {
-   void*   APtr = nullptr;
-   achar** Args = fwsinf.EVVars;
-   uint  ParIdx = 0;
+   void*  APtr = nullptr;
+   char** Args = SInfo.EVVars;
+   uint ParIdx = 0;
    LOGDBG("EVariables: ");
    while((APtr=Args[ParIdx++]))
     {
@@ -218,12 +209,12 @@ static void DbgLogStartupInfo(void)
     }
   }
  // Log auxilary vector
- if(fwsinf.AuxInf)
+ if(SInfo.AuxInf)
   {
    LOGDBG("AVariables : ");
    if constexpr(IsSysLinux)
     {
-     for(ELF::SAuxVecRec* Rec=(ELF::SAuxVecRec*)fwsinf.AuxInf;Rec->type != ELF::AT_NULL;Rec++)
+     for(ELF::SAuxVecRec* Rec=(ELF::SAuxVecRec*)SInfo.AuxInf;Rec->type != ELF::AT_NULL;Rec++)
       {
        LOGDBG("  Aux: Type=%.3u, Value=%p",Rec->type, (void*)Rec->val);
       }
@@ -231,7 +222,7 @@ static void DbgLogStartupInfo(void)
    else if constexpr(IsSysMacOS)
     {
      void*  APtr = nullptr;
-     char** Args = fwsinf.AuxInf;
+     char** Args = SInfo.AuxInf;
      uint ParIdx = 0;
      while((APtr=Args[ParIdx++]))
       {
@@ -242,19 +233,7 @@ static void DbgLogStartupInfo(void)
  DBGDBG("Done!");
 }
 //------------------------------------------------------------------------------------------------------------
-/*
-ABI specific?
 
-ArmX64:
- EntryPoint:
-  +00 NewSp
-  +08
-  +10 X29     GETSTKFRAME()
-  +18 X30
-  +20 X19
-  +28
-  +30 OrigSP  ArgNum (Stack before Entry)
-*/
 
 /* ====================== LINUX/BSD ======================
 Stack layout from startup code:
@@ -386,4 +365,50 @@ ld:
 */
 
 
+/*
+Path	Base	Size
+FrameworkTest.dylib	0000000100000000	0000000000003648
+/usr/lib/dyld	0000000100004000	00000000000B8000
+/usr/lib/system/libsystem_blocks.dylib	00007FF80B03B000	0000000000002000
+/usr/lib/system/libxpc.dylib	00007FF80B03D000	000000000003C000
+/usr/lib/system/libsystem_trace.dylib	00007FF80B079000	0000000000019000
+/usr/lib/system/libcorecrypto.dylib	00007FF80B092000	0000000000092000
+/usr/lib/system/libsystem_malloc.dylib	00007FF80B124000	000000000002C000
+/usr/lib/system/libdispatch.dylib	00007FF80B150000	0000000000047000
+/usr/lib/libobjc.A.dylib	00007FF80B197000	000000000003A000
+/usr/lib/system/libsystem_featureflags.dylib	00007FF80B1D1000	0000000000003000
+/usr/lib/system/libsystem_c.dylib	00007FF80B1D4000	0000000000089000
+/usr/lib/libc++.1.dylib	00007FF80B25D000	0000000000059000
+/usr/lib/libc++abi.dylib	00007FF80B2B6000	0000000000016000
+/usr/lib/system/libsystem_kernel.dylib	00007FF80B2CC000	0000000000038000
+/usr/lib/system/libsystem_pthread.dylib	00007FF80B304000	000000000000C000
+/usr/lib/system/libdyld.dylib	00007FF80B310000	000000000000C000
+/usr/lib/system/libsystem_platform.dylib	00007FF80B31C000	000000000000A000
+/usr/lib/system/libsystem_info.dylib	00007FF80B326000	000000000002B000
+/usr/lib/system/libsystem_darwin.dylib	00007FF80D946000	000000000000A000
+/usr/lib/system/libsystem_notify.dylib	00007FF80DD6C000	000000000000F000
+/usr/lib/system/libsystem_networkextension.dylib	00007FF810240000	0000000000017000
+/usr/lib/system/libsystem_asl.dylib	00007FF8102A5000	0000000000017000
+/usr/lib/system/libsystem_symptoms.dylib	00007FF811AF3000	0000000000008000
+/usr/lib/system/libsystem_containermanager.dylib	00007FF813C77000	000000000001D000
+/usr/lib/system/libsystem_configuration.dylib	00007FF8149CE000	0000000000004000
+/usr/lib/system/libsystem_sandbox.dylib	00007FF8149D2000	0000000000006000
+/usr/lib/system/libquarantine.dylib	00007FF81571A000	0000000000003000
+/usr/lib/system/libsystem_coreservices.dylib	00007FF815DD1000	0000000000005000
+/usr/lib/system/libsystem_m.dylib	00007FF816037000	0000000000061000
+/usr/lib/system/libmacho.dylib	00007FF816099000	0000000000006000
+/usr/lib/system/libcommonCrypto.dylib	00007FF8160BB000	000000000000C000
+/usr/lib/system/libunwind.dylib	00007FF8160C7000	000000000000B000
+/usr/lib/liboah.dylib	00007FF8160D2000	0000000000008000
+/usr/lib/system/libcopyfile.dylib	00007FF8160DA000	000000000000A000
+/usr/lib/system/libcompiler_rt.dylib	00007FF8160E4000	0000000000008000
+/usr/lib/system/libsystem_collections.dylib	00007FF8160EC000	0000000000005000
+/usr/lib/system/libsystem_secinit.dylib	00007FF8160F1000	0000000000003000
+/usr/lib/system/libremovefile.dylib	00007FF8160F4000	0000000000002000
+/usr/lib/system/libkeymgr.dylib	00007FF8160F6000	0000000000001000
+/usr/lib/system/libsystem_dnssd.dylib	00007FF8160F7000	0000000000008000
+/usr/lib/system/libcache.dylib	00007FF8160FF000	0000000000005000
+/usr/lib/libSystem.B.dylib	00007FF816104000	0000000000002000
+/usr/lib/system/libsystem_product_info_filter.dylib	00007FF81C374000	0000000000001000
+*/
 

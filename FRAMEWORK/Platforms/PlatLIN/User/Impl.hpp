@@ -29,6 +29,9 @@ DECL_SYSCALL(NSYSC::ESysCNum::execve,     PX::execve,     execve     )
 
 DECL_SYSCALL(NSYSC::ESysCNum::wait4,      PX::wait4,      wait4      )
 
+DECL_SYSCALL(NSYSC::ESysCNum::gettimeofday, PX::gettimeofday, gettimeofday  )
+DECL_SYSCALL(NSYSC::ESysCNum::settimeofday, PX::settimeofday, settimeofday  )
+
 DECL_SYSCALL(NSYSC::ESysCNum::gettid,     PX::gettid,     gettid     )
 DECL_SYSCALL(NSYSC::ESysCNum::getpid,     PX::getpid,     getpid     )
 DECL_SYSCALL(NSYSC::ESysCNum::getppid,    PX::getppid,    getppid    )
@@ -71,6 +74,7 @@ DECL_SYSCALL(NSYSC::ESysCNum::unlinkat,   PX::unlinkat,   unlinkat   )
 DECL_SYSCALL(NSYSC::ESysCNum::renameat,   PX::renameat,   renameat   )
 DECL_SYSCALL(NSYSC::ESysCNum::readlinkat, PX::readlinkat, readlinkat )
 DECL_SYSCALL(NSYSC::ESysCNum::faccessat,  PX::faccessat,  faccessat  )
+DECL_SYSCALL(NSYSC::ESysCNum::fstatat,    PX::fstatat,    fstatat    )
 #endif
 
 DECL_SYSCALL(NSYSC::ESysCNum::close,      PX::close,    close        )
@@ -78,12 +82,12 @@ DECL_SYSCALL(NSYSC::ESysCNum::read,       PX::read,     read         )
 DECL_SYSCALL(NSYSC::ESysCNum::write,      PX::write,    write        )
 DECL_SYSCALL(NSYSC::ESysCNum::readv,      PX::readv,    readv        )
 DECL_SYSCALL(NSYSC::ESysCNum::writev,     PX::writev,   writev       )
-DECL_SYSCALL(NSYSC::ESysCNum::lseek,      PX::lseek,    lseek        )  // Alwats uint64 offsets
+DECL_SYSCALL(NSYSC::ESysCNum::lseek,      PX::lseek,    lseek        )     // Alwats uint64 offsets
 
 #if defined(ARCH_X32)
 DECL_SYSCALL(NSYSC::ESysCNum::mmap2,      PX::mmap2,    mmap2        )
-//DECL_SYSCALL(NSYSC::ESysCNum::stat64,     PX::stat64,   stat64       )     // Struct?
-//DECL_SYSCALL(NSYSC::ESysCNum::fstat64,    PX::fstat64,  fstat64      )     // Struct?
+DECL_SYSCALL(NSYSC::ESysCNum::stat64,     PX::stat64,   stat64       )
+DECL_SYSCALL(NSYSC::ESysCNum::fstat64,    PX::fstat64,  fstat64      )
 DECL_SYSCALL(NSYSC::ESysCNum::llseek,     PX::llseek,   llseek       )
 #endif
 
@@ -101,6 +105,34 @@ FUNC_WRAPPERFI(PX::cloneB0,    clone      ) { CALL_IFEXISTRPC(clone,clone,(IsArc
 FUNC_WRAPPERFI(PX::fork,       fork       ) { CALL_IFEXISTRN(fork,clone,NAPI,(args...),(PX::SIGCHLD, nullptr, nullptr, nullptr, 0)) }
 FUNC_WRAPPERFI(PX::vfork,      vfork      ) { CALL_IFEXISTRN(vfork,clone,NAPI,(args...),(PX::CLONE_VM | PX::CLONE_VFORK | PX::SIGCHLD, nullptr, nullptr, nullptr, 0)) }   // SIGCHLD makes the cloned process work like a "normal" unix child process
 FUNC_WRAPPERFI(PX::execve,     execve     ) {return SAPI::execve(args...);}
+
+FUNC_WRAPPERNI(PX::gettimeofday,  gettimeofday  )     // TODO: Prefer VDSO
+{
+ PX::timeval*  tv = GetParFromPk<0>(args...);
+ PX::timezone* tz = GetParFromPk<1>(args...);
+ int res = SAPI::gettimeofday(tv, tz);
+ if(res < 0)return res;
+ if(tz)        // No caching, always update. Use tz only if you expect the 'localtime' file to be changed
+  {
+   PX::timeval tvb = {};
+   if(!tv)
+    {
+     int res = SAPI::gettimeofday(&tvb, tz);
+     if(res < 0)return res;
+     tv = &tvb;
+    }
+   tz->dsttime = 0;
+   if(tz->minuteswest == -1)
+    {
+     int res = UpdateTZOffsUTC(tv->sec);
+     if(res < 0){tz->minuteswest = 0; return res;}
+    }
+   tz->minuteswest = GetTZOffsUTC();
+  }
+ return res;
+}
+
+FUNC_WRAPPERNI(PX::settimeofday,  settimeofday  ) {return SAPI::settimeofday(args...);}
 
 FUNC_WRAPPERFI(PX::wait4,      wait       ) {return SAPI::wait4(args...);}
 FUNC_WRAPPERFI(PX::gettid,     gettid     ) {return SAPI::gettid(args...);}
@@ -130,6 +162,17 @@ FUNC_WRAPPERFI(PX::unlink,     unlink     ) { CALL_IFEXISTR(unlink,unlinkat,(arg
 FUNC_WRAPPERFI(PX::rename,     rename     ) { CALL_IFEXISTRP(rename,renameat,(args...),(PX::AT_FDCWD,oldpath,PX::AT_FDCWD,newpath),(achar* oldpath, achar* newpath)) }
 FUNC_WRAPPERFI(PX::readlink,   readlink   ) { CALL_IFEXISTR(readlink,readlinkat,(args...),(PX::AT_FDCWD, args...)) }
 FUNC_WRAPPERFI(PX::access,     access     ) { CALL_IFEXISTR(access,faccessat,(args...),(PX::AT_FDCWD, args..., 0)) }
+
+FUNC_WRAPPERFI(PX::stat,       stat       )
+{
+ if constexpr (IsArchX32) {return 0;}      // TODO
+  else CALL_IFEXISTR(stat,fstatat,(args...),(PX::AT_FDCWD, args..., 0))
+}
+FUNC_WRAPPERFI(PX::fstat,      fstat      )
+{
+ if constexpr (IsArchX32) {return 0;}      // TODO
+  else return SAPI::fstat(args...);
+}
 
 /*
 https://stackoverflow.com/questions/52329604/how-to-get-the-file-desciptor-of-a-symbolic-link
@@ -251,7 +294,7 @@ static sint Initialize(void* StkFrame=nullptr, void* ArgA=nullptr, void* ArgB=nu
  if(!NLOG::CurrLog)NLOG::CurrLog = &NLOG::GLog;  // Will be set with correct address, relative to the Base
  if(InitConLog)   // On this stage file logging is not possible yet (needs InitStartupInfo)
   {
-   NPTM::NLOG::GLog.LogModes   = NPTM::NLOG::BaseMsgFlags | NPTM::NLOG::lmCons;
+   NPTM::NLOG::GLog.LogModes   = NPTM::NLOG::lmCons;
    NPTM::NLOG::GLog.ConsHandle = NPTM::GetStdErr();
   }
  // NOTE: Init syscalls before InitStartupInfo if required

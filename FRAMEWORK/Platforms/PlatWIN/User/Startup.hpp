@@ -32,7 +32,7 @@ static auto CalcSyscallStubInfo(vptr ModBase, uint32* HashArr, uint8** AddrArr)
   {      
    uint32 nrva  = NamePointers[ctr];  
    if(!nrva)continue;  // No name, ordinal only (Not needed right now) 
-   uint32 NameHash = NCTM::Crc32((achar*)&((uint8*)ModBase)[nrva]);       // TODO: Use fast Table/Hardware optimized version
+   uint32 NameHash = NCRYPT::CRC32((achar*)&((uint8*)ModBase)[nrva]);       // TODO: Use fast Table/Hardware optimized version
    uint8* CurEntry = &((uint8*)ModBase)[AddressTable[OrdinalTable[ctr]]];
    for(uint idx=0;HashArr[idx];idx++){if(!AddrArr[idx] && (HashArr[idx] == NameHash))AddrArr[idx] = CurEntry;}   // Found an address for API name
    if(LastEntry)
@@ -159,7 +159,7 @@ static sint InitSyscalls(void)
  uint8* SBlkPtrBeg;  //= (uint8*)&SAPI::NtProtectVirtualMemory;
  uint8* SBlkPtrEnd;  //= (uint8*)&SAPI::NtUnloadDriver + NSYSC::MaxStubSize;
  uint   StubsLen    = FindSyscallStubsBlock(&SBlkPtrBeg, &SBlkPtrEnd);  //  SBlkPtrEnd - SBlkPtrBeg;          //NSYSC::MaxStubSize;
- uint8* BaseOfNtdll = (uint8*)NTX::GetBaseOfNtdll((wchar*)&fwsinf.SysDrive, 3);   // Take drive as 'C:\'
+ uint8* BaseOfNtdll = (uint8*)NTX::GetBaseOfNtdll((wchar*)&fwsinf.SysDrive, 3);   // Take drive as 'C:\'   // SharedUserData->NtSystemRoot ???
  uint   TotalRecs   = StubsLen / NSYSC::MaxStubSize; 
  const uint MaxRecs = 64;  // For recs in SAPI // sizeof does not work on SAPI
  if(!BaseOfNtdll)return -1;
@@ -182,9 +182,9 @@ static sint InitSyscalls(void)
  uint OldProt = 0;
  uint resa = pNtProtectVirtualMemory(NT::NtCurrentProcess, &Addr, &Size, NT::PAGE_EXECUTE_READWRITE, &OldProt, SyscArr[0]);      // PAGE_EXECUTE_READWRITE may be forbidden, try PAGE_READWRITE but avoid making caller function nonexecutable
 
- if(!IsArchX64 && NTX::IsWow64())
+ if(!IsArchX64 && NTX::IsWow64())   // TODO: Windows ARM
   {
-   // VERY COMPLICATED
+   // TODO: VERY COMPLICATED
   }
    else
     {
@@ -210,6 +210,7 @@ struct SSINF
 {
  vptr   ModBase;
  size_t ModSize;
+ uint32 UTCOffs; // In seconds
  uint32 Flags;
  achar  SysDrive[8];
 
@@ -227,8 +228,9 @@ static _finline PX::fdsc_t GetStdIn(void)  {return (PX::fdsc_t)NT::NtCurrentTeb(
 static _finline PX::fdsc_t GetStdOut(void) {return (PX::fdsc_t)NT::NtCurrentTeb()->ProcessEnvironmentBlock->ProcessParameters->StandardOutput;} 
 static _finline PX::fdsc_t GetStdErr(void) {return (PX::fdsc_t)NT::NtCurrentTeb()->ProcessEnvironmentBlock->ProcessParameters->StandardError; } 
 //------------------------------------------------------------------------------------------------------------
-static _finline bool IsLoadedByLdr(void) {return fwsinf.Flags & sfLoadedByLdr;}  // If loaded by loader then should return to the loader   // OnWindows, Any DLL that loaded by loader
-static _finline bool IsDynamicLib(void) {return fwsinf.Flags & sfDynamicLib;} 
+static _finline sint32 GetTZOffsUTC(void){return fwsinf.UTCOffs;}
+static _finline bool   IsLoadedByLdr(void) {return fwsinf.Flags & sfLoadedByLdr;}  // If loaded by loader then should return to the loader   // OnWindows, Any DLL that loaded by loader
+static _finline bool   IsDynamicLib(void) {return fwsinf.Flags & sfDynamicLib;} 
 //------------------------------------------------------------------------------------------------------------
 // Copies a next param to user`s buffer
 // Set AOffs to 0 initially and expect it to be -1 when there are no more args
@@ -239,6 +241,7 @@ static uint GetCmdLineArg(sint& AOffs, achar* DstBuf, uint BufLen=-1)
  char SFchE = '\"';
  const wchar* CLBase  = &GetArgV()[AOffs];
  const wchar* CmdLine = CLBase;
+ if(DstBuf)*DstBuf = 0;
  while(*CmdLine && (*CmdLine <= 0x20))CmdLine++;  // Skip any spaces before
  if(!*CmdLine){AOffs=-1; return 0;}   // No more args
  if(*CmdLine == SFchB)CmdLine++;  // Skip opening quote
@@ -273,8 +276,11 @@ static _finline vptr   GetModuleBase(void){return fwsinf.ModBase;}
 static _finline size_t GetModuleSize(void){return fwsinf.ModSize;}
 //------------------------------------------------------------------------------------------------------------
 // Returns full path to current module and its name in UTF8
-static size_t _finline GetModulePath(char* DstBuf, size_t BufSize=-1)
+static size_t _finline GetModulePath(achar* DstBuf, size_t BufSize=-1)
 {
+ sint aoffs = 0;
+ return GetCmdLineArg(aoffs, DstBuf, BufSize);       // Will work for now
+
 // Search in loader list first
 
 // Search by memory mapping
@@ -294,7 +300,21 @@ static sint InitStartupInfo(void* StkFrame=nullptr, void* ArgA=nullptr, void* Ar
    else fwsinf.Flags |= sfLoadedByLdr;
  if((ArgA != NT::NtCurrentPeb())&&(((size_t)ArgA & ~(MEMGRANSIZE-1)) == ((size_t)fwsinf.ModBase & ~(MEMGRANSIZE-1))))fwsinf.Flags |= sfDynamicLib;   // System passes PEB as first argument to EXE`s entry point then it is safe to exit from entry point without calling 'exit'
 
- fwsinf.Flags |= sfInitialized;
+ fwsinf.UTCOffs = -NTX::GetTimeZoneBias() / NDT::SECS_TO_FT_MULT;   // Number of 100-ns intervals in a second                                          
+ fwsinf.Flags  |= sfInitialized;
+ return 0;
+}
+//------------------------------------------------------------------------------------------------------------
+// https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-seterrormode
+// Windows 7:
+// System default is to display all error dialog boxes.
+// SEM_FAILCRITICALERRORS|SEM_NOGPFAULTERRORBOX|SEM_NOOPENFILEERRORBOX
+// GetErrorMode: NtQueryInformationProcess, 4
+// SetErrorMode: NtSetInformationProcess, 4
+//
+static sint SetErrorHandlers(void)
+{
+
  return 0;
 }
 //------------------------------------------------------------------------------------------------------------
@@ -309,7 +329,5 @@ static void DbgLogStartupInfo(void)
    alen = NPTM::GetCmdLineArg(aoff, buf, sizeof(buf));
    LOGDBG("  Arg %u: %s",idx,&buf);     // NOTE: Terminal should support UTF8
   }
-
-
 }
 //------------------------------------------------------------------------------------------------------------

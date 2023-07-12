@@ -57,10 +57,12 @@ static constexpr bool IsCpuX86 = false;
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__x86_64__) || defined(_M_X64) || defined(__amd64__) || defined(__amd64)
 #define ARCH_X64
 #pragma message(">>> Architecture is X64")
+static constexpr bool IsArchX32 = false;
 static constexpr bool IsArchX64 = true;
 #else
 #define ARCH_X32
 #pragma message(">>> Architecture is X32")
+static constexpr bool IsArchX32 = true;
 static constexpr bool IsArchX64 = false;
 #endif
 
@@ -144,7 +146,7 @@ static constexpr bool IsDbgBuild = false;
 #define IFDBG if constexpr(IsDbgBuild)
 
 #ifdef COMP_MSVC  // MSVC/CLANG_MSVC                            // __has_cpp_attribute
-#define _NonVolatile
+#define _RST
 #pragma intrinsic(_ReturnAddress)
 #pragma intrinsic(_AddressOfReturnAddress)  // Instead of #include <intrin.h>
 
@@ -152,29 +154,29 @@ static constexpr bool IsDbgBuild = false;
 #define GETRETADDR() _ReturnAddress()
 //#define SETRETADDR(addr) (*(void**)_AddressOfReturnAddress() = (void*)(addr))    // Not on ARM? LR is usually pushed on stack
 
-#define  _fcompact __forceinline              // No 'flatten' with MSVC?
-#define  _ninline _declspec(noinline)
-#define  _finline __forceinline               // At least '/Ob1' is still required     [[msvc::forceinline]] ??
-#define  _naked __declspec(naked)
-#define  _used
+#define _fcompact __forceinline              // No 'flatten' with MSVC?
+#define _ninline _declspec(noinline)
+#define _finline __forceinline               // At least '/Ob1' is still required     [[msvc::forceinline]] ??
+#define _naked __declspec(naked)
+#define _used
 //#pragma code_seg(".xtext")
 #pragma section(".xtxt",execute,read)       // 'execute' will be ignored for a data declared with _codesec if section name is '.text', another '.text' section will be created, not executable
 #define _codesec _declspec(allocate(".xtxt"))
 #define _codesecn(n) _declspec(allocate(".xtxt"))
 #pragma comment(linker,"/MERGE:.xtxt=.text")     // Without this SAPI struct won`t go into executable '.text' section
 #else   // CLANG/GCC
-#define _NonVolatile __restrict
+#define _RST __restrict           // void fr (float * __restrict dest)   // https://stackoverflow.com/questions/1965487/does-the-restrict-keyword-provide-significant-benefits-in-gcc-g
 // https://gcc.gnu.org/onlinedocs/gcc/Return-Address.html
-// NOTE: __builtin_frame_address does not return the frame address as it was at a function entry
-#define GETSTKFRAME() __builtin_frame_address(0)   // TODO: Rework! // On ARM there is no RetAddr on stack  // Should not include address of some previous stack frame (from 'push rbp' at proc addr)
+// NOTE: __builtin_frame_address does not return the frame address as it was at a function entry. It points at the current function`s frame, including all its local variables
+#define GETSTKFRAME() __builtin_frame_address(0)  // Anything except 0 will use a stack frame register according to specified ABI // TODO: Rework! // On ARM there is no RetAddr on stack  // Should not include address of some previous stack frame (from 'push rbp' at proc addr)
 #define GETRETADDR() __builtin_extract_return_addr(__builtin_return_address (0))
 //#define SETRETADDR(addr) (*(void**)__builtin_frame_address(0) = __builtin_frob_return_addr((void*)(addr)))  // ARM?
 
-#define  _fcompact __attribute__((flatten))         // Inlines everything inside the marked function
-#define  _ninline __attribute__((noinline))
-#define  _finline __attribute__((always_inline))
-#define  _naked   __attribute__((naked))
-#define  _used __attribute__((used))       // Without it Clang will strip every reference to syscall stubs when building for ARM
+#define _fcompact __attribute__((flatten))         // Inlines everything inside the marked function
+#define _ninline __attribute__((noinline))
+#define _finline __attribute__((always_inline))
+#define _naked   __attribute__((naked))
+#define _used __attribute__((used))       // Without it Clang will strip every reference to syscall stubs when building for ARM
 #ifdef SYS_MACOS
 #define _codesec __attribute__ ((section ("__TEXT,__text")))
 #define _codesecn(n) __attribute__ ((section ("__TEXT,__text" #n )))
@@ -191,6 +193,15 @@ static constexpr bool IsDbgBuild = false;
 #define _SYSENTRY extern "C" __attribute__((force_align_arg_pointer))
 #else
 #define _SYSENTRY extern "C"
+#endif
+
+#define _NOMANGL extern "C" __attribute__((internal_linkage))    // Removes mangling and marks as internal again (Not working with memset and others)
+
+// For exported functions
+#ifdef FWK_NO_EXTERN
+#define _EXTERNC
+#else
+#define _EXTERNC extern "C"
 #endif
 
 #define SCVR static constexpr const
@@ -353,20 +364,29 @@ pointer	    64	    64	    64	    32	    32
  using uint32 = unsigned int;       // Expected to be 32bit on all supported platforms  // NOTE: int is 32bit even on x64 platforms, meaning that using 'int' everywhere is not architecture friendly
  using uint64 = unsigned long long; // 'long long unsigned int' or 'long unsigned int' ???  // See LP64, ILP64, ILP32 data models on different architectures
 
- using int8   = signed char;
- using int16  = signed short int;
- using int32  = signed int;
- using int64  = signed long long;   // __int64_t
+ using sint8  = signed char;
+ using sint16 = signed short int;
+ using sint32 = signed int;
+ using sint64 = signed long long;   // __int64_t
+
+ using int8   = sint8;
+ using int16  = sint16;
+ using int32  = sint32;
+ using int64  = sint64;   // __int64_t
 
  using uint   = decltype(sizeof(void*));   // These 'int' are always platform-friendly (same size as pointer type, replace size_t) // "The result of sizeof and sizeof... is a constant of type std::size_t"
  using sint   = decltype(ChangeTypeSign(sizeof(void*)));
  using vptr   = void*;
 
+ using time_t    = int64;
  using size_t    = uint;  // To write a familiar type convs
  using ssize_t   = sint;
  using nullptr_t = decltype(nullptr);
 
  // Add definitions for floating point types?
+ using flt32   = float;
+ using flt64   = double;
+
 };
 
 using PTRTYPE64  = typename NGenericTypes::uint64;
@@ -490,26 +510,8 @@ template <typename Ty> struct IsUPtrType<Ty*> {enum { V = true };};
 template <typename Ty> struct IsPtrType : IsUPtrType<typename RemoveCV<Ty>::T> {};
 template <typename Ty> static consteval bool IsPointer(const Ty&){return IsPtrType<Ty>::V;}   // Is this one better?
 
+//------------------------------------------------------------------------------------------------------------
 
-//------------------------------------------------------------------------------------------------------------
-// Returns take address of an ref objects but returns pointers as is
-// Needed because conditional expressions do not work with incompatible types which is required in folding: {((IsPtrType<RemoveRef<decltype(args)>::T>::V)?(args):(&args))...};
-static constexpr _finline void* GetValAddr(auto&& Value)
-{
- using VT = typename RemoveConst<typename RemoveRef<decltype(Value)>::T>::T;  // May be const
- if constexpr (IsPtrType<VT>::V)return (void*)Value;
- return (void*)&Value;
-}
-
-//------------------------------------------------------------------------------------------------------------
-template<typename T> constexpr _finline static T SwapBytes(T Value)  // Unsafe with optimizations?
-{
- uint8* SrcBytes = (uint8*)&Value;     // TODO: replace the cast with __builtin_bit_cast because it cannot be constexpr if contains a pointer cast
- uint8  DstBytes[sizeof(T)];
- for(uint idx=0;idx < sizeof(T);idx++)DstBytes[idx] = SrcBytes[(sizeof(T)-1)-idx];
- return *(T*)&DstBytes;
-}
-//------------------------------------------------------------------------------------------------------------
 template<typename T> constexpr _finline static int32 AddrToRelAddr(T CmdAddr, unsigned int CmdLen, T TgtAddr){return -((CmdAddr + CmdLen) - TgtAddr);}         // x86 only?
 template<typename T> constexpr _finline static T     RelAddrToAddr(T CmdAddr, unsigned int CmdLen, int32 TgtOffset){return ((CmdAddr + CmdLen) + TgtOffset);}  // x86 only?
 
@@ -531,7 +533,28 @@ template<typename N> constexpr _finline static N AlignP2Bkwd(N Value, unsigned i
 
 template<typename T> consteval size_t countof(T& a){return (sizeof(T) / sizeof(*a));}         // Not for array classes or pointers!  // 'a[0]' ?
 
+
+template<typename T> constexpr _finline static int SizeOfP2Type(void)
+{
+ if constexpr (SameTypes<T,void>::V)return 0;
+  else
+   {
+    static_assert(IsPowerOf2(sizeof(T)), "Only Pow2 types allowed!");
+    return sizeof(T);
+   }
+}
 //------------------------------------------------------------------------------------------------------------
+// Makes the pointer 'arbitrary', like it came from some malloc
+// Helps the optimizer to 'forget' about where this pointer came from
+// NOTE: May cause the ptr to lose relative addressing? (Arm32)
+auto _finline UnbindPtr(auto* ptr)
+{
+ volatile size_t tmp = (size_t)ptr;
+ return (decltype(ptr))tmp;
+}
+
+#include "Intrinsic.hpp"
+//---------------------------------------------------------------------------
 // No way to return an array from a 'consteval' directly?
 //
 template<typename T, uint N> struct SDHldr
@@ -602,128 +625,6 @@ template<typename T, typename H=uint> struct alignas(H) SPTR
 //using SPTR32 = SPTR<uint32>;
 //using SPTR64 = SPTR<uint64>;
 //------------------------------------------------------------------------------------------------------------
-template <class T> T RevBits(T n)
-{
- short bits = sizeof(n) * 8;
- T mask = ~T(0); // equivalent to uint32_t mask = 0b11111111111111111111111111111111;
- while (bits >>= 1)
-  {
-   mask ^= mask << (bits); // will convert mask to 0b00000000000000001111111111111111;
-   n = (n & ~mask) >> bits | (n & mask) << bits; // divide and conquer
-  }
- return n;
-}
-
-/*
-template<typename T> T RevBits( T n )
-{
-    // we force the passed-in type to its unsigned equivalent, because C++ may
-    // perform arithmetic right shift instead of logical right shift, depending
-    // on the compiler implementation.
-    typedef typename std::make_unsigned<T>::type unsigned_T;
-    unsigned_T v = (unsigned_T)n;
-
-    // swap every bit with its neighbor
-    v = ((v & 0xAAAAAAAAAAAAAAAA) >> 1)  | ((v & 0x5555555555555555) << 1);
-
-    // swap every pair of bits
-    v = ((v & 0xCCCCCCCCCCCCCCCC) >> 2)  | ((v & 0x3333333333333333) << 2);
-
-    // swap every nybble
-    v = ((v & 0xF0F0F0F0F0F0F0F0) >> 4)  | ((v & 0x0F0F0F0F0F0F0F0F) << 4);
-    // bail out if we've covered the word size already
-    if( sizeof(T) == 1 ) return v;
-
-    // swap every byte
-    v = ((v & 0xFF00FF00FF00FF00) >> 8)  | ((v & 0x00FF00FF00FF00FF) << 8);
-    if( sizeof(T) == 2 ) return v;
-
-    // etc...
-    v = ((v & 0xFFFF0000FFFF0000) >> 16) | ((v & 0x0000FFFF0000FFFF) << 16);
-    if( sizeof(T) <= 4 ) return v;
-
-    v = ((v & 0xFFFFFFFF00000000) >> 32) | ((v & 0x00000000FFFFFFFF) << 32);
-
-    // explictly cast back to the original type just to be pedantic
-    return (T)v;
-}
-*/
 
 //---------------------------------------------------------------------------
-// Makes the pointer 'arbitrary', like it came from some malloc
-// Helps the optimizer 'forget' about where this pointer came from
-auto _finline UnbindPtr(auto* ptr)
-{
- volatile size_t tmp = (size_t)ptr;
- return (decltype(ptr))tmp;
-}
-//---------------------------------------------------------------------------
-// NOTE: Will suppress force_inline
-extern "C"
-{
-// TODO: Get rid of div and mult
-// TODO: Align the addresses and use xmm for copy operations
-void* memcpy(void* Dst, const void* Src, size_t Size)   // static
-{
- size_t ALen = Size >> PtrBIdx;
-// size_t BLen = _Size%sizeof(size_t);
- for(size_t ctr=0;ctr < ALen;ctr++)((size_t*)Dst)[ctr] = ((const size_t*)Src)[ctr];
- for(size_t ctr=(ALen << PtrBIdx);ctr < Size;ctr++)((char*)Dst)[ctr] = ((const char*)Src)[ctr];
- return Dst;
-}
 
-void* CopyMem(void* Dst, const void* Src, size_t Size) //__attribute__ ((optnone))  // static
-{
- size_t ALen = Size >> PtrBIdx;
-// size_t BLen = _Size%sizeof(size_t);
- for(size_t ctr=0;ctr < ALen;ctr++)((size_t*)Dst)[ctr] = ((const size_t*)Src)[ctr];
- for(size_t ctr=(ALen << PtrBIdx);ctr < Size;ctr++)((char*)Dst)[ctr] = ((const char*)Src)[ctr];
- return Dst;
-}
-//------------------------------------------------------------------------------------------------------------
-// NOTE: There is a BUG in memmove part (loses last size_t at ALen-1)!!!
-/*static void* memmove(void* Dst, const void* Src, size_t Size)     // Have a BUG
-{
- if((char*)Dst <= (char*)Src)return memcpy(Dst,Src,Size);
- size_t ALen = Size >> PtrBIdx;
- size_t BLen = Size & (PtrBIdx-1);
- for(size_t ctr=Size-1;BLen > 0;ctr--,BLen--)((char*)Dst)[ctr] = ((const char*)Src)[ctr];
- for(size_t ctr=ALen-1;ALen > 0;ctr--,ALen--)((size_t*)Dst)[ctr] = ((const size_t*)Src)[ctr];
- return Dst;
-} */
-//---------------------------------------------------------------------------
-void* memset(void* Dst, unsigned int Val, size_t Size)      // TODO: Aligned, SSE by MACRO
-{
- size_t ALen = Size >> PtrBIdx;
-// size_t BLen = _Size%sizeof(size_t);
- size_t DVal = Val & 0xFF;               // Bad and incorrect For x32: '(size_t)_Val * 0x0101010101010101;'         // Multiply by 0x0101010101010101 to copy the lowest byte into all other bytes
- if(DVal)
-  {
-   DVal = Val | (Val << 8) | (Val << 16) | (Val << 24);
-#ifdef _AMD64_
-   DVal |= DVal << 32;
-#endif
-  }
- for(size_t ctr=0;ctr < ALen;ctr++)((size_t*)Dst)[ctr] = DVal;
- for(size_t ctr=(ALen << PtrBIdx);ctr < Size;ctr++)((char*)Dst)[ctr] = (char)DVal;
- return Dst;
-}
-//---------------------------------------------------------------------------
-// TODO: Need a function which returns number of matched bytes, not just diff of a last unmatched byte
-int memcmp(const void* Buf1, const void* Buf2, size_t Size)   // '(*((ULONG**)&_Buf1))++;'
-{
- const unsigned char* BufA = (const unsigned char*)Buf1;
- const unsigned char* BufB = (const unsigned char*)Buf2;
- for(;Size >= sizeof(size_t); Size-=sizeof(size_t), BufA+=sizeof(size_t), BufB+=sizeof(size_t))  // Enters here only if Size >= sizeof(ULONG)
-  {
-   if(*((const size_t*)BufA) != *((const size_t*)BufB))break;  // Have to break and continue as bytes because return value must be INT  // return (*((intptr_t*)BufA) - *((intptr_t*)BufB));  //  // TODO: Move everything to multiplatform FRAMEWORK
-  }
- for(;Size > 0; Size--, BufA++, BufB++)  // Enters here only if Size > 0
-  {
-   if(*((const unsigned char*)BufA) != *((const unsigned char*)BufB)){return ((int)*BufA - (int)*BufB);}
-  }
- return 0;
-}
-//---
-};
-//---------------------------------------------------------------------------

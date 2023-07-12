@@ -15,13 +15,17 @@ template<typename T> constexpr _finline static bool IsDirSpec(T Name){return (((
 template<typename D, typename S> constexpr _finline static bool AssignFilePath(D DstPath, S BasePath, S FilePath)  // TODO: Should return length
 {
  if(!FilePath || !FilePath[0])return false;
- if(FilePath[1] != ':')
+ if(FilePath[1] != ':')    // No drive-absolute path
   {
-   NSTR::StrCopy(DstPath, BasePath);
-   S Ptr = (IsFilePathDelim(FilePath[0]))?(&FilePath[1]):(&FilePath[0]);
-   NSTR::StrCnat(DstPath, Ptr);
+   if(!IsFilePathDelim(FilePath[0]))
+    {
+     NSTR::StrCopy(DstPath, BasePath);
+     S Ptr = (IsFilePathDelim(FilePath[0]))?(&FilePath[1]):(&FilePath[0]);
+     NSTR::StrCnat(DstPath, Ptr);
+    }
+     else NSTR::StrCopy(DstPath, FilePath);  // File system absolute path (Unix way)
   }
-   else NSTR::StrCopy(DstPath, FilePath);
+   else NSTR::StrCopy(DstPath, FilePath);  // Drive-absolute path 
  return true;
 }
 //---------------------------------------------------------------------------

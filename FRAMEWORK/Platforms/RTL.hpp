@@ -2,29 +2,29 @@
 #pragma once
 
 
-#ifdef COMP_MSVC 
+#ifdef COMP_MSVC
 extern "C" int _fltused = 0;
 #endif
 
 
 // https://wiki.osdev.org/C_PlusPlus
 // Mandatory global methods for C++ support (GCC)
-extern "C" void __cxa_pure_virtual(void)
+_NOMANGL void __cxa_pure_virtual(void)
 {
  // Do nothing or print an error message.
 }
 //void *__dso_handle = 0;
-extern "C" int __cxa_atexit(void (*destructor) (void *), void *arg, void *dso)
+_NOMANGL int __cxa_atexit(void (*destructor) (void *), void *arg, void *dso)
 {
  return 0;
 }
 
-extern "C" void __cxa_finalize(void *f)
+_NOMANGL void __cxa_finalize(void *f)
 {
 
 }
 
-static void _ccall _purecall(void){}  // extern "C" ?  // Visual Studio
+_NOMANGL void _ccall _purecall(void){}  // extern "C" ?  // Visual Studio
 
 //---------------------------------------------------------------------------
 /*static void* _ccall memset(void* _Dst, int _Val, NFWK::size_t _Size)   // __cdecl   // TODO: Aligned, SSE by MACRO   // DDUUPPLLIICCAATT

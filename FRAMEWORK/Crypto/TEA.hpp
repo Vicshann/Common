@@ -6,7 +6,7 @@
 // Delta: 0xC6EF3720 for 32 rounds
 // Delta: 0x9E3779B9 = (sqrt(5)-1) / 2 * 0x100000000
 //
-template<unsigned int Delta=0x9E3779B9, unsigned int Rounds=32, unsigned int ShL=4, unsigned int ShR=5> struct SXTEA
+template<uint32 Delta=0x9E3779B9, unsigned int Rounds=32, unsigned int ShL=4, unsigned int ShR=5> struct SXTEA
 {
 // The 'Extended Tiny Encryption Algorithm' (XTEA) by David Wheeler and Roger Needham of the Cambridge Computer Laboratory.
 // XTEA is a Feistel cipher with XOR and AND addition as the non-linear mixing functions.
@@ -14,36 +14,42 @@ template<unsigned int Delta=0x9E3779B9, unsigned int Rounds=32, unsigned int ShL
 // Returns 64 bits of encrypted data in Data[0] and Data[1].
 // Takes 128 bits of key in Key[0] - Key[3]. (16 bytes)
 
-_finline static void EncryptBlock(unsigned int *Data, unsigned int *Key, unsigned int Dlt=Delta)
+_finline static void EncryptBlock(uint32* _RST Data, const uint32* _RST Key, const uint32 Dlt=Delta)
 {
- for(unsigned long sum=0,rnd=Rounds;rnd;rnd--)
+ uint32 Val0=Data[0], Val1=Data[1];
+ for(uint32 sum=0,rnd=Rounds;rnd;rnd--)
   {
-   Data[0] += ((Data[1]<<ShL ^ Data[1]>>ShR) + Data[1]) ^ (sum + Key[sum & 3]);
-   sum += Dlt;
-   Data[1] += ((Data[0]<<ShL ^ Data[0]>>ShR) + Data[0]) ^ (sum + Key[sum>>11 & 3]);
+   Val0 += ((Val1<<ShL ^ Val1>>ShR) + Val1) ^ (sum + Key[sum & 3]);
+   sum  += Dlt;
+   Val1 += ((Val0<<ShL ^ Val0>>ShR) + Val0) ^ (sum + Key[(sum>>11) & 3]);
   }
+ Data[0]=Val0; Data[1]=Val1;
 }
 //------------------------------------------------------------------------------------------------------------
-_finline static void DecryptBlock(unsigned int *Data, unsigned int *Key, unsigned int Dlt=Delta)
+_finline static void DecryptBlock(uint32* _RST Data, const uint32* _RST Key, const uint32 Dlt=Delta)
 {
- for(unsigned long sum=Dlt*Rounds,rnd=Rounds;rnd;rnd--)
+ uint32 Val0=Data[0], Val1=Data[1];
+ for(uint32 sum=Dlt*Rounds,rnd=Rounds;rnd;rnd--)
   {
-   Data[1] -= ((Data[0]<<ShL ^ Data[0]>>ShR) + Data[0]) ^ (sum + Key[sum>>11 & 3]);
-   sum -= Dlt;
-   Data[0] -= ((Data[1]<<ShL ^ Data[1]>>ShR) + Data[1]) ^ (sum + Key[sum & 3]);
+   Val1 -= ((Val0<<ShL ^ Val0>>ShR) + Val0) ^ (sum + Key[(sum>>11) & 3]);
+   sum  -= Dlt;
+   Val0 -= ((Val1<<ShL ^ Val1>>ShR) + Val1) ^ (sum + Key[sum & 3]);
   }
+ Data[0]=Val0; Data[1]=Val1;
 }
 //------------------------------------------------------------------------------------------------------------
-_finline static void Encrypt(void* Data, void* Key, unsigned long DataSize, unsigned int Dlt=Delta)
+_finline static void Encrypt(void* Data, const void* Key, const size_t DataSize, const uint32 Dlt=Delta)
 {
- unsigned long long *Pointer = (unsigned long long*)Data;
- for(unsigned long Index=0,Total=DataSize>>3;Index < Total;Index++)EncryptBlock((unsigned int*)&Pointer[Index], (unsigned int*)Key, Dlt);
+ const uint64* Pointer = (uint64*)Data;    // 64bit block
+ const uint64* EndPtr  = (uint64*)((uint8*)Data + (DataSize & ~7));   // Skip unaligned bytes at the end (Aligned to 8)
+ for(;Pointer < EndPtr;Pointer++)EncryptBlock((uint32*)Pointer, (uint32*)Key, Dlt);
 }
 //------------------------------------------------------------------------------------------------------------
-_finline static void Decrypt(void* Data, void* Key, unsigned long DataSize, unsigned int Dlt=Delta)
+_finline static void Decrypt(void* Data, const void* Key, const size_t DataSize, const uint32 Dlt=Delta)
 {
- unsigned long long *Pointer = (unsigned long long*)Data;
- for(unsigned long Index=0,Total=DataSize>>3;Index < Total;Index++)DecryptBlock((unsigned int*)&Pointer[Index], (unsigned int*)Key, Dlt);
+ const uint64* Pointer = (uint64*)Data;    // 64bit block
+ const uint64* EndPtr  = (uint64*)((uint8*)Data + (DataSize & ~7));   // Skip unaligned bytes at the end (Aligned to 8)
+ for(;Pointer < EndPtr;Pointer++)DecryptBlock((uint32*)Pointer, (uint32*)Key, Dlt);
 }
 //------------------------------------------------------------------------------------------------------------
 

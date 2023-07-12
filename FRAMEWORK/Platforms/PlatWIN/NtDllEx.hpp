@@ -8,7 +8,7 @@ template<typename PHT=PTRCURRENT> struct NNTDEX: public NNTDLL<PHT>    // NUFmtP
 // See KUSER_SHARED_DATA in ntddk.h
 static _finline uint8* GetUserSharedData(void)
 {
- return reinterpret_cast<PBYTE>(0x7FFE0000);
+ return reinterpret_cast<uint8*>(0x7FFE0000);
 }
 //---------------------------------------------------------------------------
 static _finline bool IsWinXPOrOlder(void)
@@ -17,35 +17,39 @@ static _finline bool IsWinXPOrOlder(void)
  return (bool)*(PDWORD)pKiUserSharedData;    // Deprecated since 5.2(XP x64) and equals 0
 }
 //---------------------------------------------------------------------------
-static inline uint64 GetTicks(void)
+static _finline uint64 GetTicks(void)
 {
  uint8* pKiUserSharedData = GetUserSharedData();
- return (*(PDWORD)pKiUserSharedData)?((uint64)*(PDWORD)pKiUserSharedData):(*(uint64*)&pKiUserSharedData[0x320]); 
+ return (*(uint16*)pKiUserSharedData)?((uint64)*(PDWORD)pKiUserSharedData):(*(uint64*)&pKiUserSharedData[0x320]); 
 }
 //----------------------------------------------------------------------------
-static inline ULONG GetTicksCount(void)
+static _finline uint64 GetTicksCount(void)
 {
  uint8* pKiUserSharedData = GetUserSharedData();
  return (GetTicks() * *(PDWORD)&pKiUserSharedData[4]) >> 24;  // 'TickCountLow * TickCountMultiplier' or 'TickCount * TickCountMultiplier'
 }
 //----------------------------------------------------------------------------
-static inline uint64 GetInterruptTime(void)   // FILETIME
+static _finline uint64 GetInterruptTime(void)   // FILETIME
 {
  uint8* pKiUserSharedData = GetUserSharedData();
  return *(uint64*)&pKiUserSharedData[0x0008]; 
 }
 //----------------------------------------------------------------------------
-static inline uint64 GetSystemTime(void)  // FILETIME
+static _finline uint64 GetTimeZoneBias(void)  // FILETIME
+{
+ uint8* pKiUserSharedData = GetUserSharedData();
+ return *(uint64*)&pKiUserSharedData[0x0020];
+}
+//----------------------------------------------------------------------------
+static _finline uint64 GetSystemTime(void)  // FILETIME
 {
  uint8* pKiUserSharedData = GetUserSharedData();
  return *(uint64*)&pKiUserSharedData[0x0014]; 
 }
 //----------------------------------------------------------------------------
-static inline uint64 GetLocalTime(void)  // FILETIME
+static _finline uint64 GetLocalTime(void)  // FILETIME
 {
- uint8* pKiUserSharedData = GetUserSharedData();
- uint64 TimeZoneBias = *(uint64*)&pKiUserSharedData[0x0020];
- return GetSystemTime() - TimeZoneBias; 
+ return GetSystemTime() - GetTimeZoneBias(); 
 }
 //----------------------------------------------------------------------------
 // _ReadBarrier       // Forces memory reads to complete
@@ -237,6 +241,166 @@ template<typename T> static EPathType GetPathTypeNt(T Src)
  if((Src[0] == '/') || (Src[0] == '\\'))return ptSysRootRel;  // \MyHomeFolder
  //if((Src[0] == '.') && ((Src[1] == '/') || (Src[1] == '\\')))return ptCurrDirRel;    // .\MyDrkDir
  return ptCurrDirRel;  //ptUnknown;
+}
+//------------------------------------------------------------------------------------
+static _finline size_t CalcFilePathBufSize(const achar* Path, uint& plen, EPathType& ptype)
+{
+ plen  = NSTR::StrLen(Path);
+ ptype = NTX::GetPathTypeNt(Path);
+ uint ExtraLen = 4+10;  // +10 for size of "\\GLOBAL??\\"
+ NT::UNICODE_STRING* CurrDir = &NT::NtCurrentTeb()->ProcessEnvironmentBlock->ProcessParameters->CurrentDirectory.DosPath;    // 'C:\xxxxx\yyyyy\'
+ if(ptype == NTX::ptSysRootRel)ExtraLen += NSTR::StrLen((wchar*)&fwsinf.SysDrive);
+ else if(ptype == NTX::ptCurrDirRel)ExtraLen += CurrDir->Length / sizeof(wchar);
+ return (plen*4)+ExtraLen;
+}
+//------------------------------------------------------------------------------------
+static _finline void InitFileObjectAttributes(const achar* Path, uint plen, EPathType ptype, uint32 ObjAttributes, NT::UNICODE_STRING* buf_ustr, wchar* buf_path, NT::OBJECT_ATTRIBUTES* oattr)
+{
+ uint DstLen = NSTR::StrCopy(buf_path, L"\\GLOBAL??\\");     // Windows XP?
+ NT::UNICODE_STRING* CurrDir = &NT::NtCurrentTeb()->ProcessEnvironmentBlock->ProcessParameters->CurrentDirectory.DosPath; 
+ if(ptype == NTX::ptSysRootRel)DstLen += NSTR::StrCopy(&buf_path[DstLen], (wchar*)&fwsinf.SysDrive);
+ else if(ptype == NTX::ptCurrDirRel)DstLen += NSTR::StrCopy(&buf_path[DstLen], (wchar*)CurrDir->Buffer);
+ DstLen += NUTF::Utf8To16(&buf_path[DstLen], Path, plen);
+ buf_path[DstLen] = 0;
+ DstLen  = NTX::NormalizePathNt(buf_path);
+ buf_path[DstLen] = 0;
+ buf_ustr->Set(buf_path, DstLen);
+
+ oattr->Length = sizeof(NT::OBJECT_ATTRIBUTES);
+ oattr->RootDirectory = nullptr;
+ oattr->ObjectName = buf_ustr;
+ oattr->Attributes = ObjAttributes;            // OBJ_CASE_INSENSITIVE;   //| OBJ_KERNEL_HANDLE;
+ oattr->SecurityDescriptor = nullptr;          // TODO: Arg3: mode_t mode
+ oattr->SecurityQualityOfService = nullptr;
+}
+//------------------------------------------------------------------------------------
+static NTSTATUS OpenFileObject(const achar* Path, ACCESS_MASK DesiredAccess, ULONG ObjAttributes, ULONG FileAttributes, ULONG ShareAccess, ULONG CreateDisposition, ULONG CreateOptions, PIO_STATUS_BLOCK IoStatusBlock, PHANDLE FileHandle)
+{
+ NT::OBJECT_ATTRIBUTES oattr = {};
+ NT::UNICODE_STRING FilePathUS;
+
+ uint plen; 
+ NTX::EPathType ptype; 
+ uint PathLen = CalcFilePathBufSize(Path, plen, ptype); 
+
+ wchar FullPath[PathLen];   
+ InitFileObjectAttributes(Path, plen, ptype, ObjAttributes, &FilePathUS, FullPath, &oattr);
+ return SAPI::NtCreateFile(FileHandle, DesiredAccess, &oattr, IoStatusBlock, nullptr, FileAttributes, ShareAccess, CreateDisposition, CreateOptions, nullptr, 0);
+}
+//------------------------------------------------------------------------------------
+/*
+ https://stackoverflow.com/questions/46473507/delete-folder-for-which-every-api-call-fails-with-error-access-denied
+
+for delete file enough 2 things - we have FILE_DELETE_CHILD on parent folder. and file is not read only. 
+in this case call ZwDeleteFile (but not DeleteFile or RemoveDirectory - both this api will fail if file have empty DACL) is enough. 
+in case file have read-only attribute - ZwDeleteFile fail with code STATUS_CANNOT_DELETE. in this case we need first remove read only. 
+for this need open file with FILE_WRITE_ATTRIBUTES access. we can do this if we have SE_RESTORE_PRIVILEGE and set FILE_OPEN_FOR_BACKUP_INTENT option in call to ZwOpenFile.
+
+A file in the file system is basically a link to an inode.
+A hard link, then, just creates another file with a link to the same underlying inode.
+When you delete a file, it removes one link to the underlying inode. The inode is only deleted (or deletable/over-writable) when all links to the inode have been deleted.
+
+Once a hard link has been made the link is to the inode. Deleting, renaming, or moving the original file will not affect the hard link as it links to the underlying inode. 
+Any changes to the data on the inode is reflected in all files that refer to that inode.
+
+https://superuser.com/questions/343074/directory-junction-vs-directory-symbolic-link
+
+Default behaviour:
+ NtDeleteFile("C:/TST/TestDirJunction");       // Reparse point          // Deleted target directory itself, not the link!
+ NtDeleteFile("C:/TST/TestDirSoftLink");       // Reparse point          // Deleted target directory itself, not the link!
+ NtDeleteFile("C:/TST/TestFileSoftLink");      // Reparse point          // Deleted target file itself, not the link!
+ NtDeleteFile("C:/TST/TestFileHardLink.ini");  // A Link to same INODE   // Deleted the link, not a target file!
+
+IoFileObjectType           // NtDeleteFile (CreateOptions = FILE_DELETE_ON_CLOSE, DeleteOnly)  // IoFileObjectType: InvalidAttributes is OBJ_PERMANENT | OBJ_EXCLUSIVE | OBJ_OPENLINK
+ObpDirectoryObjectType
+ObpSymbolicLinkObjectType
+
+NtOpenSymbolicLinkObject
+ NtDeleteFile is much simpler and faster but it is not used by DeleteFileW (Because it just follows a file obect`s name by any link?)
+*/
+static NTSTATUS DeleteFileObject(const achar* Path, bool Force, int AsDir)     // NtDeleteFile
+{
+ NT::OBJECT_ATTRIBUTES oattr = {};
+ NT::UNICODE_STRING FilePathUS;
+
+ uint plen; 
+ NTX::EPathType ptype; 
+ uint PathLen = CalcFilePathBufSize(Path, plen, ptype); 
+ uint32 ObjAttributes = NT::OBJ_DONT_REPARSE;  //  Symlinks are implemented as Reparse Points   // Only Hard Links to a file can be safely deleted without this
+ wchar FullPath[PathLen];   
+ InitFileObjectAttributes(Path, plen, ptype, ObjAttributes, &FilePathUS, FullPath, &oattr);
+ NTSTATUS Status = SAPI::NtDeleteFile(&oattr);     // Deletes files and directories(empty)  // ObOpenObjectByNameEx as  
+ if(Status != NT::STATUS_REPARSE_POINT_ENCOUNTERED)return Status;   // Succeeded or failed
+
+ // A Symlink encountered on the path
+/*
+ HANDLE hFile;
+ OBJECT_ATTRIBUTES attr;
+ IO_STATUS_BLOCK iost;
+ FILE_DISPOSITION_INFORMATION fDispositionInfo;
+ FILE_BASIC_INFORMATION fBasicInfo;
+ UNICODE_STRING TargetFileName;
+
+ RtlInitUnicodeString(&TargetFileName, FileName);
+ InitializeObjectAttributes(&attr, &TargetFileName, OBJ_CASE_INSENSITIVE, 0, 0);
+ NTSTATUS Status = NtOpenFile(&hFile, DELETE | FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES, &attr, &iost, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_NON_DIRECTORY_FILE | FILE_OPEN_FOR_BACKUP_INTENT);
+ if(NT_SUCCESS(Status))
+  {
+   Status = NtQueryInformationFile(hFile, &iost, &fBasicInfo, sizeof(FILE_BASIC_INFORMATION), FileBasicInformation);
+   if(NT_SUCCESS(Status))
+    {
+     fBasicInfo.FileAttributes = FILE_ATTRIBUTE_NORMAL;
+     NtSetInformationFile(hFile, &iost, &fBasicInfo, sizeof(FILE_BASIC_INFORMATION), FileBasicInformation);
+    }
+   fDispositionInfo.DeleteFile = TRUE;  // puts the file into a "delete pending" state. It will be deleted once all existing handles are closed. No new handles will be possible to open
+   Status = NtSetInformationFile(hFile, &iost, &fDispositionInfo, sizeof(FILE_DISPOSITION_INFORMATION), FileDispositionInformation);
+   NtClose(hFile);
+  }  */
+ return Status;
+}
+//------------------------------------------------------------------------------------
+static NTSTATUS DeleteSymbolicLinkObject(const achar* Path)
+{
+if (NtOpenSymbolicLinkObject( &handle, DELETE, &objectAttributes) == STATUS_SUCCESS)
+{
+    NtMakeTemporaryObject( handle);
+    NtClose( handle);
+}
+}
+//------------------------------------------------------------------------------------
+// On some hardware architectures (e.g., i386), PROT_WRITE implies PROT_READ.  
+// It is architecture dependent whether PROT_READ implies PROT_EXEC or not.  
+// Portable programs should always set PROT_EXEC if they intend to execute code in the new mapping.
+//
+// Works for memory allocation/protection and file mapping
+//
+static uint32 MemProtPXtoNT(uint32 prot)
+{
+ uint32 PageProt = 0;
+ if(prot & PX::PROT_EXEC)     // Use EXEC group of flags 
+  {
+   if(prot & PX::PROT_WRITE)
+    {
+     if(prot & PX::PROT_READ)PageProt |= NT::PAGE_EXECUTE_READWRITE; 
+       else PageProt |= NT::PAGE_EXECUTE_WRITECOPY;  
+    }
+   else if(prot & PX::PROT_READ)PageProt |= NT::PAGE_EXECUTE_READ;   
+   else PageProt |= NT::PAGE_EXECUTE;                                
+  }
+ else   // Use ordinary R/W group of flags
+  {
+   if(prot & PX::PROT_WRITE)
+    {
+     if(prot & PX::PROT_READ)PageProt |= NT::PAGE_READWRITE;
+       else PageProt |= NT::PAGE_WRITECOPY;
+    }
+   else
+    {
+     if(prot & PX::PROT_READ)PageProt |= NT::PAGE_READONLY;
+      else PageProt |= NT::PAGE_NOACCESS;
+    }
+  }
+ return PageProt;
 }
 //------------------------------------------------------------------------------------
 // From MingW

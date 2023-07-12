@@ -146,7 +146,7 @@ static _finline uint16 ByteToHexChar(uint8 Value, bool UpCase=true)  // Fast but
 {
  const char ChrTable[] = {"0123456789ABCDEF"};    // TODO: Optimize this string
  uint8 cmsk = ((uint8)!UpCase << 5);  // Low case bit mask
- if constexpr(IsBigEnd) return (uint16(ChrTable[Value >> 4] << 8) | uint16(ChrTable[Value & 0x0F]));
+ if constexpr(NCFG::IsBigEnd) return (uint16(ChrTable[Value >> 4] << 8) | uint16(ChrTable[Value & 0x0F]));
  else return (uint16(ChrTable[Value & 0x0F] << 8) | uint16(ChrTable[Value >> 4]));
 }
 //---------------------------------------------------------------------------
@@ -228,7 +228,7 @@ template<typename T> static uint HexStrToByteArray(uint8* Buffer, T SrcStr, uint
 //---------------------------------------------------------------------------
 // Return address always points to Number[16-MaxDigits];
 //
-template<typename T, typename S> static S ConvertToHexStr(T Value, uint MaxDigits, S NumBuf, bool UpCase, uint* Len=nullptr)
+template<typename T, typename S> static S NumToHexStr(T Value, uint MaxDigits, S NumBuf, bool UpCase, uint* Len=nullptr)
 {
  const uint cmax = sizeof(T)*2;      // Number of byte halves (Digits)
  char  HexNums[] = {'0','1','2','3','4','5','6','7','8','9','A','B','C','D','E','F','0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f'};     // Must be optimized to PlatLen assignments
