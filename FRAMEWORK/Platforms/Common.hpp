@@ -150,7 +150,7 @@ static constexpr bool IsDbgBuild = false;
 #pragma intrinsic(_ReturnAddress)
 #pragma intrinsic(_AddressOfReturnAddress)  // Instead of #include <intrin.h>
 
-#define GETSTKFRAME() _AddressOfReturnAddress()  // ARM? On ARM RetAddr is in LR register, not on stack // Will not include address of some previous stack frame (from 'push rbp' at proc addr)    // CLANG:MSVC also supports __builtin_frame_address
+#define GETSTKFRAME() _AddressOfReturnAddress()  // ARM? On ARM RetAddr is in LR register, not on stack (assuming first in the stack frame according to ABI) // Will not include address of some previous stack frame (from 'push rbp' at proc addr)    // CLANG:MSVC also supports __builtin_frame_address
 #define GETRETADDR() _ReturnAddress()
 //#define SETRETADDR(addr) (*(void**)_AddressOfReturnAddress() = (void*)(addr))    // Not on ARM? LR is usually pushed on stack
 
@@ -168,7 +168,7 @@ static constexpr bool IsDbgBuild = false;
 #define _RST __restrict           // void fr (float * __restrict dest)   // https://stackoverflow.com/questions/1965487/does-the-restrict-keyword-provide-significant-benefits-in-gcc-g
 // https://gcc.gnu.org/onlinedocs/gcc/Return-Address.html
 // NOTE: __builtin_frame_address does not return the frame address as it was at a function entry. It points at the current function`s frame, including all its local variables
-#define GETSTKFRAME() __builtin_frame_address(0)  // Anything except 0 will use a stack frame register according to specified ABI // TODO: Rework! // On ARM there is no RetAddr on stack  // Should not include address of some previous stack frame (from 'push rbp' at proc addr)
+#define GETSTKFRAME() __builtin_frame_address(0)  // NOTE: MINGW implements _AddressOfReturnAddress() with it  // Anything except 0 will use a stack frame register according to specified ABI // TODO: Rework! // On ARM there is no RetAddr on stack  // Should not include address of some previous stack frame (from 'push rbp' at proc addr)
 #define GETRETADDR() __builtin_extract_return_addr(__builtin_return_address (0))
 //#define SETRETADDR(addr) (*(void**)__builtin_frame_address(0) = __builtin_frob_return_addr((void*)(addr)))  // ARM?
 
@@ -308,22 +308,26 @@ template<bool UseTypeA, typename A, typename B> constexpr static auto TypeSwitch
    else {B val{0}; return val;}
 }
 //------------------------------------------------------------------------------------------------------------
+template<typename T> consteval static auto TypeToSigned(T Val=0)
+{
+ if constexpr (1 == sizeof(T))return (signed char)Val;
+ else if constexpr (2 == sizeof(T))return (signed short)Val;
+ else if constexpr (4 == sizeof(T))return (signed int)Val;
+ else if constexpr (8 == sizeof(T))return (signed long long)Val;
+}
+//------------------------------------------------------------------------------------------------------------
+template<typename T> consteval static auto TypeToUnsigned(T Val=0)
+{
+ if constexpr (1 == sizeof(T))return (unsigned char)Val;
+ else if constexpr (2 == sizeof(T))return (unsigned short)Val;
+ else if constexpr (4 == sizeof(T))return (unsigned int)Val;
+ else if constexpr (8 == sizeof(T))return (unsigned long long)Val;
+}
+//------------------------------------------------------------------------------------------------------------
 template<typename T> consteval static auto ChangeTypeSign(T Val=0)  // Should be compiled faster than a template specialization?
 {
- if constexpr (T(-1) < T(0))   // IsSigned
-  {
-   if constexpr (1 == sizeof(T))return (unsigned char)Val;
-   else if constexpr (2 == sizeof(T))return (unsigned short)Val;
-   else if constexpr (4 == sizeof(T))return (unsigned int)Val;
-   else if constexpr (8 == sizeof(T))return (unsigned long long)Val;
-  }
-   else
-    {
-     if constexpr (1 == sizeof(T))return (signed char)Val;
-     else if constexpr (2 == sizeof(T))return (signed short)Val;
-     else if constexpr (4 == sizeof(T))return (signed int)Val;
-     else if constexpr (8 == sizeof(T))return (signed long long)Val;
-    }
+ if constexpr (T(-1) < T(0))return TypeToUnsigned<T>(Val);   // IsSigned
+   else return TypeToSigned<T>(Val);
 }
 
 constexpr static bool Is64BitBuild(void){return sizeof(void*) == 8;}   // To be used in constexpr expressions instead of __amd64__ macro
@@ -353,32 +357,36 @@ pointer	    64	    64	    64	    32	    32
 */
 
 // Trying to sort out the whole history of type mess (If some platform does not support any of these, its compiler should implement missing operations)
- using achar  = char;      // Since C++11: u8"Hello" to define a UTF-8 string of chars
- using wchar  = wchar_t;   // Different platforms may use different sizes for it
- using charb  = char8_t;   // u8"" // cannot be signed or unsigned
- using charw  = char16_t;  // u""  // cannot be signed or unsigned
- using chard  = char32_t;  // U""  // cannot be signed or unsigned
+ using achar   = char;      // Since C++11: u8"Hello" to define a UTF-8 string of chars
+ using wchar   = wchar_t;   // Different platforms may use different sizes for it
+ using charb   = char8_t;   // u8"" // cannot be signed or unsigned
+ using charw   = char16_t;  // u""  // cannot be signed or unsigned
+ using chard   = char32_t;  // U""  // cannot be signed or unsigned
+#ifdef SYS_WINDOWS           // Default char, used on target system (achar, except Windows)
+ using syschar = wchar;
+#else
+ using syschar = achar;
+#endif
+ using uint8   = unsigned char;      // 'char' can be signed or unsigned by default
+ using uint16  = unsigned short int;
+ using uint32  = unsigned int;       // Expected to be 32bit on all supported platforms  // NOTE: int is 32bit even on x64 platforms, meaning that using 'int' everywhere is not architecture friendly
+ using uint64  = unsigned long long; // 'long long unsigned int' or 'long unsigned int' ???  // See LP64, ILP64, ILP32 data models on different architectures
 
- using uint8  = unsigned char;      // 'char' can be signed or unsigned by default
- using uint16 = unsigned short int;
- using uint32 = unsigned int;       // Expected to be 32bit on all supported platforms  // NOTE: int is 32bit even on x64 platforms, meaning that using 'int' everywhere is not architecture friendly
- using uint64 = unsigned long long; // 'long long unsigned int' or 'long unsigned int' ???  // See LP64, ILP64, ILP32 data models on different architectures
+ using sint8   = signed char;
+ using sint16  = signed short int;
+ using sint32  = signed int;
+ using sint64  = signed long long;   // __int64_t
 
- using sint8  = signed char;
- using sint16 = signed short int;
- using sint32 = signed int;
- using sint64 = signed long long;   // __int64_t
+ using int8    = sint8;
+ using int16   = sint16;
+ using int32   = sint32;
+ using int64   = sint64;   // __int64_t
 
- using int8   = sint8;
- using int16  = sint16;
- using int32  = sint32;
- using int64  = sint64;   // __int64_t
+ using uint    = decltype(sizeof(void*));   // These 'int' are always platform-friendly (same size as pointer type, replace size_t) // "The result of sizeof and sizeof... is a constant of type std::size_t"
+ using sint    = decltype(ChangeTypeSign(sizeof(void*)));
+ using vptr    = void*;
 
- using uint   = decltype(sizeof(void*));   // These 'int' are always platform-friendly (same size as pointer type, replace size_t) // "The result of sizeof and sizeof... is a constant of type std::size_t"
- using sint   = decltype(ChangeTypeSign(sizeof(void*)));
- using vptr   = void*;
-
- using time_t    = int64;
+ using time_t    = int64; // Modern time_t is 64-bit
  using size_t    = uint;  // To write a familiar type convs
  using ssize_t   = sint;
  using nullptr_t = decltype(nullptr);
@@ -428,7 +436,7 @@ template<typename A, typename B> constexpr _finline static bool IsSameTypes(A Va
  return SameTypes<A, B>::V;
 }
 
-template<typename T> struct IsPositive { static const bool V = (T(-1) >= 0); };     // template<typename T> constexpr _finline static bool IsPositive(void){return (T(-1) >= 0);}    // constinit
+template<typename T> struct IsUnsigned { static const bool V = (T(-1) >= 0); };     // template<typename T> constexpr _finline static bool IsPositive(void){return (T(-1) >= 0);}    // constinit
 
 //------------------------------------------------------------------------------------------------------------
 template<typename Ty> struct RemoveRef { using T = Ty; };
@@ -440,19 +448,25 @@ template <typename Ty> struct TyIdent { using T = Ty; };
 // https://stackoverflow.com/questions/17644133/function-that-accepts-both-lvalue-and-rvalue-arguments
 // NOTE: Use this only to pass an unused temporaries as unneeded return values of a function
 // EXAMPLE: ARef<typename RemoveRef<typename TyIdent<T>::T>::T> res
+// NOTE: The compiler will make a copy if a passed type is not same as type of REF (i.e. you pass an uint when type of REF is sint) (FIXED?)
 template <typename Ref> struct ARef       // Universal ref wrapper
 {
- Ref &&ref;
+ Ref& ref;
 
- constexpr _finline ARef(Ref&& arg) : ref((typename RemoveRef<Ref>::T&&)arg) { }   // RValue     // Using the class` type Ref leaves us wuthout Universal Reference. But making the constructor template will break type conversion on assignment
- constexpr _finline ARef(Ref& arg) : ref((typename RemoveRef<Ref>::T&&)arg) { }    // LValue
- constexpr _finline ARef(volatile Ref& arg) : ref((typename RemoveRef<Ref>::T&&)arg) { }    // LValue for a volatile storage (Can removing the 'volatile' break some use cases of it bacause of optimization?)  // Can we pass a type to ARef without losing its volatility?
+// constexpr _ninline explicit ARef(Ref&& arg) : ref((typename RemoveRef<Ref>::T&&)arg) { }   // RValue     // Using the class` type Ref leaves us wuthout Universal Reference. But making the constructor template will break type conversion on assignment
+// constexpr _ninline explicit ARef(Ref& arg) : ref((typename RemoveRef<Ref>::T&&)arg) { }    // LValue
 
- constexpr _finline Ref& operator=(ARef<Ref> const& v){ref = v; return ref; }
- constexpr _finline operator Ref& () const & { return ref; }
- constexpr _finline operator Ref&& () const && { return (typename RemoveRef<Ref>::T&&)ref; }
- constexpr _finline Ref& operator*() const { return ref; }
- constexpr _finline Ref* operator->() const { return &ref; }
+// constexpr _ninline ARef(const auto& arg): ref(arg) {} //: ref((typename RemoveRef<Ref>::T&&)arg) { }    // LValue
+ constexpr _ninline ARef(auto&& arg): ref(arg) {}  // Universal reference  //: ref((typename RemoveRef<Ref>::T&&)arg) { }   // RValue     // Using the class` type Ref leaves us wuthout Universal Reference. But making the constructor template will break type conversion on assignment
+// constexpr _ninline explicit ARef(volatile Ref& arg) : ref((typename RemoveRef<Ref>::T&&)arg) { }    // LValue for a volatile storage (Can removing the 'volatile' break some use cases of it bacause of optimization?)  // Can we pass a type to ARef without losing its volatility?
+
+// constexpr _ninline Ref& operator=(ARef<Ref> const& v){ref = v; return ref; }
+// constexpr _ninline Ref& operator=(auto& v){ref = v; return ref; }
+ constexpr _ninline Ref& operator=(auto&& v){ref = v; return ref; }   // Universal reference
+ constexpr _ninline operator Ref& () const & { return ref; }
+ constexpr _ninline operator Ref&& () const && { return (typename RemoveRef<Ref>::T&&)ref; }
+ constexpr _ninline Ref& operator*() const { return ref; }
+ constexpr _ninline Ref* operator->() const { return &ref; }
 };
 
 // EXAMPLE: XRef<T> res
@@ -620,6 +634,9 @@ template<typename T, typename H=uint> struct alignas(H) SPTR
 
  _finline T* operator* () const {return (T*)this->Value;}   // Should be T&
  _finline T* operator-> () const {return (T*)this->Value;}
+
+//constexpr _finline Self& operator+=(const auto& rhv) {; return *this;}
+//constexpr _finline Self& operator-=(const auto& rhv) {; return *this;}
 };
 //using SPTRN  = SPTR<uint>;
 //using SPTR32 = SPTR<uint32>;

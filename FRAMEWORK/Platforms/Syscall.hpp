@@ -182,7 +182,11 @@ static constexpr const int MaxStubSize =
 #ifdef FWK_OLD_UBOOT
 48;
 #else
+#ifdef FWK_OLD_ARM    // Less than ARMv7, no movw   // Can it be detected with one of __TARGET_ARCH_ARM macros?
+20;
+#else
 16;
+#endif
 #endif
 //---------------------------------------------------------------------------
 //                              MacOS
@@ -230,11 +234,11 @@ static constexpr inline uint SYSCALLMASK = 0;
 //                              Windows
 //---------------------------------------------------------------------------
 #elif defined(PLT_WIN_USR)
-#  if defined(CPU_X86)
-#    if defined(ARCH_X64)
-
 //static consteval uint64 MakeProcID(uint64 DllHash, auto&& ProcName){return (uint64)NCRYPT::CRC32(ProcName)|(DllHash << 32);}
 #define WPROCID(lh,pn) ((uint64)NCRYPT::CRC32(pn)|((uint64)lh << 32))
+
+#  if defined(CPU_X86)
+#    if defined(ARCH_X64)
 
 // 48 8B4424 30  mov rax,qword ptr ss:[rsp+30]  // NtProtectVirtualMemory(HANDLE ProcessHandle, PPVOID BaseAddress, PSIZE_T RegionSize, ULONG NewProtect, PULONG OldProtect, Syscall_Num);
 // B8 50000000   mov eax,50
@@ -266,6 +270,12 @@ static constexpr inline uint SYSCALLMASK = 0;
 //
 //
 // ??? x86-32
+static constexpr inline uint8 syscall_tmpl[MaxStubSize] = {
+1,2,3,4
+};
+static constexpr inline uint SYSCALLOFFS = 1;     // Store the function name hash in unused space
+static constexpr inline uint SYSCALLSFTL = 0;
+static constexpr inline uint SYSCALLMASK = 0;
 #    endif
 #  else  // CPU_ARM (X64 only)      // TODO
 #  error "Unsupported Windows architecture(ARM)!"
@@ -290,7 +300,7 @@ but don't worry about this because it's unlikely that you'll use a syscall with 
 static constexpr inline uint8 syscall_tmpl[MaxStubSize] = {  // Used as a template for all syscalls
 #  if defined(CPU_ARM)
 #    if defined(ARCH_X64)
-   (uint8)((uint8)ESysCNum::mprotect << 5)|0x08,(uint8)((uint)ESysCNum::mprotect >> 3),0x80,0xD2,   // MOV X8, #0
+   (uint8)((uint8)ESysCNum::mprotect << 5)|0x08,(uint8)((uint)ESysCNum::mprotect >> 3),0x80,0xD2,   // MOV X8, #0    // D2 80 XX X?
    0x01,0x00,0x00,0xD4,   // SVC 0
    0xC0,0x03,0x5F,0xD6,   // RET
    0xC0,0x03,0x5F,0xD6    // RET
@@ -299,14 +309,28 @@ static constexpr inline uint SYSCALLOFFS = 0;  // Offset of uint32 in bytes
 static constexpr inline uint SYSCALLSFTL = 5;  // Offset of value in bits (Left shift)
 static constexpr inline uint SYSCALLMASK = 0xFFE0001F;  // SOOOOOOO OHH????? ???????? ???RRRRR
 #    else       // Arm32
+#ifdef FWK_OLD_ARM
    0x80,0x40,0x2D,0xE9,                       // PUSH {R7,LR}
-   (uint8)ESysCNum::mprotect,0x70,0xA0,0xE3,  // MOV R7, #0x7D
+   0x04,0x70,0x9F,0xE5,                       // LDR  R7, +12
+   0x00,0x00,0x00,0xEF,                       // SVC 0
+   0x80,0x80,0xBD,0xE8,                       // POP {R7,PC}
+   (uint8)ESysCNum::mprotect,0,0,0
+};
+
+static constexpr inline uint SYSCALLOFFS = 16;
+static constexpr inline uint SYSCALLSFTL = 0;
+static constexpr inline uint SYSCALLMASK = 0;
+#else
+   0x80,0x40,0x2D,0xE9,                       // PUSH {R7,LR}
+   (uint8)ESysCNum::mprotect,0x70,0x00,0xE3,  // MOVW R7, #0x7D     // Max encoded 0xFFFF : {0}{1} 7{2} 0{3} E3   // E3 0X 7X XX   // NOTE: ARMv7 and above
    0x00,0x00,0x00,0xEF,                       // SVC 0
    0x80,0x80,0xBD,0xE8                        // POP {R7,PC}
 };
+
 static constexpr inline uint SYSCALLOFFS = 4;
 static constexpr inline uint SYSCALLSFTL = 0;
-static constexpr inline uint SYSCALLMASK = 0xFFFFF000;
+static constexpr inline uint SYSCALLMASK = 0xFF00F000;    // Max number is FFF
+#endif
 #    endif    // ARCH_X64
 #  elif defined(CPU_X86)
 #    if defined(ARCH_X64)     // X86-64
@@ -417,8 +441,8 @@ static constexpr inline uint SYSCALLSTUBLEN = sizeof(syscall_tmpl);
 #endif
 
 #define SYSC_FILL 0xFF      // TODO: Change at compile time
-#define DECL_SYSCALL(id,Func,Name) SC_STUB_DEF NSYSC::SFuncStub<(uint32)id,decltype(Func)> Name alignas(16);
-#define DECL_SYSCALLVA(id,Func,Name) SC_STUB_DEF NSYSC::SFuncStubVA<(uint32)id,decltype(Func)> Name alignas(16);
+#define DECL_SYSCALL(id,Func,Name) SC_STUB_DEF NSYSC::SFuncStub<(uint64)id,decltype(Func)> Name alignas(16);
+#define DECL_SYSCALLVA(id,Func,Name) SC_STUB_DEF NSYSC::SFuncStubVA<(uint64)id,decltype(Func)> Name alignas(16);
 
 // No nesting:(
 // https://cplusplus.com/forum/general/87429/
@@ -432,7 +456,7 @@ template<uint64 val> struct SStubBase
 // TODO: On Windows X32 Calculate size of arguments and update last two bytes in the stub if last instr is retn (3 bytes, 0xC2)
 
  SCVR uint32 ID       = val;
- SCVR uint32 ExID     = val >> 32;
+ SCVR uint32 ExID     = val >> 32;        // Zero, if not needed
  SCVR int    StubSize = SYSCALLSTUBLEN;   // Let it be copyable with __m256 ? Why?
  SCVR uint8  StubFill = SYSC_FILL;
  alignas(16) uint8 Stub[StubSize];      // TFuncPtr ptr;  // TReturn (*ptr)(TParameter...);
@@ -444,7 +468,7 @@ template<uint64 val> struct SStubBase
   if constexpr (NCFG::InitSyscalls)    // Not on Windows
    {
     for(uint ctr=0;ctr < StubSize;ctr++)this->Stub[ctr] = syscall_tmpl[ctr];  // memcpy(&this->Stub, &syscall_tmpl, StubSize);   // NOTE: Should be inlined
-    uint32 IVal = uint32(this->Stub[SYSCALLOFFS]) | uint32(this->Stub[SYSCALLOFFS+1] << 8) | uint32(this->Stub[SYSCALLOFFS+2] << 16) | uint32(this->Stub[SYSCALLOFFS+3] << 24);        // LE
+    uint32 IVal = uint32(this->Stub[SYSCALLOFFS]) | uint32(this->Stub[SYSCALLOFFS+1] << 8) | uint32(this->Stub[SYSCALLOFFS+2] << 16) | uint32(this->Stub[SYSCALLOFFS+3] << 24);        // NOTE: LE
     IVal &= SYSCALLMASK;   // Mask out some of previous bits
     IVal |= (ID << SYSCALLSFTL) & ~SYSCALLMASK;
     this->Stub[SYSCALLOFFS]   = uint8(IVal);

@@ -7,10 +7,11 @@ private:
 struct SSINF
 {
  void*            STInfo;  // Pointer to stack frame info, received from kernel  // PEB on windows?
- achar**          CLArgs;  // Points to ARGV array  // Not split on windows!
- achar**          EVVars;  // Points to EVAR array (cannot cache this pointer?)
- achar**          AuxInf;  // Auxilary vector (Not for MacOS or Windows)     // LINUX/BSD: ELF::SAuxVecRec*   // MacOS: Apple info (Additional Name=Value list)
- uint32           UTCOffs; // In seconds
+ syschar**        CLArgs;  // Points to ARGV array  // Not split on windows!
+ syschar**        EVVars;  // Points to EVAR array (cannot cache this pointer?)
+ ELF::SAuxVecRec* AuxInf;  // Auxilary vector // LINUX/BSD: ELF::SAuxVecRec*
+ sint32           UTCOffs; // In seconds
+ vptr             NullPtr; // For any pointer that should point to NULL
 
  void*  TheModBase;
  size_t TheModSize;
@@ -22,24 +23,22 @@ struct SSINF
 // Working dir (Not have to be same as current dir)
 // Temp path
 } static inline fwsinf = {};
-//------------------------------------------------------------------------------------------------------------
 
-#if defined(SYS_UNIX) || defined(SYS_ANDROID)  //|| defined(_SYS_BSD)
+public:      // Do not hide platform dependant stuff!
+//------------------------------------------------------------------------------------------------------------
+static _finline size_t GetArgC(void){return (size_t)fwsinf.CLArgs[-1];}   // On Windows should be always 1? // Be careful with access to SInfo using casts. Clang may optimize out ALL! code because of it
+static _finline const syschar** GetArgV(void){return (const syschar**)fwsinf.CLArgs;}
+static _finline const syschar** GetEnvP(void){return (const syschar**)fwsinf.EVVars;}
+//------------------------------------------------------------------------------------------------------------
 static ELF::SAuxVecRec* GetAuxVRec(size_t Type)
 {
- for(ELF::SAuxVecRec* Rec=(ELF::SAuxVecRec*)fwsinf.AuxInf;Rec->type != ELF::AT_NULL;Rec++)
+ for(ELF::SAuxVecRec* Rec=fwsinf.AuxInf;Rec->type != ELF::AT_NULL;Rec++)
   {
    if(Rec->type == Type)return Rec;
   }
  return nullptr;
 }
-#endif
-
 //------------------------------------------------------------------------------------------------------------
-//------------------------------------------------------------------------------------------------------------
-static _finline size_t GetArgC(void){return (size_t)fwsinf.CLArgs[-1];}   // On Windows should be always 1? // Be careful with access to SInfo using casts. Clang may optimize out ALL! code because of it
-static _finline const achar** GetArgV(void){return (const achar**)fwsinf.CLArgs;}
-static _finline const achar** GetEnvP(void){return (const achar**)fwsinf.EVVars;}
 static int UpdateTZOffsUTC(sint64 CurTimeUTC)
 {
  int df = NAPI::open("/etc/localtime",PX::O_RDONLY,0);
@@ -55,15 +54,17 @@ static int UpdateTZOffsUTC(sint64 CurTimeUTC)
  fwsinf.UTCOffs = offs;
  return 0;
 }
-public:
+//------------------------------------------------------------------------------------------------------------
+
+
 //------------------------------------------------------------------------------------------------------------
 static _finline PX::fdsc_t GetStdIn(void)  {return PX::STDIN; }  // 0
 static _finline PX::fdsc_t GetStdOut(void) {return PX::STDOUT;}  // 1
 static _finline PX::fdsc_t GetStdErr(void) {return PX::STDERR;}  // 2
 //------------------------------------------------------------------------------------------------------------
-static _finline sint32 GetTZOffsUTC(void){return fwsinf.UTCOffs;}
+static _finline sint32 GetTZOffsUTC(void)  {return fwsinf.UTCOffs;}   // In seconds
 static _finline bool   IsLoadedByLdr(void) {return fwsinf.HaveLoader;}    // OnWindows, Any DLL that loaded by loader
-static _finline bool   IsDynamicLib(void) {return false;}
+static _finline bool   IsDynamicLib(void)  {return false;}
 //------------------------------------------------------------------------------------------------------------
 // %rdi, %rsi, %rdx, %rcx, %r8 and %r9
 // DescrPtr must be set to 'ELF Auxiliary Vectors' (Stack pointer at ELF entry point)
@@ -77,35 +78,65 @@ symlink that points to your program file, maybe there are even more possibilitie
 // A spawner process is responsible for ARGV
 // Quotes are stripped by the shell and quoted args are kept intact
 // NOTE: Do not expect the return value to be an argument index!
-static uint GetCmdLineArg(sint& AOffs, achar* DstBuf, uint BufLen=-1)
+//
+static sint GetCLArg(sint& AOffs, achar* DstBuf, uint DstCCnt=-1)    // Enumerate and copy     // NOTE: Copying is inefficient!
 {
- if(DstBuf)*DstBuf = 0;
- if(AOffs < 0)return -3;     // Already finished
- if(AOffs >= (sint)GetArgC())return -2;    // No such arg
- const achar* CurArg = GetArgV()[AOffs++];
- uint  ArgLen = 0;
- if(!DstBuf)
-  {
-   while(CurArg[ArgLen])ArgLen++;
-   return ArgLen+1;   // +Space for terminating 0
-  }
- for(;CurArg[ArgLen] && (ArgLen < BufLen);ArgLen++)DstBuf[ArgLen] = CurArg[ArgLen];
- DstBuf[ArgLen] = 0;
- if(AOffs >= (sint)GetArgC())AOffs = -1;
- return ArgLen;
+ return UELF::GetStrFromArr(&AOffs, GetArgV(), DstBuf, DstCCnt);
 }
 //------------------------------------------------------------------------------------------------------------
-static sint GetEnvVar(const achar* Name, achar* DstBuf, size_t BufCCnt)
+static sint GetEnvVar(sint& AOffs, achar* DstBuf, uint DstCCnt=-1)   // Enumerate and copy     // NOTE: Copying is inefficient!
+{
+ return UELF::GetStrFromArr(&AOffs, GetEnvP(), DstBuf, DstCCnt);
+}
+//------------------------------------------------------------------------------------------------------------
+static _ninline sint GetEnvVar(const achar* Name, achar* DstBuf, uint DstCCnt=-1)   // Find by name and copy   // NOTE: Copying is inefficient!  // NOTE: Broken on ARM64 if inlined! Why?
+{
+ const  achar** vars = GetEnvP();
+ bool Unnamed = !Name || !*Name;
+ for(;const achar* evar = *vars;vars++)
+  {
+   int spos = NSTR::ChrOffset(evar, '=');
+   if(spos < 0)continue;  // No separator!
+   if((!spos && Unnamed) || NSTR::IsStrEqualSC(Name, evar, spos))return NSTR::StrCopy(DstBuf, &evar[spos+1], DstCCnt);
+  }
+ return -1;
+}
+//------------------------------------------------------------------------------------------------------------
+static const syschar* GetCLArg(sint& AOffs, uint* Size=nullptr)       // Enumerate     // NOTE: Not null-terminated on Windows
+{
+ if(AOffs < 0)return nullptr;    // Already finished
+ const achar** vars = GetArgV();
+ const syschar* val = vars[AOffs++];
+ if(!val){AOffs = -1; return nullptr;}  // End of list reached
+ if(Size)*Size = NSTR::StrLen(val);
+ return val;
+}
+//------------------------------------------------------------------------------------------------------------
+static const syschar* GetEnvVar(sint& AOffs, uint* Size=nullptr)      // Enumerate
+{
+ if(AOffs < 0)return nullptr;    // Already finished
+ const achar** vars = GetEnvP();
+ const syschar* val = vars[AOffs++];
+ if(!val){AOffs = -1; return nullptr;}  // End of list reached
+ if(Size)*Size = NSTR::StrLen(val);
+ return val;
+}
+//------------------------------------------------------------------------------------------------------------
+static const syschar* GetEnvVar(const achar* Name, uint* Size=nullptr)          // Find by name
 {
  const achar** vars = GetEnvP();
  bool Unnamed = !Name || !*Name;
  for(;const achar* evar = *vars;vars++)
   {
-   int spos = NSTR::CharOffsetIC(evar, '=');
+   int spos = NSTR::ChrOffset(evar, '=');
    if(spos < 0)continue;  // No separator!
-   if((!spos && Unnamed) || NSTR::IsStrEqualSC(Name, evar, spos))return NSTR::StrCopy(DstBuf, &evar[spos+1], BufCCnt);
+   if((!spos && Unnamed) || NSTR::IsStrEqualSC(Name, evar, spos))
+    {
+     if(Size)*Size = NSTR::StrLen(&evar[spos+1]);
+     return &evar[spos+1];
+    }
   }
- return -1;
+ return nullptr;
 }
 //------------------------------------------------------------------------------------------------------------
 // AppleInfo on MacOS
@@ -131,7 +162,7 @@ static _finline size_t GetModuleSize(void)
 static size_t _finline GetModulePath(achar* DstBuf, size_t BufSize=-1)
 {
  sint aoffs = 0;
- return GetCmdLineArg(aoffs, DstBuf, BufSize);       // Will work for now
+ return GetCLArg(aoffs, DstBuf, BufSize);       // Will work for now
 }
 //------------------------------------------------------------------------------------------------------------
 static sint InitStartupInfo(void* StkFrame=nullptr, void* ArgA=nullptr, void* ArgB=nullptr, void* ArgC=nullptr)
@@ -162,29 +193,34 @@ static sint InitStartupInfo(void* StkFrame=nullptr, void* ArgA=nullptr, void* Ar
          else StkFrame = &((void**)StkFrame)[1];  // No ret addr on stack, only stack frame ptr
       }
   }*/
+ if(StkFrame){StkFrame = UELF::FindStartupInfo(StkFrame); DBGDBG("FoundInfoPtr: %p", StkFrame);}
  if(StkFrame)
   {
-   // TODO: If loaded by loader then on X86 there are return address on stack?
-   // More complicated!
-
    fwsinf.STInfo = StkFrame;
-   uint ArgNum  = ((size_t*)StkFrame)[0];           // Number of command line arguments
+   uint ArgNum   = ((size_t*)StkFrame)[0];           // Number of command line arguments
    fwsinf.CLArgs = (char**)&((void**)StkFrame)[1];   // Array of cammond line arguments
-   fwsinf.EVVars = &fwsinf.CLArgs[ArgNum+1];          // Array of environment variables
-   void*  APtr  = nullptr;
-   char** Args  = fwsinf.EVVars;
-   uint ParIdx  = 0;
+   fwsinf.EVVars = &fwsinf.CLArgs[ArgNum+1];         // Array of environment variables
+   void*  APtr   = nullptr;
+   char** Args   = fwsinf.EVVars;
+   uint ParIdx   = 0;
    do{APtr=Args[ParIdx++];}while(APtr);  // Skip until AUX vector
-   fwsinf.AuxInf = &Args[ParIdx];
-  }
+   fwsinf.AuxInf = (ELF::SAuxVecRec*)&Args[ParIdx];
 
+   /* if(ArgNum > 3)
+     {
+      ArgNum = 3;
+      DBGDBG("Corrupted frame!!!");
+     }  */
+
+  }
+ DBGDBG("Getting UTC offset...");
  //PX::timezone tz = {};
  //if(!NAPI::gettimeofday(nullptr, &tz))fwsinf.UTCOffs = tz.minuteswest;
  PX::timeval tv = {};
  if(!NAPI::gettimeofday(&tv, nullptr))UpdateTZOffsUTC(tv.sec);    // Log any errors?
- //LOGMSG("TZFILE offs: %i",tz.minuteswest);
+ DBGDBG("UTC offset is %i seconds", fwsinf.UTCOffs); //LOGMSG("TZFILE offs: %i",tz.minuteswest);
 
-  // DbgLogStartupInfo();
+ //  DbgLogStartupInfo();
  DBGDBG("STInfo=%p, CLArgs=%p, EVVars=%p, AuxInf=%p",fwsinf.STInfo,fwsinf.CLArgs,fwsinf.EVVars,fwsinf.AuxInf);
  return 0;
 }
@@ -221,22 +257,9 @@ static void DbgLogStartupInfo(void)
  if(fwsinf.AuxInf)
   {
    LOGDBG("AVariables : ");
-   if constexpr(IsSysLinux)
+   for(ELF::SAuxVecRec* Rec=(ELF::SAuxVecRec*)fwsinf.AuxInf;Rec->type != ELF::AT_NULL;Rec++)
     {
-     for(ELF::SAuxVecRec* Rec=(ELF::SAuxVecRec*)fwsinf.AuxInf;Rec->type != ELF::AT_NULL;Rec++)
-      {
-       LOGDBG("  Aux: Type=%.3u, Value=%p",Rec->type, (void*)Rec->val);
-      }
-    }
-   else if constexpr(IsSysMacOS)
-    {
-     void*  APtr = nullptr;
-     char** Args = fwsinf.AuxInf;
-     uint ParIdx = 0;
-     while((APtr=Args[ParIdx++]))
-      {
-       LOGDBG("  AVar: %s",APtr);
-      }
+     LOGDBG("  Aux: Type=%.3u, Value=%p",Rec->type, (void*)Rec->val);
     }
   }
  DBGDBG("Done!");
@@ -257,6 +280,7 @@ ArmX64:
 */
 
 /* ====================== LINUX/BSD ======================
+// NOTE: This is what a debugger shows
 Stack layout from startup code:
   argc
   argv pointers
@@ -267,70 +291,10 @@ Stack layout from startup code:
   argv strings
   environment strings
   program name
-  NULL
+  NULL      // End of allocated stack area. Stack pointer starts from here
 */
 
-// =========================== MACH-O system entry frame =======================
 /*
- * C runtime startup for interface to the dynamic linker.
- * This is the same as the entry point in crt0.o with the addition of the
- * address of the mach header passed as an extra first argument.
- *
- * Kernel sets up stack frame to look like:
- *
- *  | STRING AREA | 'executable_path=' + All strings from fields below
- *  +-------------+
- *  |      0      |
-*   +-------------+
- *  |  apple[n]   |
- *  +-------------+
- *         :
- *  +-------------+
- *  |  apple[0]   |  // Name=value or nulls
- *  +-------------+
- *  |      0      |
- *  +-------------+
- *  |    env[n]   |
- *  +-------------+
- *         :
- *         :
- *  +-------------+
- *  |    env[0]   |  // Name=value
- *  +-------------+
- *  |      0      |
- *  +-------------+
- *  | arg[argc-1] |
- *  +-------------+
- *         :
- *         :
- *  +-------------+
- *  |    arg[0]   |   // Value (split command line)
- *  +-------------+
- *  |     argc    |   // on x86-64 RSP  points directly to 'argc', not to some return address
- *  +-------------+
- *. |      mh     | <--- [NOT TRUE?]sp, address of where the a.out's file offset 0 is in memory (MACH-O header)
- *  +-------------+
- *
- *  Where arg[i] and env[i] point into the STRING AREA
- */
-
-// NOTE: Looks like it is impossible to create a valid MACH-O executable(not dylib) which does not references dyld and receives control directly from Kernel
-
-/*
-Apple`s loader loads and run all initial functions from dynamically linked libraries. Due to this, we can create functions that run before the main binary is started.
-
-
-Executable 0x2 (mh_execute/mh_executable) - Is not linked. Is used to create a launchable program - Application, App extension - Widget. Application target is a default setting
-Bundle 0x8 (mh_bundle .bundle) - loadable bundle - run time linked. iOS now supports only Testing Bundle target where it is a default setting to generate a Loadable bundle.
-System -> Testing Bundle -> tested binary. A location of Testing Bundle will be depended on target, static or dynamic binary...
-Dynamic Library 0x6 (mh_dylib .dylib or none) - Load/run time linked.
-With Framework target - Dynamic Library is a default setting to generate a Dynamic framework
-Static Library(staticlib .a) - Compilation time(build time) linked.
-With Static Library target - Static Library is a default setting to generate a Static library
-With Framework target - Static Library to generate a Static framework
-Relocatable Object File 0x1 (mh_object .o) - Compilation time(build time) linked. It is the simplest form. It is a basement to create executable, static or dynamic format. Relocatable because variables and functions don't have any specific address
-
-
  =========================== ELF system AUXV =======================
 // http://articles.manugarg.com/aboutelfauxiliaryvectors.html
 
@@ -358,9 +322,9 @@ position            content                     size (bytes) + comment
                     [ argument ASCIIZ strings ]   >= 0
                     [ environment ASCIIZ str. ]   >= 0
 
-  (0xbffffffc)      [ end marker ]                4   (= NULL)
+  (0xbffffffc)      [ end marker ]                4   (= NULL)      // Not present
 
-  (0xc0000000)      < bottom of stack >           0   (virtual)
+  (0xc0000000)      < bottom of stack >           0   (virtual)     // Not present
 
 
 //============================================================================================

@@ -134,11 +134,12 @@ template<typename T> constexpr _finline static T RevByteOrder(T Value) // Can be
 //------------------------------------------------------------------------------------------------------------
 
 static const uint64 ctEncKey = ((uint64)NCRYPT::CRC32(__TIME__ __DATE__) << 32) | NCRYPT::CRC32(__DATE__ __TIME__);  //((~((unsigned int)(__DATE__[4]) * (unsigned int)(__DATE__[5])) & 0xFF) | ((~((unsigned int)(__TIME__[0]) * (unsigned int)(__TIME__[1])) & 0xFF) << 8) | ((~((unsigned int)(__TIME__[3]) * (unsigned int)(__TIME__[4])) & 0xFF) << 16) | ((~((unsigned int)(__TIME__[6]) * (unsigned int)(__TIME__[7])) & 0xFF) << 24));   // DWORD
-static const uint64 ExEncKey = 0xA1B2C3D41A2B3C4D;   // TODO: Must be same as a hardware calculated key
+static const uint64 ExEncKey = 0xA1B2C3D41A2B3C4D;   // TODO: Must be same as a hardware calculated key  // TODO: Move to config
 
-_finline static constexpr  uint64 MakeExKeyPart(void) // Updates ExEncKeyRT // TODO: Hardware counter based
+static uint64 MakeExKeyPart(void) // Updates ExEncKeyRT // TODO: Hardware counter based  // TODO: Export from PLATFORM somehow
 {
- return ExEncKey;//ExEncKeyRT;
+ volatile uint64 val = 0;     // Should be like this until an hardware value is used. Otherwise the decryption will be too optimized and IDA will be able to decrypt all strings
+ return ExEncKey ^ val;     // ExEncKeyRT;  (Extern)
 }
 //============================================================================================================
 // Packs bytes so that their in-memory representation will be same on the current platform
@@ -212,7 +213,7 @@ template<typename T, uint N> struct alignas(8) CEStr
  using unit = uint;
  static const uint BytesLen = sizeof(T) * N;
  static const uint ArrSize  = ((BytesLen+(sizeof(unit)-1)) & ~(sizeof(unit)-1)) / sizeof(unit);  //  (BytesLen / sizeof(uint)) + (bool)(BytesLen & (sizeof(uint) - 1));    // AlignP2Frwd(BytesLen, sizeof(uint)); //
- static const uint AsyKey   = ctEncKey * BytesLen;
+ static const unit AsyKey   = ctEncKey * BytesLen;
 
  alignas(8) unit Array[ArrSize]; // size_t    // Some systems require alignment to be 8   // volatile ? // mutable ?
                                         // /*for(uint idx=0,vo=N*sizeof(T);idx < ArrSize;vo=Array[idx],idx++)Array[idx] = ((Array[idx] * N) ^ vo) * (__COUNTER__ * __LINE__);*/
@@ -221,7 +222,7 @@ template<typename T, uint N> struct alignas(8) CEStr
  consteval CEStr(const T(&str)[N]) { Init(str, N); }
  consteval void Init(const T* str, uint len)
  {
-  for(uint sidx = 0, didx = 0, xkey=ctEncKey ^ ExEncKey; sidx < N; didx++, sidx += sizeof(uint), xkey=RotL(xkey, 1))Array[didx] = (RePackElements<uint>(&str[sidx], N - sidx) - 0) ^ RotR(xkey, -didx & 0x0F);
+  for(uint sidx = 0, didx = 0, xkey=ctEncKey ^ ExEncKey; sidx < N; didx++, sidx += sizeof(unit), xkey=RotL(xkey, 1))Array[didx] = (RePackElements<unit>(&str[sidx], N - sidx) - AsyKey) ^ RotR(xkey, -didx & 0x0F);
 //  static_assert(Array[ArrSize-1] >> ((sizeof(uint)-1)*8) );  // Not constant expression for some reason
  }
 //---------------------------------------------------------
@@ -231,7 +232,7 @@ _finline  const T* Decrypt(void) const
  {
   volatile uint* arr = (volatile uint*)UnbindPtr(this->Array); // &const_cast<CEStr<T,N>* >(this)->Array[0];  // NOTE: Without 'volatile' this entire function may be optimized away and strings will be left unencrypted
 #pragma clang loop unroll(full)  //#pragma unroll  // No effect: it will not unroll unless an optimization mode 1,2 or 3 is enabled
-  for(uint ctr=0,xkey=RotR(~ctEncKey ^ MakeExKeyPart(),3);ctr < ArrSize;ctr++, xkey=RotL(xkey, 1))arr[ctr] = (arr[ctr] ^ RotR(~RotL(xkey, 3), -ctr & 0x0F)) + 0;    // Xor key itself is encrypted
+  for(uint ctr=0,xkey=RotR(~((unit)ctEncKey) ^ (unit)MakeExKeyPart(),3);ctr < ArrSize;ctr++, xkey=RotL(xkey, 1))arr[ctr] = (arr[ctr] ^ RotR(~RotL(xkey, 3), -ctr & 0x0F)) + AsyKey;    // Xor key itself is encrypted
   return (const T*)this->Array;    // NOTE: Stays unencrypted // TODO: Return CPStr which can clean itself on destruction.
  }
 //---------------------------------------------------------

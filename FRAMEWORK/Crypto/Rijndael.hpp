@@ -335,6 +335,7 @@ void DecryptBlock(unsigned char* in, unsigned char* result)
  int s2  = sm_shifts[sm_sidx[BC]][2][1];
  int s3  = sm_shifts[sm_sidx[BC]][3][1];
  int* pi = t;
+// LOGMSG("In=%p, Out=%p, BC=%u",in,result,BC);
  for(int i=0; i < BC; i++)
   {
    *pi  = *(in++) << 24;
@@ -388,6 +389,7 @@ void Encrypt(unsigned char* in, unsigned char* out, size_t n)   // TODO: Padding
 //
 void Decrypt(unsigned char* in, unsigned char* out, size_t n)
 {
+// LOGMSG("n=%u, BlockSize=%u, Len=%i",n,BlockSize,(n/BlockSize));
  if(CBC == iMode) // CBC mode, using the Chain
   {
    if(in == out)

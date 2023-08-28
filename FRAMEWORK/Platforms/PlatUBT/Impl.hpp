@@ -4,6 +4,7 @@
 #include "./PlatDef.hpp"
 #include "./uboot.hpp"
 
+#define UBTMSG(msg,...) NPTM::SAPI::printf(msg "\n" __VA_OPT__(,) __VA_ARGS__)        //  __func__ "->" msg "\n"
 //============================================================================================================
 // All "members" are placed sequentially in memory but their order may change
 // NOTE: Do not expect that the memory can be executable and writable at the same time! There is 'maxprot' values may be defined in EXE header which will limit that or it may be limited by the system
@@ -73,9 +74,9 @@ struct SFWCTX
 
 static sint Initialize(void* StkFrame=nullptr, void* ArgA=nullptr, void* ArgB=nullptr, void* ArgC=nullptr, uint InitConLog=0)    // _finline ?
 {
-#if defined(ARCH_X32) && defined(FWK_OLD_UBOOT)
- if(InitConLog <= 1)SaveOldCtx();
-#endif
+//#if defined(ARCH_X32) && defined(FWK_OLD_UBOOT)   // Not here, in EntryPoint only
+// if(InitConLog > 1)SaveOldCtx();
+//#endif
 // if(IsInitialized())return 1;
  if(!NLOG::CurrLog)NLOG::CurrLog = &NLOG::GLog;  // Will be set with correct address, relative to the Base
  if(InitConLog)   // On this stage file logging is not possible yet (needs InitStartupInfo)

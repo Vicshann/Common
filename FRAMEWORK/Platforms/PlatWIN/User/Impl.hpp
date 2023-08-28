@@ -46,7 +46,7 @@ DECL_SYSCALL(WPROCID(HashNtDll,"NtTerminateProcess"),         NT::NtTerminatePro
 DECL_SYSCALL(WPROCID(HashNtDll,"NtLoadDriver"),               NT::NtLoadDriver,               NtLoadDriver               )
 DECL_SYSCALL(WPROCID(HashNtDll,"NtUnloadDriver"),             NT::NtUnloadDriver,             NtUnloadDriver             )   // Should be last
 
-} static volatile constexpr inline SysApi alignas(16);   // Declared to know exact address(?), its size is ALWAYS 1
+} static constexpr inline SysApi alignas(16);   // Declared to know exact address(?), its size is ALWAYS 1   // Volatile? (static volatile constexpr inline)
 //============================================================================================================
 #include "../UtilsFmtPE.hpp"
 #include "../NtDllEx.hpp"
@@ -519,9 +519,22 @@ FUNC_WRAPPERNI(PX::thread,     thread     ) {return 0;}
 
 FUNC_WRAPPERNI(PX::gettimeofday,  gettimeofday  ) 
 {
-
-
- return 0;
+ PX::timeval*  tv = GetParFromPk<0>(args...);
+ PX::timezone* tz = GetParFromPk<1>(args...);
+ uint64 ut = (NTX::GetSystemTime() - NDT::EPOCH_BIAS);
+ if(tv)
+  { 
+   tv->sec   = ut / NDT::SECS_TO_FT_MULT; 
+   uint64 rm = ut % NDT::SECS_TO_FT_MULT;     //   uint64 rm = ut - (tv->sec * NDT::SECS_TO_FT_MULT);  
+   tv->usec  = rm / (NDT::SECS_TO_FT_MULT/NDT::MICSEC_IN_SEC);
+  }
+ if(tz)       
+  {
+   if(tz->utcoffs == -1)UpdateTZOffsUTC();
+   tz->dsttime = 0;
+   tz->utcoffs = GetTZOffsUTC();
+  }
+ return PX::NOERROR;
 }
 FUNC_WRAPPERNI(PX::settimeofday,  settimeofday  ) {return 0;}
 

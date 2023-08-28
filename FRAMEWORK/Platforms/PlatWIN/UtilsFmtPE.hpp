@@ -10,4 +10,6 @@ template<typename PHT=PTRCURRENT> struct NUFPE: public NFMTPE<PHT>    // NUFmtPE
 // dd
 
 };
+
+using UFPE = NUFPE<size_t>;
 //============================================================================================================

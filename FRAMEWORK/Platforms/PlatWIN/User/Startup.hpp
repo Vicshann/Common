@@ -210,17 +210,17 @@ struct SSINF
 {
  vptr   ModBase;
  size_t ModSize;
- uint32 UTCOffs; // In seconds
+ sint32 UTCOffs; // In seconds
  uint32 Flags;
  achar  SysDrive[8];
 
 } static inline fwsinf = {};
 //------------------------------------------------------------------------------------------------------------
 static _finline size_t GetArgC(void){return 1;}   // On Windows should be always 1? 
-static _finline const wchar* GetArgV(void){return NT::NtCurrentTeb()->ProcessEnvironmentBlock->ProcessParameters->CommandLine.Buffer;}
-static _finline const wchar* GetEnvP(void){return NT::NtCurrentTeb()->ProcessEnvironmentBlock->ProcessParameters->Environment;} 
-
+static _finline const wchar* GetArgV(void){return NT::NtCurrentTeb()->ProcessEnvironmentBlock->ProcessParameters->CommandLine.Buffer;}     // Single string, space separated, args in quotes
+static _finline const wchar* GetEnvP(void){return NT::NtCurrentTeb()->ProcessEnvironmentBlock->ProcessParameters->Environment;}            // Block of null-terminated strings, last is 0
 static _finline bool IsInitialized(void){return  fwsinf.Flags & sfInitialized;}
+static _finline void UpdateTZOffsUTC(void){fwsinf.UTCOffs = -NTX::GetTimeZoneBias() / NDT::SECS_TO_FT_MULT;}   // Number of 100-ns intervals in a second
 //------------------------------------------------------------------------------------------------------------
 
 public:
@@ -228,17 +228,17 @@ static _finline PX::fdsc_t GetStdIn(void)  {return (PX::fdsc_t)NT::NtCurrentTeb(
 static _finline PX::fdsc_t GetStdOut(void) {return (PX::fdsc_t)NT::NtCurrentTeb()->ProcessEnvironmentBlock->ProcessParameters->StandardOutput;} 
 static _finline PX::fdsc_t GetStdErr(void) {return (PX::fdsc_t)NT::NtCurrentTeb()->ProcessEnvironmentBlock->ProcessParameters->StandardError; } 
 //------------------------------------------------------------------------------------------------------------
-static _finline sint32 GetTZOffsUTC(void){return fwsinf.UTCOffs;}
+static _finline sint32 GetTZOffsUTC(void){return fwsinf.UTCOffs;}   // In seconds
 static _finline bool   IsLoadedByLdr(void) {return fwsinf.Flags & sfLoadedByLdr;}  // If loaded by loader then should return to the loader   // OnWindows, Any DLL that loaded by loader
 static _finline bool   IsDynamicLib(void) {return fwsinf.Flags & sfDynamicLib;} 
 //------------------------------------------------------------------------------------------------------------
 // Copies a next param to user`s buffer
 // Set AOffs to 0 initially and expect it to be -1 when there are no more args
-// NOTE: Do not expect the return value to be an argument index!
-static uint GetCmdLineArg(sint& AOffs, achar* DstBuf, uint BufLen=-1)  
+// 
+static sint GetCLArg(sint& AOffs, achar* DstBuf, uint DstCCnt=-1)    // Enumerate and copy     // NOTE: Copying is inefficient!
 {
- char SFchB = '\"';
- char SFchE = '\"';
+ wchar SFchB = '\"';
+ wchar SFchE = '\"';
  const wchar* CLBase  = &GetArgV()[AOffs];
  const wchar* CmdLine = CLBase;
  if(DstBuf)*DstBuf = 0;
@@ -249,20 +249,108 @@ static uint GetCmdLineArg(sint& AOffs, achar* DstBuf, uint BufLen=-1)
  if(!DstBuf)return SizeOfWStrAsUtf8(CmdLine, -1, SFchE) + 4;       // Calculate buffer size for current argument    // +Space for terminating 0
 
  uint SrcLen = -1;
- WStrToUtf8(DstBuf, CmdLine, BufLen, SrcLen, SFchE);
- DstBuf[BufLen] = 0;
+ WStrToUtf8(DstBuf, CmdLine, DstCCnt, SrcLen, SFchE);
+ wchar LastCh = CmdLine[SrcLen];
+ if((LastCh != SFchE) && LastCh)  // Dst is full, find end of the argument
+  {
+   int pos = NSTR::ChrOffset(&CmdLine[SrcLen], SFchE);
+   if(pos < 0){AOffs = -1; return DstCCnt;}  // No more args
+   SrcLen += pos;
+  }
+ DstBuf[DstCCnt] = 0;
 
  CmdLine = &CmdLine[SrcLen]; 
  if(*CmdLine)CmdLine++; // Skip last Quote or Space
  while(*CmdLine && (*CmdLine <= 0x20))CmdLine++; // Skip any spaces after it to point at next argument
  if(*CmdLine)AOffs += CmdLine - CLBase;
   else AOffs = -1;  // No more args
- return BufLen;
+ return DstCCnt;
 }
-//---------------------------------------------------------------------------
-template<typename T> static sint GetEnvVar(T* Name, T DstBuf, size_t BufCCnt)
+//------------------------------------------------------------------------------------------------------------
+static sint GetEnvVar(sint& AOffs, achar* DstBuf, uint DstCCnt=-1)   // Enumerate and copy     // NOTE: Copying is inefficient!
 {
+ uint SrcLen = 0;
+ const syschar* evar = GetEnvVar(AOffs, &SrcLen);
+ if(!evar)return 0;
+ if(!DstBuf)return SizeOfWStrAsUtf8(evar, SrcLen, 0) + 4;       // Calculate buffer size for current name+value    // +Space for terminating 0
+ WStrToUtf8(DstBuf, evar, DstCCnt, SrcLen, 0);
+ return DstCCnt;
+}
+//------------------------------------------------------------------------------------------------------------
+static sint GetEnvVar(const achar* Name, achar* DstBuf, uint DstCCnt=-1)   // Find by name and copy   // NOTE: Copying is inefficient!
+{
+ sint AOffs = 0;
+ uint  Size = 0;
+ bool Unnamed = !Name || !*Name;
+ syschar* evar = nullptr;
+ while(evar=(syschar*)GetEnvVar(AOffs, &Size))
+  {
+   int spos = NSTR::ChrOffset(evar, '=');
+   if(spos < 0)continue;  // No separator!
+   if((!spos && Unnamed) || NSTR::IsStrEqualSC(Name, evar, spos))
+    {
+     uint offs = spos+1; 
+     Size -= offs;
+     if(!DstBuf)return SizeOfWStrAsUtf8(&evar[offs], Size, 0) + 4;       // Calculate buffer size for current value    // +Space for terminating 0
+     WStrToUtf8(DstBuf, &evar[offs], DstCCnt, Size, 0);
+     return DstCCnt;
+    }
+  }
  return -1;
+}
+//------------------------------------------------------------------------------------------------------------
+static const syschar* GetCLArg(sint& AOffs, uint* Size=nullptr)       // Enumerate     // NOTE: Not null-terminated on Windows
+{
+ wchar SFchB = '\"';
+ wchar SFchE = '\"';
+ const wchar* CLBase  = &GetArgV()[AOffs];
+ const wchar* CmdLine = CLBase;
+ while(*CmdLine && (*CmdLine <= 0x20))CmdLine++;  // Skip any spaces before
+ if(!*CmdLine){AOffs=-1; return 0;}   // No more args
+ if(*CmdLine == SFchB)CmdLine++;  // Skip opening quote
+   else SFchE = 0x20;             // No quotes, scan until a first space
+
+ uint SrcLen = 0;
+ while((CmdLine[SrcLen] ^ SFchE) && CmdLine[SrcLen])SrcLen++;   // Optimize?
+
+ const wchar* EndPtr = &CmdLine[SrcLen]; 
+ if(*EndPtr)EndPtr++; // Skip last Quote or Space
+ while(*EndPtr && (*EndPtr <= 0x20))EndPtr++; // Skip any spaces after it to point at next argument
+ if(*EndPtr)AOffs += EndPtr - CLBase;
+  else AOffs = -1;  // No more args
+ if(Size)*Size = SrcLen;
+ return CmdLine;
+}
+//------------------------------------------------------------------------------------------------------------
+static const syschar* GetEnvVar(sint& AOffs, uint* Size=nullptr)      // Enumerate
+{
+ if(AOffs < 0)return nullptr;    // Already finished
+ const wchar* vars = &GetEnvP()[AOffs];
+ if(!*vars){AOffs = -1; return nullptr;}   // No EVars!
+ uint VarLen = NSTR::StrLen(vars);
+ if(Size)*Size = VarLen;
+ VarLen += AOffs + 1;
+ if(vars[VarLen])AOffs = VarLen;
+  else AOffs = -1;      // End of the EVAR list
+ return vars; 
+}
+//------------------------------------------------------------------------------------------------------------
+static const syschar* GetEnvVar(const achar* Name, uint* Size=nullptr)          // Find by name     // (No Unicode support in names!)
+{
+ sint AOffs = 0;
+ bool Unnamed = !Name || !*Name;
+ syschar* evar = nullptr;
+ while(evar=(syschar*)GetEnvVar(AOffs, Size))
+  {
+   int spos = NSTR::ChrOffset(evar, '=');
+   if(spos < 0)continue;  // No separator!
+   if((!spos && Unnamed) || NSTR::IsStrEqualSC(Name, evar, spos))
+    {
+     if(Size)*Size -= spos+1;
+     return &evar[spos+1];
+    }
+  }
+ return nullptr;
 }
 //------------------------------------------------------------------------------------------------------------
 // AppleInfo on MacOS
@@ -279,7 +367,7 @@ static _finline size_t GetModuleSize(void){return fwsinf.ModSize;}
 static size_t _finline GetModulePath(achar* DstBuf, size_t BufSize=-1)
 {
  sint aoffs = 0;
- return GetCmdLineArg(aoffs, DstBuf, BufSize);       // Will work for now
+ return GetCLArg(aoffs, DstBuf, BufSize);       // TODO TODO TODO !!!
 
 // Search in loader list first
 
@@ -300,7 +388,7 @@ static sint InitStartupInfo(void* StkFrame=nullptr, void* ArgA=nullptr, void* Ar
    else fwsinf.Flags |= sfLoadedByLdr;
  if((ArgA != NT::NtCurrentPeb())&&(((size_t)ArgA & ~(MEMGRANSIZE-1)) == ((size_t)fwsinf.ModBase & ~(MEMGRANSIZE-1))))fwsinf.Flags |= sfDynamicLib;   // System passes PEB as first argument to EXE`s entry point then it is safe to exit from entry point without calling 'exit'
 
- fwsinf.UTCOffs = -NTX::GetTimeZoneBias() / NDT::SECS_TO_FT_MULT;   // Number of 100-ns intervals in a second                                          
+ UpdateTZOffsUTC();                                             
  fwsinf.Flags  |= sfInitialized;
  return 0;
 }
@@ -322,12 +410,19 @@ static void DbgLogStartupInfo(void)
 {
  uint  alen = 0;
  sint  aoff = 0;
- achar buf[2048];
  LOGDBG("CArguments: ");
  for(uint idx=0;aoff >= 0;idx++)
   {
-   alen = NPTM::GetCmdLineArg(aoff, buf, sizeof(buf));
-   LOGDBG("  Arg %u: %s",idx,&buf);     // NOTE: Terminal should support UTF8
+   const syschar* val = NPTM::GetCLArg(aoff, &alen);
+   LOGDBG("  Arg %u: %.*ls",idx,alen,val);     // NOTE: Terminal should support UTF8
   }
+ LOGDBG("EVariables: ");
+ aoff = 0;
+ for(uint idx=0;aoff >= 0;idx++)
+  {
+   const syschar* val = NPTM::GetEnvVar(aoff, &alen);
+   LOGDBG("  Var: %ls",val);     // NOTE: Terminal should support UTF8
+  }
+ DBGDBG("Done!");
 }
 //------------------------------------------------------------------------------------------------------------

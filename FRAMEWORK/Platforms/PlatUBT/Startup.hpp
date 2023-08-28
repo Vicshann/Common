@@ -17,7 +17,7 @@ struct SSINF
 
 static const uint32 MaxUBootSize = 1024*1024;   // 1MB
 //------------------------------------------------------------------------------------------------------------
-// Return address is somewhere inside UBOOT
+// Return address of MAIN is somewhere inside UBOOT
 // Look for UBOOT`s base in GD table
 static vptr FindBaseOfUBOOT(vptr AddrInUboot)
 {
@@ -59,45 +59,204 @@ static vptr* FindJumpTable(vptr AddrInUboot)
  return nullptr;
 }
 //-----------------------------------------------------------------------------------------
-static vptr FindExecCmdLine(vptr BaseAddr, size_t Size)
+// The idea is to detect commands that may come in different order. Tgt1 should be the first instruction
+template<typename T> struct SExecCmdLineFinder_Base
 {
-#if defined(CPU_ARM)
-#if defined(ARCH_X64)
- static constexpr uint32 Tgt1 = 0x121E0021;    // AND W1, W1, #4
- static constexpr uint32 Tgt2 = 0x52800062;    // MOV W2, #3
- static constexpr uint32 Tgt3 = 0x52800161;    // MOV W1, #0xB
- static constexpr uint32 Msk1 = ~0x03FFu;      // Mask out registers field
- static constexpr uint32 Msk2 = ~0x001Fu;
- static constexpr uint32 Msk3 = ~0x001Fu;
-#else   // X32
+ uint8* Ptr1 = nullptr;   // +0
+ uint8* Ptr2 = nullptr;   // +1
+ uint8* Ptr3 = nullptr;   // +3
+
+uint8* Update(uint8* Addr, uint32 val)
+{
+// uint32 val = *(uint32*)Addr;
+ if(!((val ^ T::Tgt1) & T::Msk1))Ptr1 = Addr;
+ if(!((val ^ T::Tgt2) & T::Msk2))Ptr2 = Addr;
+ if(!((val ^ T::Tgt3) & T::Msk3))Ptr3 = Addr;
+// if(((size_t)Addr >= 0x0EF3D410) && ((size_t)Addr < 0x0EF3D41C)){UBTMSG("FindExecCmdLine: Addr=%p, val=%08X, Ptr1=%p, Ptr2=%p, Ptr3=%p", Addr, val, Ptr1, Ptr2, Ptr3);}
+ if(!Ptr1 || !Ptr2 || !Ptr3)return nullptr;  // Not all is present yet
+ if(NMATH::Abs(Ptr2-Ptr1) > T::Dist)return nullptr;  // Some matches are too far from each other
+ if(NMATH::Abs(Ptr3-Ptr2) > T::Dist)return nullptr;
+ return Ptr1;
+}
+
+};
+
+struct SExecCmdLineFinder_ARM32a: public SExecCmdLineFinder_Base<SExecCmdLineFinder_ARM32a>
+{
+/*
+  04 00 11 E3     TST      R1, #4
+  03 10 A0 03     MOVEQ    R1, #3       // May be MOVNE
+  0B 10 A0 13     MOVNE    R1, #0xB     // May be MOVEQ
+  EA CE FF EA     B        ExecListCmd
+*/
  static constexpr uint32 Tgt1 = 0xE3110004;    // TST   R1, #4
  static constexpr uint32 Tgt2 = 0x03A01003;    // MOVEQ R1, #3
  static constexpr uint32 Tgt3 = 0x13A0100B;    // MOVNE R1, #0xB
  static constexpr uint32 Msk1 = ~0x0F0000u;    // Mask out registers field
  static constexpr uint32 Msk2 = ~0x00F000u;
  static constexpr uint32 Msk3 = ~0x00F000u;
+ static constexpr uint32 Dist = 8;  // Should consider possible instruction reordering
+
+};
+
+struct SExecCmdLineFinder_ARM32b: public SExecCmdLineFinder_Base<SExecCmdLineFinder_ARM32b>   // Old U-BOOT
+{
+/*
+  03 10 A0 E3    MOV   R1, #3
+  E0 F7 FF EA    B     EP_ExecCmd
+*/
+ static constexpr uint32 Tgt1 = 0xE3A01003;    // MOV  R1, #3
+ static constexpr uint32 Tgt2 = 0xEAFFF7E0;    // B EP_ExecCmd
+ static constexpr uint32 Tgt3 = 0;             // Unused
+ static constexpr uint32 Msk1 = -1;            // Exact match
+ static constexpr uint32 Msk2 = 0xFF000000;    // Mask out call target
+ static constexpr uint32 Msk3 = 0;             // Unused, always accept
+ static constexpr uint32 Dist = 4;
+
+};
+
+struct SExecCmdLineFinder_ARM64a: public SExecCmdLineFinder_Base<SExecCmdLineFinder_ARM64a>   // Old U-BOOT
+{
+/*
+  21 00 1E 12   AND    W1, W1, #4
+  62 00 80 52   MOV    W2, #3
+  3F 00 1F 6B   CMP    W1, WZR
+  61 01 80 52   MOV    W1, #0xB
+  41 00 81 1A   CSEL   W1, W2, W1, EQ
+  A7 60 FF 17   B      ExecListCmd
+*/
+ static constexpr uint32 Tgt1 = 0x121E0021;    // AND W1, W1, #4
+ static constexpr uint32 Tgt2 = 0x52800062;    // MOV W2, #3
+ static constexpr uint32 Tgt3 = 0x52800161;    // MOV W1, #0xB
+ static constexpr uint32 Msk1 = ~0x03FFu;      // Mask out registers field
+ static constexpr uint32 Msk2 = ~0x001Fu;
+ static constexpr uint32 Msk3 = ~0x001Fu;
+ static constexpr uint32 Dist = 8;
+
+};
+//-----------------------------------------------------------------------------------------
+static vptr FindExecCmdLine(vptr BaseAddr, size_t Size)
+{
+// UBTMSG("FindExecCmdLine: %p, %08X",BaseAddr,Size);
+#if defined(CPU_ARM)
+ static constexpr uint32 Step = 4;
+#if defined(ARCH_X64)
+ SExecCmdLineFinder_ARM64a fnd1;
+#else
+#ifdef FWK_OLD_UBOOT
+SExecCmdLineFinder_ARM32b fnd1;
+#else
+SExecCmdLineFinder_ARM32a fnd1;
+#endif
 #endif
 #elif defined(CPU_X86)
+ static constexpr uint32 Step = 1;
  // Not implemented yet
 #endif
- uint32* Code = (uint32*)((size_t)BaseAddr & ~(4-1));
- Size = Size >> 2;   // div 4
- uint32 Offs1 = 0;   // +0
- uint32 Offs2 = 0;   // +1
- uint32 Offs3 = 0;   // +3
- for(uint32 ctr=0;ctr < Size;ctr++)
+
+// SExecCmdLineFinder_ARM32a fnd1;
+// SExecCmdLineFinder_ARM32b fnd2;
+// SExecCmdLineFinder_ARM64a fnd3;
+
+ uint8* CurPtr = (uint8*)((size_t)BaseAddr & ~(16-1));
+ uint8* EndPtr = &CurPtr[Size-16];
+ uint8* Ptr = nullptr;
+ for(;CurPtr < EndPtr;CurPtr += Step)
   {
-   uint32 val = Code[ctr];
-   if(!((val ^ Tgt1) & Msk1))Offs1 = ctr;
-   if(!((val ^ Tgt2) & Msk2))Offs2 = ctr;
-   if(!((val ^ Tgt3) & Msk3))Offs3 = ctr;
-   if(!Offs1 || !Offs2 || !Offs3)continue;  // Not all is present yet
-   if(((ctr-Offs1)+(ctr-Offs2)+(ctr-Offs3)) > 6)continue;
-   return &Code[Offs1];
+   uint32 val = *(uint32*)CurPtr;
+   if(Ptr=fnd1.Update(CurPtr, val))break;
+//   if(Ptr=fnd2.Update(CurPtr, val))break;
+//   if(Ptr=fnd3.Update(CurPtr, val))break;
   }
- return nullptr;
+// if(Ptr){UBTMSG("FindExecCmdLine: Found at %p", Ptr);}
+//   else {UBTMSG("FindExecCmdLine: Nothing found!");}
+ return Ptr;
 }
 //-----------------------------------------------------------------------------------------
+// ARM Cortex A8 (A9 ?)
+_finline static void ClearCachesARMv7(void)
+{
+//#ifdef INLINECACHECTRL
+// ARM Data transfer instructions from processor registers to coprocessor registers ( Write to coprocessor register )
+// The operation of a storage system is usually performed by a coprocessor CP15 which contain 16 individual 32 Bit register (0-15)
+// MCR{cond} p15,<Opcode_1>,<Rd>,<CRn>,<CRm>,<Opcode_2>
+//
+// cond? Condition code for instruction execution . When cond When ignored, the instruction is executed unconditionally .
+// Opcode_1? Coprocessor specific opcodes . about CP15 For example ,opcode1=0
+// Rd? As a source register ARM register , Its value will be transferred to the coprocessor register , Or transfer the value of coprocessor register to the register , Usually it is R0
+// CRn? Coprocessor registers as target registers , Its number is C~C15.
+// CRm? An additional destination register or source operand register in the coprocessor . If you don't need to set additional information , take CRm Set to c0, Otherwise, the result is unknown
+// Opcode_2? Optional coprocessor specific opcodes .( To distinguish different physical registers of the same number , When additional information is not required , Designated as 0)
+//
+// CR7: Cache and write cache control
+/*
+#if !CONFIG_IS_ENABLED(SYS_ICACHE_OFF)
+	mcr	p15, 0, r0, c7, c5, 0	@ invalidate icache
+	mcr     p15, 0, r0, c7, c10, 4	@ DSB
+	mcr     p15, 0, r0, c7, c5, 4	@ ISB
+#endif
+*/
+
+/*
+.set DC_ON, (0x1<<2)
+.set IC_ON, (0x1<<12)
+.set CTRL_M_BIT,  (1 << 0)
+.set CTRL_C_BIT,  (1 << 2)
+.set CTRL_B_BIT,  (1 << 7)
+.set CTRL_I_BIT, (1 << 12)
+
+ASM_FUNC(ArmEnableInstructionCache)
+  ldr     R1,=IC_ON
+  mrc     p15,0,R0,c1,c0,0      @Read control register configuration data
+  orr     R0,R0,R1              @Set I bit
+  mcr     p15,0,r0,c1,c0,0      @Write control register configuration data
+  dsb
+  isb
+  bx      LR
+
+ASM_FUNC(ArmDisableInstructionCache)
+  ldr     R1,=IC_ON
+  mrc     p15,0,R0,c1,c0,0      @Read control register configuration data
+  bic     R0,R0,R1              @Clear I bit.
+  mcr     p15,0,r0,c1,c0,0      @Write control register configuration data
+  dsb
+  isb
+  bx LR
+
+ASM_FUNC(ArmDisableCachesAndMmu)
+  mrc   p15, 0, r0, c1, c0, 0           @ Get control register
+  bic   r0, r0, #CTRL_M_BIT             @ Disable MMU
+  bic   r0, r0, #CTRL_C_BIT             @ Disable D Cache
+  bic   r0, r0, #CTRL_I_BIT             @ Disable I Cache
+  mcr   p15, 0, r0, c1, c0, 0           @ Write control register
+  dsb
+  isb
+  bx LR
+*/
+#ifndef __aarch64__
+ __asm__ __volatile__ ("MCR p15,0,%0,c7,c5, 0    \n\t"     // @Invalidate entire instruction cache [ArmInvalidateInstructionCache]   // Invalidate Instruction TLB
+                       "MCR p15,0,%0,c7,c5, 6    \n\t"     // @Invalidate Branch predictor array    // Invalidate Instruction TLB Single Entry ???
+//                       "MCR p15,0,%0,c8,c7, 0    \n\t"  // Invalidate entire Unified Main TLB
+                       "MCR p15,0,%0,c7,c10,4    \n\t"     // Data sync barrier (formerly drain write buffer)   // Clean Data Cache Line (using Index)
+                       "MCR p15,0,%0,c7,c5, 4    \n\t"     // Instruction sync barrier  // Invalidate Instruction TLB Entry on ASID match
+//                       "DSB SY\n\t"
+//                       "ISB SY\n\t"
+                       ::"r"(0));
+#endif
+/*#else
+ void* (*pProc_CacheProcA)(void)  = SYSPROC_CacheProcA;
+ void* (*pProc_CacheProcB)(void*) = SYSPROC_CacheProcB;
+ void  (*pProc_CacheProcC)(void*) = SYSPROC_CacheProcC;
+
+// SLOGTXT("CC1a\n"_es);
+ void* v0 = pProc_CacheProcA();
+// SLOGTXT("CC1b\n"_es);
+ void* v1 = pProc_CacheProcB(v0);
+// SLOGTXT("CC1c\n"_es);
+ pProc_CacheProcC(v1);
+// SLOGTXT("CC1d\n"_es);
+#endif    */
+}
 //-----------------------------------------------------------------------------------------
 //-----------------------------------------------------------------------------------------
 //-----------------------------------------------------------------------------------------
@@ -213,12 +372,14 @@ static size_t _finline GetModulePath(achar* DstBuf, size_t BufSize=-1)
 //
 static sint InitStartupInfo(void* StkFrame=nullptr, void* ArgA=nullptr, void* ArgB=nullptr, void* ArgC=nullptr)
 {
- SInfo.STInfo    = StkFrame;  // Pointer to stack frame
+ SInfo.STInfo    = StkFrame;  // Pointer to stack frame (No useful information there)
  SInfo.RetAddr   = ArgC;
  SInfo.ArgV      = (achar**)ArgB;
  SInfo.ArgC      = (uint)ArgA;
  SInfo.UBootBase = FindBaseOfUBOOT(SInfo.RetAddr);
+ if(!SInfo.UBootBase)return -1;
  SInfo.JmpTable  = FindJumpTable(SInfo.RetAddr);
+ if(!SInfo.JmpTable)return -2;
 
  DJTAPI(get_version);   // *SAPI::get_version.GetPtrSC<vptr>() = SInfo.JmpTable[(int)NUBOOT::EApiIdx::get_version];
  DJTAPI(getc);
@@ -243,13 +404,15 @@ static sint InitStartupInfo(void* StkFrame=nullptr, void* ArgA=nullptr, void* Ar
  DJTAPI(i2c_write);
  DJTAPI(i2c_read);
 
+ DBGDBG("StkFrame=%p, RetAddr=%p, ArgV=%p, ArgC=%u",StkFrame,ArgC,ArgA,ArgB);    // On Windows syscalls are not initialized yet at this point!
+ DBGMSG("Base of UBOOT: %p",SInfo.UBootBase);
+ DBGMSG("Jump Table: %p",SInfo.JmpTable);
+
  vptr pExecCmdLine = FindExecCmdLine((void*)((size_t)SInfo.JmpTable[(int)NUBOOT::EApiIdx::malloc] & ~0xFFFF), 0x20000);     // ((size_t)this->malloc & ~0xFFFF)
  *UnbindPtr(SAPI::ExecCmdLine.GetPtrSC<vptr*>()) = pExecCmdLine;
 
- DBGDBG("StkFrame=%p, RetAddr=%p, ArgV=%p, ArgC=%u",StkFrame,ArgC,ArgA,ArgB);    // On Windows syscalls are not initialized yet at this point!
- DBGMSG("Base of UBOOT: %p",SInfo.UBootBase);
- DBGMSG("ExecCmdLine addr: %p",pExecCmdLine);
- if(!pExecCmdLine)return -1;
+ DBGMSG("ExecCmdLine addr: %p",pExecCmdLine);  // DBGMSG   // NOTE: Framework`s logging will make the UBOOT module much bigger
+ if(!pExecCmdLine)return -3;
  return 0;
 }
 //============================================================================================================

@@ -94,6 +94,8 @@ DECL_SYSCALL(NSYSC::ESysCNum::llseek,     PX::llseek,   llseek       )
 
 } static constexpr inline SysApi alignas(16);   // Declared to know exact address(?), its size is ALWAYS 1
 //============================================================================================================
+#include "../../UtilsFmtELF.hpp"
+//============================================================================================================
 // In fact, this is LINUX, not POSIX API emulation
 //   FUNC_WRAPPER(PX::cloneB0,    clone   *** MAKES THE CODE 1.5k BIGGER ***   ) {return [&]<typename T=SAPI>() _finline {if constexpr(IsArchX64&&IsCpuX86)return T::clone(args...); else return T::clone(GetParFromPk<0>(args...),GetParFromPk<1>(args...),GetParFromPk<2>(args...),GetParFromPk<4>(args...),GetParFromPk<3>(args...));}();}  // Linux-specifix, need implementation for BSD
 //
@@ -122,12 +124,12 @@ FUNC_WRAPPERNI(PX::gettimeofday,  gettimeofday  )     // TODO: Prefer VDSO
      tv = &tvb;
     }
    tz->dsttime = 0;
-   if(tz->minuteswest == -1)
+   if(tz->utcoffs == -1)
     {
      int res = UpdateTZOffsUTC(tv->sec);
-     if(res < 0){tz->minuteswest = 0; return res;}
+     if(res < 0){tz->utcoffs = 0; return res;}
     }
-   tz->minuteswest = GetTZOffsUTC();
+   tz->utcoffs = GetTZOffsUTC();
   }
  return res;
 }
@@ -224,9 +226,9 @@ FUNC_WRAPPERNI(PX::spawn,       spawn       )
 {
 static constexpr const uint32 NotCloneFlg = PX::O_CLOEXEC;
 // TODO: Use 'access' to check if the file exist and is executable?
- volatile int ExecRes = 0;   // If in parent process we see this be nonzero then execve has failed    // __asm__ __volatile__("" :: "m" (ExecRes));
+ volatile int ExecRes = 0;   // If in parent process, we see this to be nonzero when execve has failed    // __asm__ __volatile__("" :: "m" (ExecRes));
  volatile PX::pid_t pid = NAPI::clone(PX::CLONE_VM | PX::CLONE_VFORK | PX::SIGCHLD | ((uint32)GetParFromPk<4>(args...) & ~NotCloneFlg), nullptr, nullptr, nullptr, (uint32)0);  // vfork     // Same stack, no copy-on-write
- if(pid)   // Not in child (Error Child create error if negative)
+ if(pid)   // Not in child (Resumed after execve or exit) (Error Child create error if negative)
   {
    volatile int tmp = ExecRes;  // Some extra to prevent optimization
    if(tmp)return tmp;  // We need the result of execv if it failed  // if exec has failed then pid have no meaning because the child should been exited by now
@@ -234,10 +236,10 @@ static constexpr const uint32 NotCloneFlg = PX::O_CLOEXEC;
   }
 // Only a child gets here
  {
-#if defined(CPU_X86) && defined(ARCH_X64)  // Only X86-X64 suffers from overwriting return address from clone by execve or exit so we need to move stack pointer to have more space for child to overwrite
+//#if defined(CPU_X86) && defined(ARCH_X64)  // On ARM32 the stack is corrupted too! // Only X86-X64 suffers from overwriting return address from clone by execve or exit so we need to move stack pointer to have more space for child to overwrite
   volatile size_t* padd = (volatile size_t*)StkAlloc((pid >> 24)+64);   // Some trick with volatile var to avoid optimizations // alloca must be called at block scope
   *padd = 0;     // Some extra to prevent optimization
-#endif
+//#endif
   volatile int32* fdarr = GetParFromPk<3>(args...);
   if(fdarr)
    {
@@ -253,11 +255,11 @@ static constexpr const uint32 NotCloneFlg = PX::O_CLOEXEC;
      }
    }
   ExecRes = NAPI::execve(GetParFromPk<0>(args...), GetParFromPk<1>(args...), GetParFromPk<2>(args...));  // Should not return on success    // Is it possible to just drop last argument?
-#if defined(CPU_X86) && defined(ARCH_X64)
+//#if defined(CPU_X86) && defined(ARCH_X64)   // On ARM32 the stack is corrupted too!
   NAPI::exit(ExecRes + (int)*padd);    // Exit the child thread only  // Resume parent on exit  // NOTE: Child enters here and overwrites parent`s return address from 'clone' and skips return value assignment from 'clone'
-#else
-  NAPI::exit(ExecRes);   // Or ESRCH ?
-#endif
+//#else
+//  NAPI::exit(ExecRes);   // Or ESRCH ?
+//#endif
  }
  return pid;
 }

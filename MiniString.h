@@ -29,9 +29,11 @@
 
 class CMiniStr
 {
- static const UINT SizeMsk = 0x07FFFFFF;
+ static const UINT MaxIdxBits = 3;	 // Max 512mb
+ static const UINT IdxShift   =	((sizeof(UINT32)*8)-MaxIdxBits);
+ static const UINT SizeMsk    = ((UINT32)-1 >> MaxIdxBits);  // 0x1FFFFFFF;  
  LPSTR  Data;
- UINT   SLength;
+ UINT32 SLength;
 // UINT   Allocated;
 
 //----------------------
@@ -45,16 +47,23 @@ UINT GetSizeVal(void) const
  return this->SLength & SizeMsk;
 }
 //----------------------
-void SetAllocVal(UINT Len)	 // Find pow2 tofit required size
+UINT GetAllocIdx(void) const
 {
- UINT Idx = 0;
- while((1 << Idx) < Len)Idx++;	  // Optimize?
- this->SLength = (this->SLength & SizeMsk) | (Idx << 27);
+ return this->SLength >> IdxShift;
 }
 //----------------------
-UINT GetAllocVal(void) const	 // As pow 2
+// 2,32,512,8192,131072,2097152,33554432,536870912 (max 512mb)
+__declspec(noinline) void SetAllocVal(UINT Len)	 // Find pow2 tofit required size
 {
- return 1 << (this->SLength >> 27);
+ UINT Idx = 0;
+ while((2 << (Idx << 2)) < Len)Idx++;	  // Optimize?
+ this->SLength = (this->SLength & SizeMsk) | (Idx << IdxShift);
+}
+//----------------------
+__declspec(noinline) UINT GetAllocVal(void) const	 // As pow 2
+{
+ UINT idx = this->GetAllocIdx();
+ return 2 << (idx << 2);	   // Mul 4
 }
 //----------------------
 void movemem(PBYTE Dst, PBYTE Src, UINT Len) // C++Builder`s function is broken!!!
@@ -77,14 +86,22 @@ void movemem(PBYTE Dst, PBYTE Src, UINT Len) // C++Builder`s function is broken!
 	}
 }
 //----------------------
+public:
+// static inline bool DoDbg = false;
  LPSTR ResizeFor(UINT Len)    // Do not updates SLength
  {
+  if(Len > SizeMsk)Len = 0;	 // Destroy itself on overflow
   if(Len && this->Data)
    {
 	UINT AlO = this->GetAllocVal();
 	this->SetAllocVal(Len);
 	UINT AlN = this->GetAllocVal();
-	if(AlO != AlN)this->Data = (LPSTR)HeapReAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,this->Data,AlN+8);
+	if(AlO != AlN)
+	 {
+      this->Data = (LPSTR)HeapReAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,this->Data,AlN+8);
+// 	  if(DoDbg)
+//        Sleep(1);
+	 }
    }
 	else if(!this->Data)
 	 {
@@ -198,7 +215,6 @@ public:
   if(!this->ResizeFor(Len+this->Length()))return NULL;
   LPSTR Dst = &this->Data[this->Length()];
   if(str)memcpy(Dst,str,Len);    //       strcpy(&this->Data[this->SLength],str);
-
   UINT len = this->Length() + Len;
   this->SetSizeVal(len); 
   this->SetAllocVal(len);

@@ -36,6 +36,7 @@ static constexpr int64  MAXTIME64  = 0x793406fff;        // number of seconds fr
 static constexpr uint64 EPOCH_BIAS = 0x019DB1DED53E8000; // Number of 100 nanosecond units from 1/1/1601 to 1/1/1970     // 0x019DB1DED53E8000 116444736000000000
 
 static constexpr uint64 NSEC_IN_MSEC    = 1000000;
+static constexpr uint64 MICSEC_IN_SEC   = 1000000;
 static constexpr uint64 SECS_TO_FT_MULT = 10000000;   // Number of 100-nanosecond units in a second
 static constexpr uint64 TIME_T_BASE     = EPOCH_BIAS / SECS_TO_FT_MULT;
 
@@ -157,16 +158,16 @@ template<typename T> static void UnixTimeToDateTime(const T* ts, DT* dt, sint32 
  dt->Month = e;
  dt->Day   = f;
 
- constexpr bool HaveNSecs = requires(const T* t) {t->nsecs;};
+ constexpr bool HaveNSecs = requires(const T* t) {t->nsec;};
  if constexpr (HaveNSecs)    // T is STSpec
   {
-   dt->Milliseconds = ts->nsecs / NSEC_IN_MSEC;
-   dt->Nanoseconds  = ts->nsecs % NSEC_IN_MSEC;
+   dt->Milliseconds = ts->nsec / NSEC_IN_MSEC;   // Nanoseconds
+   dt->Nanoseconds  = ts->nsec % NSEC_IN_MSEC;
   }
    else  // T is STVal
     {
-     dt->Milliseconds = 0;
-     dt->Nanoseconds  = 0;
+     dt->Milliseconds = ts->usec / 1000;  // Microseconds
+     dt->Nanoseconds  = ts->usec % 1000;  // Microseconds instead of Nanoseconds
     }
  if(!dt->DayOfWeek)dt->DayOfWeek = CalcDayOfWeek(c, e, f);    // Optional
 }

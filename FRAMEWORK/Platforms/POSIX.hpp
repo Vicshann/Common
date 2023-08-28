@@ -33,8 +33,8 @@ template<uint vLinux, uint BSD_MAC> struct DCV   // Can be used for Kernel too
  using PCCHAR   = SPTR<const pchar,  PHT>;
  using PPCHAR   = SPTR<const pchar*, PHT>;    // achar**
 //using HANDLE   = PVOID;
- using SIZE_T   = SPTR<uint,   PHT>;
- using SSIZE_T  = SPTR<sint,   PHT>;
+ using SIZE_T   = decltype(TypeToUnsigned<PHT>());  //  SPTR<uint,   PHT>;
+ using SSIZE_T  = decltype(TypeToSigned<PHT>());  //  SPTR<sint,   PHT>;
 
 //using LONG     = int32;
 //using ULONG    = uint32;
@@ -49,7 +49,7 @@ template<uint vLinux, uint BSD_MAC> struct DCV   // Can be used for Kernel too
  //using off_t    = int64;
  using pid_t    = int;
  //using fd_t     = int;
- using time_t   = SSIZE_T;
+ using time_t   = SSIZE_T;   // Old time_t which is 32-bit on x32 platforms
 
 SCVR int EOF    = -1;
 SCVR int BadFD  = -1;
@@ -485,15 +485,15 @@ using timespec = STSpec<time_t>;
 
 template<typename T> struct STVal      // gettimeofday
 {
- T sec;   // seconds         // time_t (long)
- T usec;  // microseconds    // suseconds_t (long)
+ T sec;   // Seconds         // time_t (long)
+ T usec;  // Microseconds    // suseconds_t (long)
 };
 using timeval = STVal<time_t>;
 
 struct timezone 
 {
- int minuteswest;     // minutes west of Greenwich 
- int dsttime;         // type of DST correction 
+ sint32 utcoffs;     // minutes west of Greenwich  // Seconds now (to avoid multiplication when modifying UTC time in seconds)
+ sint32 dsttime;     // type of DST correction     // Unused
 };
 
 static int PXCALL gettimeofday(timeval* tv, timezone* tz);   // Returns 0 in timezone on Linux

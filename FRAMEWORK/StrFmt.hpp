@@ -46,7 +46,7 @@ static consteval _finline int8 ValSizeToIdx(const int ValSize)
  else if(ValSize==4)return 2; // 10
  else if(ValSize==8)return 3; // 11
  return 0;
-} 
+}
 //---------------------------------------------------------------------------
 // Max 32 elements is supported. Last element is skipped (expected to be a terminating 0)
 template<typename T, uint N>static consteval _finline uint64 PackSizeBits(const T(&&arr)[N])
@@ -64,11 +64,11 @@ static consteval size_t MakeArgCtrVal(uint ArgNum, uint64 SizeBits)
 }
 //---------------------------------------------------------------------------
 /*static consteval _finline int8 GetValSizeIdx(auto&& Value)
-{  
+{
  using VT = typename RemoveConst<typename RemoveRef<decltype(Value)>::T>::T;  // May be const
  if constexpr (sizeof(VT)==2)return 1;      // 01
  else if constexpr (sizeof(VT)==4)return 2; // 10
- else if constexpr (sizeof(VT)==8)return 3; // 11 
+ else if constexpr (sizeof(VT)==8)return 3; // 11
  return 0;
 } */
 //---------------------------------------------------------------------------
@@ -83,7 +83,7 @@ static constexpr _finline vptr GetValAddr(auto&& Value)
 //---------------------------------------------------------------------------
 static _finline vptr* DecodeArgArray(vptr* ArgArr, uint& ArgNum, uint64& SizeBits)
 {
- ArgNum = (size_t)ArgArr[0] & 0xFF; 
+ ArgNum = (size_t)ArgArr[0] & 0xFF;
  if constexpr (IsArchX32)SizeBits = ((uint64)((size_t)ArgArr[0] >> 8) << 32)|(size_t)ArgArr[1];
   else SizeBits = (size_t)ArgArr[1];
  return &ArgArr[2];
@@ -188,7 +188,7 @@ template<typename T> static size_t _ntoa(char* buffer, size_t idx, size_t maxlen
    {
     do {
      T vmod;
-     value = NMATH::UDivMod10(value, vmod);
+     value = NMATH::DivMod10U(value, vmod);
      buf[len++] = '0' + vmod;
     } while (value && (len < sizeof(buf)));
    }
@@ -381,6 +381,7 @@ _ninline static sint FormatToBuffer(char* format, char* buffer, uint maxlen, vpt
         format++;
         break;
       }
+#ifndef FWK_NO_FPU
       case 'f' :
       case 'F' : {
         size_t prec = (flags & FLAGS_PRECISION)?precision:14;   // Is 14 optimal?
@@ -406,6 +407,7 @@ _ninline static sint FormatToBuffer(char* format, char* buffer, uint maxlen, vpt
           while (idx - start_idx < width)buffer[idx++] = ' '; }  // out(' ', buffer, idx++, maxlen);
         format++; }
         break;
+#endif
 #if defined(PRINTF_SUPPORT_EXPONENTIAL)
       case 'e':
       case 'E':
@@ -530,9 +532,9 @@ Exit:
 //---------------------------------------------------------------------------
 static sint _finline StrFmt(achar* buffer, uint maxlen, achar* format, auto&&... args)
 {
- constexpr uint64 sbits = NFMT::PackSizeBits((int[]){sizeof(args)...,0});  // Last 0 needed in case of zero args number (No zero arrays allowed)  
+ constexpr uint64 sbits = NFMT::PackSizeBits((int[]){sizeof(args)...,0});  // Last 0 needed in case of zero args number (No zero arrays allowed)
  constexpr size_t arnum = NFMT::MakeArgCtrVal(sizeof...(args), sbits);
- return FormatToBuffer(format, buffer, maxlen, (vptr[]){(vptr)arnum,(vptr)sbits,(NFMT::GetValAddr(args))...}); 
+ return FormatToBuffer(format, buffer, maxlen, (vptr[]){(vptr)arnum,(vptr)sbits,(NFMT::GetValAddr(args))...});
 }
 //---------------------------------------------------------------------------
 
