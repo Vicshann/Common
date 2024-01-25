@@ -4,9 +4,9 @@
 template<typename T, int ATerm=-1> class CArr    // TODO: Allocator based?
 {
  using Self = CArr<T,ATerm>;
- static constexpr const uint SizeIdx  = -1;
- static constexpr const uint ASizeIdx = -2;
- static constexpr const uint BeginIdx = (16/sizeof(uint));   // 2 on x64, 4 on x32
+ static constexpr const sint SizeIdx  = -1;
+ static constexpr const sint ASizeIdx = -2;
+ static constexpr const sint BeginIdx = (16/sizeof(uint));   // 2 on x64, 4 on x32
  T* AData;
 
 //----------------------------------------------------------
@@ -22,7 +22,7 @@ static bool DeAllocate(vptr Ptr)      // TODO: Use allocator
 static vptr Allocate(uint Len)
 {
  uint  flen = AlignP2Frwd(Len + sizeof(vptr), NPTM::MEMPAGESIZE);
- void* fdat = (void*)NPTM::NAPI::mmap(nullptr, flen, PX::PROT_READ|PX::PROT_WRITE, PX::MAP_PRIVATE|PX::MAP_ANONYMOUS, -1, 0);
+ void* fdat = (void*)NPTM::NAPI::mmap(nullptr, flen, PX::PROT_READ|PX::PROT_WRITE, PX::MAP_PRIVATE|PX::MAP_ANONYMOUS, -1, 0);    // NOTE: No attempts to grow inplace!!!
  if(NPTM::GetMMapErrFromPtr(fdat)){ DBGERR("Error: Failed to allocate!"); return nullptr; }
  uint* Ptr  = &((uint*)fdat)[BeginIdx];
  Ptr[SizeIdx]  = Len;
@@ -30,7 +30,7 @@ static vptr Allocate(uint Len)
  return Ptr;
 }
 //----------------------------------------------------------
-static vptr ReAllocate(uint Len, vptr OldPtr)  // TODO: Use allocator
+static vptr ReAllocate(uint Len, vptr OldPtr)  // TODO: Use allocator   // TODO: use mremap
 {
  if(!OldPtr)return Allocate(Len);
  uint flen = AlignP2Frwd(Len + sizeof(vptr), NPTM::MEMPAGESIZE);
@@ -41,7 +41,7 @@ static vptr ReAllocate(uint Len, vptr OldPtr)  // TODO: Use allocator
   }
  vptr NewPtr = Allocate(Len);
  if(NewPtr)memcpy(NewPtr, OldPtr, ((uint*)OldPtr)[SizeIdx]);  // Copy old data
- DeAllocate(OldPtr);
+ DeAllocate(OldPtr);    // NOTE: May fail and leak memory
  return NewPtr;
 }
 //----------------------------------------------------------
@@ -50,39 +50,56 @@ public:
  CArr(void){this->AData = nullptr;}
  CArr(uint Cnt){this->AData = nullptr; this->Resize(Cnt);}
  ~CArr(){this->SetLength(0);}
- operator  T*() {return this->AData;}    // operator   const T*() {return this->AData;}
- T* Data(void){return this->AData;}
- T* c_data(void){return this->AData;}    // For name compatibility in a templates
- uint Count(void){return (this->Size() / sizeof(T));}
+ operator  T*() const {return this->AData;}    // operator   const T*() {return this->AData;}
+ T* Data(void) const {return this->AData;}
+ T* c_data(void) const {return this->AData;}    // For name compatibility in a templates
+ uint Count(void) const {return (this->Size() / sizeof(T));}
  uint Size(void) const {return ((this->AData)?(((uint*)this->AData)[-1]):(0));}
- uint Length(void){return this->Size();}
+ uint Length(void) const {return this->Size();}
 
 //----------------------------------------------------------
-void Clear(void){this->SetLength(0);}
+sint Clear(void){return this->SetLength(0);}
 //----------------------------------------------------------
-void TakeFrom(Self& arr)
+sint TakeFrom(Self& arr)
 {
- this->SetLength(0);
+ if(sint res=this->SetLength(0);res < 0)return res;
  this->AData = arr.AData;
- arr.AData = nullptr;
+ arr.AData = nullptr;  
+ return 0;
 }
 //----------------------------------------------------------
-bool Assign(void* Items, uint Cnt)     // Cnt is in Items
+sint Assign(void* Items, uint Cnt)     // Cnt is in Items
 {
  uint NewLen = Cnt * sizeof(T);
- if(!this->SetLength(NewLen))return false;
+ if(sint res=this->SetLength(NewLen);res < 0)return res; 
  if(Items)memcpy(this->AData, Items, NewLen);
- return true;
+ return 0;
 }
 //----------------------------------------------------------
-bool Append(void* Items, uint Cnt)     // Cnt is in Items
+sint Append(void* Items, uint Cnt)     // Cnt is in Items
 {
  uint OldSize = this->Size();
  uint NewLen  = Cnt * sizeof(T);
- if(!this->SetLength(OldSize+NewLen))return false;
+ if(sint res=this->SetLength(OldSize+NewLen);res < 0)return res;    
  if(Items)memcpy(&((uint8*)this->AData)[OldSize], Items, NewLen);
  LOGMSG("DST=%p, SRC=%p, LEN=%08X",&((uint8*)this->AData)[OldSize], Items, NewLen);
- return true;
+ return 0;
+}
+//----------------------------------------------------------
+sint Insert(void* Items, uint Cnt, uint At)
+{
+ uint OldSize = this->Size();
+ uint ExtLen  = Cnt * sizeof(T);
+ uint AtOffs  = At * sizeof(T);
+ if(sint res=this->SetLength(OldSize+ExtLen);res < 0)return res; 
+ memmove(&((uint8*)this->AData)[AtOffs+ExtLen], &((uint8*)this->AData)[AtOffs], OldSize - AtOffs);
+ if(Items)memcpy(&((uint8*)this->AData)[AtOffs], Items, ExtLen); 
+ return 0;
+}
+//----------------------------------------------------------
+sint Remove(uint Cnt, uint At)
+{
+ return 0;  // Really needed realloc!
 }
 //----------------------------------------------------------
  //CArr<T>& operator += (const char* str){this->Append((void*)str, lstrlenA(str)); return *this;}
@@ -103,52 +120,53 @@ template<typename A, uint N> inline Self& operator += (const A(&str)[N])
  return *this;
 }
 //----------------------------------------------------------
-inline bool Resize(uint Cnt){return this->SetLength(Cnt*sizeof(T));}  // In Elements
-bool SetLength(uint Len)    // In bytes!
+inline sint Resize(uint Cnt){return this->SetLength(Cnt*sizeof(T));}  // In Elements     // TODO: Grow mode
+inline sint SetSize(uint Len) {return this->SetLength(Len);}  // In bytes!
+sint SetLength(uint Len)    // In bytes!     // Preserves old data!
 {
  uint* Ptr = (uint*)this->AData;
- if(Len && Ptr)Ptr = (uint*)ReAllocate(Len, Ptr);
-	else if(!Ptr && Len)Ptr = (uint*)Allocate(Len);
-	  else if(!Len && Ptr)
+ if(Len && Ptr)Ptr = (uint*)ReAllocate(Len, Ptr);    // Resize (by reallocation)
+	else if(!Ptr && Len)Ptr = (uint*)Allocate(Len);  //
+	  else if(!Len && Ptr)   // Free the memory
     {
      DeAllocate(Ptr);
      this->AData=nullptr;
-     return false;
+     return 0;
     }
-      else return true;
- if(!Ptr)return false;
+      else return 0;  // Do nothing
+ if(!Ptr)return PX::ENOMEM;   // Allocation failed
  this->AData = (T*)Ptr;
- return true;
+ return 0;
 }
 //----------------------------------------------------------
-sint FromFile(achar* FileName)
+sint FromFile(const achar* FileName)
 {
  int df = NPTM::NAPI::open(FileName,PX::O_RDONLY,0);
- if(df < 0){ DBGERR("Error: Failed to open the file %i: %s!",df,FileName); return -1; }
+ if(df < 0){ DBGERR("Error: Failed to open the file %i: %s!",df,FileName); return (sint)df; }
  sint flen = NPTM::NAPI::lseek(df, 0, PX::SEEK_END);    // TODO: Use fstat
+ if(flen < 0){NPTM::NAPI::close(df); return flen;}
  NPTM::NAPI::lseek(df, 0, PX::SEEK_SET);     // Set the file position back
- if(flen < 0){NPTM::NAPI::close(df); return -2;}
- if(this->SetLength(flen) < 0){NPTM::NAPI::close(df); return -3;}
+ if(sint res=this->SetLength(flen);res < 0){NPTM::NAPI::close(df); return res;}   
  sint rlen = NPTM::NAPI::read(df, this->AData, this->Size());
  NPTM::NAPI::close(df);
- if(rlen < 0)return -4;
- if(rlen != flen){ DBGERR("Error: Data size mismatch!"); return -5; }
+ if(rlen < 0)return rlen;
+ if(rlen != flen){ DBGERR("Error: Data size mismatch!"); return PX::EFBIG; }
  return (rlen / sizeof(T));
 }
 //----------------------------------------------------------
-sint ToFile(achar* FileName, uint Length=0, uint Offset=0)       // TODO: Bool Append    // From - To
+sint IntoFile(const achar* FileName, uint Length=0, uint Offset=0)       // TODO: Bool Append    // From - To
 {
  uint DataSize = this->Size();
  if(Offset >= DataSize)return 0;  // Beyond the data
  if(!Length)Length = DataSize;
  if((Offset+Length) > DataSize)Length = (DataSize - Offset);
  if(!Length)return 0;
- int df = NPTM::NAPI::open(FileName,PX::O_CREAT|PX::O_RDWR|PX::O_TRUNC, 0666);   // O_TRUNC  O_EXCL   // 0666
- if(df < 0){ DBGERR("Error: Failed to create the output data file(%i): %s!",df,FileName); return -1; }
+ int df = NPTM::NAPI::open(FileName,PX::O_CREAT|PX::O_WRONLY|PX::O_TRUNC, 0666);   // O_TRUNC  O_EXCL   // 0666
+ if(df < 0){ DBGERR("Error: Failed to create the output data file(%i): %s!",df,FileName); return (sint)df; }
  sint wlen = NPTM::NAPI::write(df, &((uint8*)this->AData)[Offset], Length);
  NPTM::NAPI::close(df);
- if(wlen < 0)return -2;
- if((size_t)wlen != this->Size()){ DBGERR("Error: Data size mismatch!"); return -3; }
+ if(wlen < 0)return wlen;
+ if((size_t)wlen != this->Size()){ DBGERR("Error: Data size mismatch!"); return PX::ENOSPC; }
  return (wlen / sizeof(T));
 }
 //----------------------------------------------------------

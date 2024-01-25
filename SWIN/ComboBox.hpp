@@ -49,27 +49,27 @@ virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, L
 //------------------------------------------------------------------------------------------------------------
 UINT GetCount(void)
 {
- return SendMessageW(this->GetHandle(),CB_GETCOUNT,0,0);
+ return (UINT)SendMessageW(this->GetHandle(),CB_GETCOUNT,0,0);
 }
 //------------------------------------------------------------------------------------------------------------
 int Reset(void)
 {
- return SendMessageW(this->GetHandle(),CB_RESETCONTENT,0,0);
+ return (int)SendMessageW(this->GetHandle(),CB_RESETCONTENT,0,0);
 }
 //------------------------------------------------------------------------------------------------------------
 int SelectItem(int Idx)
 {
- return SendMessageW(this->GetHandle(),CB_SETCURSEL,(WPARAM)Idx,0);
+ return (int)SendMessageW(this->GetHandle(),CB_SETCURSEL,(WPARAM)Idx,0);
 }
 //------------------------------------------------------------------------------------------------------------
 int GetSelItem(void)
 {
- return SendMessageW(this->GetHandle(),CB_GETCURSEL,0,0);
+ return (int)SendMessageW(this->GetHandle(),CB_GETCURSEL,0,0);
 }
 //------------------------------------------------------------------------------------------------------------
 int Preallocate(UINT ItmCount, size_t MemSize)
 {
- return SendMessageW(this->GetHandle(),CB_RESETCONTENT,(WPARAM)ItmCount,(LPARAM)MemSize);
+ return (int)SendMessageW(this->GetHandle(),CB_RESETCONTENT,(WPARAM)ItmCount,(LPARAM)MemSize);
 }
 //------------------------------------------------------------------------------------------------------------
 // The return value is the zero-based index to the string in the list box of the combo box
@@ -92,7 +92,7 @@ template<typename T> UINT InsertStr(int Idx, T Str)              // Size is in c
 //------------------------------------------------------------------------------------------------------------
 int DeleteItem(int Idx)
 {
- return SendMessageW(this->GetHandle(),CB_DELETESTRING,(WPARAM)Idx,0);
+ return (int)SendMessageW(this->GetHandle(),CB_DELETESTRING,(WPARAM)Idx,0);
 }
 //------------------------------------------------------------------------------------------------------------
 size_t GetItemData(int Idx)
@@ -102,7 +102,7 @@ size_t GetItemData(int Idx)
 //------------------------------------------------------------------------------------------------------------
 int SetItemData(int Idx, size_t Data)
 {
- return SendMessageW(this->GetHandle(),CB_DELETESTRING,(WPARAM)Idx,(LPARAM)Data);
+ return (int)SendMessageW(this->GetHandle(),CB_DELETESTRING,(WPARAM)Idx,(LPARAM)Data);
 }
 
 };

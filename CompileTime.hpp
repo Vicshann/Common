@@ -224,9 +224,9 @@ __forceinline C* Decrypt(void)  // Run-time decryption   // There will be a copy
 
 //====================================================================================
 static const bool   IsBigEnd = false;
-static const SIZE_T ExEncKey = 0xD6B4A9C5E2B4C7D3ull;   // TODO: Must be same as a hardware calculated key
+static const SIZE_T ExEncKey = (SIZE_T)0xD6B4A9C5E2B4C7D3ull;   // TODO: Must be same as a hardware calculated key
 
-static constexpr SIZE_T ctBuildKey = MakeBuildKey();  // NOTE: Data members come before function members so if MakeBuildKey is member of same class then it is considered an undefined function
+static constexpr SIZE_T ctBuildKey = (SIZE_T)MakeBuildKey();  // TODO: Move to CT_CRYPT // NOTE: Data members come before function members so if MakeBuildKey is member of the same class then it is considered an undefined function
 
 __forceinline static SIZE_T MakeExKeyPart(void) // Updates ExEncKeyRT // TODO: Hardware counter based
 {

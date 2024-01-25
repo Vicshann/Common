@@ -8,7 +8,7 @@
 static constexpr wchar PATHDLMR = 0x2F;    //  '/'
 static constexpr wchar PATHDLML = 0x5C;    //  '\'
 
-constexpr _finline static bool IsFilePathDelim(wchar val){return ((val == PATHDLML)||(val == PATHDLMR));}
+template<typename T> constexpr _finline static bool IsFilePathDelim(T val){return ((val == (T)PATHDLML)||(val == (T)PATHDLMR));}
 
 template<typename T> constexpr _finline static bool IsDirSpec(T Name){return (((Name[0] == '.')&&(!Name[1]||IsFilePathDelim(Name[1])))||((Name[0] == '.')&&(Name[1] == '.')&&(!Name[2]||IsFilePathDelim(Name[1]))));}
 
@@ -25,7 +25,7 @@ template<typename D, typename S> constexpr _finline static bool AssignFilePath(D
     }
      else NSTR::StrCopy(DstPath, FilePath);  // File system absolute path (Unix way)
   }
-   else NSTR::StrCopy(DstPath, FilePath);  // Drive-absolute path 
+   else NSTR::StrCopy(DstPath, FilePath);  // Drive-absolute path
  return true;
 }
 //---------------------------------------------------------------------------
@@ -44,7 +44,7 @@ template<typename T> constexpr _finline static sint TrimFilePath(T Path)
 template<typename T> constexpr _finline static T GetFileName(T FullPath, uint Length=(uint)-1)    // TODO: Just scan forward, no StrLen and backward scan  // Set constexpr 'IF' in case a T is a str obj an its size is known?
 {
  sint LastDel = -1;
- for(sint ctr=0,val=FullPath[ctr];val && Length;ctr++,Length--,val=FullPath[ctr]){if(IsFilePathDelim(val))LastDel=ctr;}
+ for(sint ctr=0,val=FullPath[ctr];val && Length;ctr++,Length--,val=FullPath[ctr]){if(IsFilePathDelim((wchar)val))LastDel=ctr;}
  return &FullPath[LastDel+1];
 }
 //---------------------------------------------------------------------------
@@ -57,11 +57,11 @@ template<typename T> constexpr _finline static T GetFileExt(T FullPath, uint Len
  return &FullPath[LastDel+1];
 }
 //---------------------------------------------------------------------------
-_finline static uint SizeOfWStrAsUtf8(const wchar* str, uint size=-1, uint term=0)
+_finline static uint SizeOfWStrAsUtf8(const wchar* str, uint size=uint(-1), uint term=uint(0))
 {
  uint ResLen = 0;
- wchar terml = term >> 16;  // Usually 0
- wchar terme = term;
+ wchar terml = wchar(term >> 16);  // Usually 0
+ wchar terme = wchar(term);
  for(uint SrcIdx = 0;(str[SrcIdx] ^ terme) && (str[SrcIdx] > terml) && (SrcIdx < size);)
   {
    uint32 Val;
@@ -72,12 +72,12 @@ _finline static uint SizeOfWStrAsUtf8(const wchar* str, uint size=-1, uint term=
  return ResLen;
 }
 //---------------------------------------------------------------------------
-_finline static uint WStrToUtf8(achar* dst, const wchar* str, XRef<uint> dlen, XRef<uint> slen, uint term=0)
+_finline static uint WStrToUtf8(achar* dst, const wchar* str, XRef<uint> dlen, XRef<uint> slen, uint term=uint(0))
 {
  uint SrcIdx = 0;
  uint DstIdx = 0;
- wchar terml = term >> 16;  // Usually 0
- wchar terme = term;
+ wchar terml = wchar(term >> 16);  // Usually 0
+ wchar terme = wchar(term);
  while((str[SrcIdx] ^ terme) && (str[SrcIdx] > terml) && (DstIdx < dlen) && (SrcIdx < slen))
   {
    uint32 Val;

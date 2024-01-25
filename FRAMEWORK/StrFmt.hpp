@@ -99,12 +99,12 @@ template<typename T> static constexpr _finline T GetArgAsType(uint& ArgIdx, void
 // Recover as floats
    if constexpr (SameTypes<T, flt32>::V)
     {
-     if(asize == 2)return *(flt32*)ArgList[ArgIdx++];   // Read as is
+     if(asize == 2)return (T)*(flt32*)ArgList[ArgIdx++];   // Read as is
     }
    else if constexpr (SameTypes<T, flt64>::V)
     {
-     if(asize == 3)return *(flt64*)ArgList[ArgIdx++];   // Read as is
-      else if(asize == 2)return *(flt32*)ArgList[ArgIdx++];   // Read as is
+     if(asize == 3)return (T)*(flt64*)ArgList[ArgIdx++];   // Read as is
+      else if(asize == 2)return (T)*(flt32*)ArgList[ArgIdx++];   // Read as is
     }
 // Recover as integers
    if constexpr((T)-1 < 0)
@@ -122,7 +122,7 @@ template<typename T> static constexpr _finline T GetArgAsType(uint& ArgIdx, void
      else if(asize == 3)return *(uint64*)ArgList[ArgIdx++];
     }
   }
- return 0;  // Should not be reached
+ return T((T)-1);  // Should not be reached
 }
 //---------------------------------------------------------------------------
 // Can store sizes for max 32 values
@@ -146,7 +146,7 @@ static inline bool _is_digit(char ch)
 }
 //---------------------------------------------------------------------------
 // internal ASCII string to unsigned int conversion
-static inline unsigned int _atoi(char** Str)
+static inline unsigned int _atoi(const achar** Str)
 {
  unsigned int x = 0;
  for(unsigned char ch;(ch=*(*Str) - '0') <= 9;(*Str)++)x = (x*10) + ch;        // Can use a different base?
@@ -257,7 +257,7 @@ template<typename T> static size_t _ntoa(char* buffer, size_t idx, size_t maxlen
 //  size_t ArgSizes;  // Max 28(x32)/32(x64) (may be extended in the future)
 //  void*  Args...
 //
-_ninline static sint FormatToBuffer(char* format, char* buffer, uint maxlen, vptr* ArgList)
+_ninline static sint FormatToBuffer(const achar* format, achar* buffer, uint maxlen, vptr* ArgList)
 {
  size_t idx = 0U;
  uint ArgIdx = 0;
@@ -498,8 +498,8 @@ _ninline static sint FormatToBuffer(char* format, char* buffer, uint maxlen, vpt
 //        width = sizeof(void*) * 2U;
         flags |= FLAGS_ZEROPAD | FLAGS_UPPERCASE;
         const bool is_ll = (sizeof(void*) == sizeof(long long)) || (flags & FLAGS_LONG);
-        if (is_ll)idx = _ntoa<unsigned long long>(buffer, idx, maxlen, (unsigned long long)GetArgAsType<void*>(ArgIdx, ArgList, SizeBits), false, 16U, precision, width=sizeof(long long)*2, flags);  //  (unsigned long long)va_arg(va, unsigned long long)
-          else idx = _ntoa<unsigned long>(buffer, idx, maxlen, (unsigned long)GetArgAsType<void*>(ArgIdx, ArgList, SizeBits), false, 16U, precision, width=sizeof(long)*2, flags); //  (unsigned long)va_arg(va, unsigned long)
+        if (is_ll)idx = _ntoa<unsigned long long>(buffer, idx, maxlen, (uint64)GetArgAsType<void*>(ArgIdx, ArgList, SizeBits), false, 16U, precision, width=sizeof(long long)*2, flags);  //  (unsigned long long)va_arg(va, unsigned long long)
+          else idx = _ntoa<unsigned long>(buffer, idx, maxlen, (size_t)GetArgAsType<void*>(ArgIdx, ArgList, SizeBits), false, 16U, precision, width=sizeof(long)*2, flags); //  (unsigned long)va_arg(va, unsigned long)
         format++;
         break;
       }
@@ -530,7 +530,7 @@ Exit:
  return MSize;
 }*/
 //---------------------------------------------------------------------------
-static sint _finline StrFmt(achar* buffer, uint maxlen, achar* format, auto&&... args)
+static sint _finline StrFmt(achar* buffer, uint maxlen, const achar* format, auto&&... args)   // TODO: Convert maxlen to buffer`s end ptr of expected typesize (receiving sizeof() not countof())
 {
  constexpr uint64 sbits = NFMT::PackSizeBits((int[]){sizeof(args)...,0});  // Last 0 needed in case of zero args number (No zero arrays allowed)
  constexpr size_t arnum = NFMT::MakeArgCtrVal(sizeof...(args), sbits);

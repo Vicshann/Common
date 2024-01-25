@@ -47,6 +47,7 @@ DECL_SYSCALL(NSYSC::ESysCNum::munmap,     PX::munmap,     munmap     )
 DECL_SYSCALL(NSYSC::ESysCNum::madvise,    PX::madvise,    madvise    )
 DECL_SYSCALL(NSYSC::ESysCNum::mprotect,   PX::mprotect,   mprotect   )
 
+DECL_SYSCALL(NSYSC::ESysCNum::getdents,   PX::getdents64, getdents   )     // getdents64 on x32 and x64
 DECL_SYSCALL(NSYSC::ESysCNum::fstat,      PX::fstat,      fstat      )     // Struct?
 DECL_SYSCALL(NSYSC::ESysCNum::fcntl,      PX::fcntl,      fcntl      )     // Too specific to put in NAPI?
 DECL_SYSCALL(NSYSC::ESysCNum::flock,      PX::flock,      flock      )
@@ -54,10 +55,10 @@ DECL_SYSCALL(NSYSC::ESysCNum::fsync,      PX::fsync,      fsync      )
 DECL_SYSCALL(NSYSC::ESysCNum::fdatasync,  PX::fdatasync,  fdatasync  )
 DECL_SYSCALL(NSYSC::ESysCNum::pipe2,      PX::pipe2,      pipe2      )
 DECL_SYSCALL(NSYSC::ESysCNum::dup3,       PX::dup3,       dup3       )
-DECL_SYSCALL(NSYSC::ESysCNum::dup,        PX::dup,        dup        )     // Does not allow to pass any flags (O_CLOEXEC), can be replaced with fcntl
+DECL_SYSCALL(NSYSC::ESysCNum::dup,        PX::dup,        dup        )     // Does not allow to pass any flags (O_CLOEXEC), can be replaced with fcntl 
 
 #if !defined(CPU_ARM) || !defined(ARCH_X64)
-DECL_SYSCALL(NSYSC::ESysCNum::stat,       PX::stat,       stat       )     // Struct?
+//DECL_SYSCALL(NSYSC::ESysCNum::stat,       PX::stat,       stat       )     // Struct?
 DECL_SYSCALL(NSYSC::ESysCNum::open,       PX::open,       open       )
 DECL_SYSCALL(NSYSC::ESysCNum::mknod,      PX::mknod,      mknod      )     // Too specific to put in NAPI?
 DECL_SYSCALL(NSYSC::ESysCNum::mkdir,      PX::mkdir,      mkdir      )
@@ -66,7 +67,8 @@ DECL_SYSCALL(NSYSC::ESysCNum::unlink,     PX::unlink,     unlink     )
 DECL_SYSCALL(NSYSC::ESysCNum::rename,     PX::rename,     rename     )
 DECL_SYSCALL(NSYSC::ESysCNum::readlink,   PX::readlink,   readlink   )
 DECL_SYSCALL(NSYSC::ESysCNum::access,     PX::access,     access     )
-#else // Bunch of *at functions
+#endif
+// Bunch of *at functions (Useful together with 'getdents')
 DECL_SYSCALL(NSYSC::ESysCNum::openat,     PX::openat,     openat     )
 DECL_SYSCALL(NSYSC::ESysCNum::mknodat,    PX::mknodat,    mknodat    )
 DECL_SYSCALL(NSYSC::ESysCNum::mkdirat,    PX::mkdirat,    mkdirat    )
@@ -74,21 +76,20 @@ DECL_SYSCALL(NSYSC::ESysCNum::unlinkat,   PX::unlinkat,   unlinkat   )
 DECL_SYSCALL(NSYSC::ESysCNum::renameat,   PX::renameat,   renameat   )
 DECL_SYSCALL(NSYSC::ESysCNum::readlinkat, PX::readlinkat, readlinkat )
 DECL_SYSCALL(NSYSC::ESysCNum::faccessat,  PX::faccessat,  faccessat  )
-DECL_SYSCALL(NSYSC::ESysCNum::fstatat,    PX::fstatat,    fstatat    )
-#endif
+DECL_SYSCALL(NSYSC::ESysCNum::fstatat,    PX::fstatat,    fstatat    )     // fstatat64 on x32 and newfstatat on x64  (original FStat struct is unreliable anyway)
 
 DECL_SYSCALL(NSYSC::ESysCNum::close,      PX::close,    close        )
 DECL_SYSCALL(NSYSC::ESysCNum::read,       PX::read,     read         )
 DECL_SYSCALL(NSYSC::ESysCNum::write,      PX::write,    write        )
 DECL_SYSCALL(NSYSC::ESysCNum::readv,      PX::readv,    readv        )
 DECL_SYSCALL(NSYSC::ESysCNum::writev,     PX::writev,   writev       )
-DECL_SYSCALL(NSYSC::ESysCNum::lseek,      PX::lseek,    lseek        )     // Alwats uint64 offsets
+DECL_SYSCALL(NSYSC::ESysCNum::lseek,      PX::lseek,    lseek        )     // Offsets are same size as the architecture
 
 #if defined(ARCH_X32)
 DECL_SYSCALL(NSYSC::ESysCNum::mmap2,      PX::mmap2,    mmap2        )
-DECL_SYSCALL(NSYSC::ESysCNum::stat64,     PX::stat64,   stat64       )
-DECL_SYSCALL(NSYSC::ESysCNum::fstat64,    PX::fstat64,  fstat64      )
-DECL_SYSCALL(NSYSC::ESysCNum::llseek,     PX::llseek,   llseek       )
+//DECL_SYSCALL(NSYSC::ESysCNum::stat64,     PX::stat64,   stat64       )
+//DECL_SYSCALL(NSYSC::ESysCNum::fstat64,    PX::fstat64,  fstat64      )
+DECL_SYSCALL(NSYSC::ESysCNum::llseek,     PX::llseek,   llseek       )     // Definition is different from lseek
 #endif
 
 
@@ -119,15 +120,15 @@ FUNC_WRAPPERNI(PX::gettimeofday,  gettimeofday  )     // TODO: Prefer VDSO
    PX::timeval tvb = {};
    if(!tv)
     {
-     int res = SAPI::gettimeofday(&tvb, tz);
-     if(res < 0)return res;
+     int resi = SAPI::gettimeofday(&tvb, tz);
+     if(resi < 0)return res;
      tv = &tvb;
     }
    tz->dsttime = 0;
    if(tz->utcoffs == -1)
     {
-     int res = UpdateTZOffsUTC(tv->sec);
-     if(res < 0){tz->utcoffs = 0; return res;}
+     int resi = UpdateTZOffsUTC(tv->sec);
+     if(resi < 0){tz->utcoffs = 0; return res;}
     }
    tz->utcoffs = GetTZOffsUTC();
   }
@@ -154,9 +155,24 @@ FUNC_WRAPPERFI(PX::read,       read       ) {return SAPI::read(args...);}
 FUNC_WRAPPERFI(PX::write,      write      ) {return SAPI::write(args...);}
 FUNC_WRAPPERFI(PX::readv,      readv      ) {return SAPI::readv(args...);}
 FUNC_WRAPPERFI(PX::writev,     writev     ) {return SAPI::writev(args...);}
-FUNC_WRAPPERFI(PX::lseek,      lseek      ) {return SAPI::lseek(args...);}
-// Complicated
 
+// How the file descriptor connects llseek to underlying devices?
+// loff_t mtdchar_lseek(struct file *file, loff_t offset, int orig)  // This matches lseek, not llseek on x32
+// Is llseek on x32 cannot actually replace lseek, at least for devices?  (We must always use SAPI::lseek for them?)
+FUNC_WRAPPERFI(PX::lseekGD,    lseek      )
+{
+ if constexpr (IsArchX32)
+  {
+   sint64 rofs = 0;
+   sint64 offs = GetParFromPk<1>(args...);
+   int res = [](int fd, uint32 offset_high, uint32 offset_low, sint64* result, int whence) _finline {return Y::llseek((PX::fdsc_t)fd, offset_high, offset_low, result, (PX::ESeek)whence);} (GetParFromPk<0>(args...), (uint32)(offs >> 32), (uint32)offs, &rofs, GetParFromPk<2>(args...));  // Lambdas are delayed and can reference an nonexistent members while used in constexpr
+   if(res < 0)return res;  // How to return the error code?  // > 0xFFFFF000
+   return rofs;
+  }
+   else return SAPI::lseek(args...);   // Compatible
+}
+
+// Complicated
 FUNC_WRAPPERFI(PX::mkfifo,     mkfifo     ) { CALL_IFEXISTR(mknod,mknodat,(GetParFromPk<0>(args...), PX::S_IFIFO|GetParFromPk<1>(args...), 0),(PX::AT_FDCWD, GetParFromPk<0>(args...), PX::S_IFIFO|GetParFromPk<1>(args...), 0)) }
 FUNC_WRAPPERFI(PX::mkdir,      mkdir      ) { CALL_IFEXISTR(mkdir,mkdirat,(args...),(PX::AT_FDCWD, args...)) }
 FUNC_WRAPPERFI(PX::rmdir,      rmdir      ) { CALL_IFEXISTR(rmdir,unlinkat,(args...),(PX::AT_FDCWD, args..., PX::AT_REMOVEDIR)) }
@@ -165,15 +181,29 @@ FUNC_WRAPPERFI(PX::rename,     rename     ) { CALL_IFEXISTRP(rename,renameat,(ar
 FUNC_WRAPPERFI(PX::readlink,   readlink   ) { CALL_IFEXISTR(readlink,readlinkat,(args...),(PX::AT_FDCWD, args...)) }
 FUNC_WRAPPERFI(PX::access,     access     ) { CALL_IFEXISTR(access,faccessat,(args...),(PX::AT_FDCWD, args..., 0)) }
 
-FUNC_WRAPPERFI(PX::stat,       stat       )
+
+FUNC_WRAPPERFI(PX::fstatat,    fstatat    )
 {
- if constexpr (IsArchX32) {return 0;}      // TODO
-  else CALL_IFEXISTR(stat,fstatat,(args...),(PX::AT_FDCWD, args..., 0))
+ int res = SAPI::fstatat(args...); 
+// DBGDBG("res %i:\r\n%#*.32D",res,256,GetParFromPk<2>(args...));
+ if(res >= 0){vptr buf = GetParFromPk<2>(args...); PX::ConvertToNormalFstat((PX::SFStat*)buf, buf);}
+ return res;
 }
+
+FUNC_WRAPPERFI(PX::stat,       stat       )     
+{
+ int res = SAPI::fstatat(PX::AT_FDCWD, args..., 0);     //  CALL_RIFEXISTR(stat,fstatat,(args...),(PX::AT_FDCWD, args..., 0))
+// DBGDBG("res %i:\r\n%#*.32D",res,256,GetParFromPk<1>(args...));
+ if(res >= 0){vptr buf = GetParFromPk<1>(args...); PX::ConvertToNormalFstat((PX::SFStat*)buf, buf);}
+ return res;
+}
+
 FUNC_WRAPPERFI(PX::fstat,      fstat      )
 {
- if constexpr (IsArchX32) {return 0;}      // TODO
-  else return SAPI::fstat(args...);
+ int res = SAPI::fstat(args...);
+// DBGDBG("res %i:\r\n%#*.32D",res,256,GetParFromPk<1>(args...));
+ if(res >= 0){vptr buf = GetParFromPk<1>(args...); PX::ConvertToNormalFstat((PX::SFStat*)buf, buf);}
+ return res;
 }
 
 /*
@@ -183,6 +213,35 @@ https://man7.org/linux/man-pages/man7/symlink.7.html
 FUNC_WRAPPERFI(PX::open,       open       ) { CALL_IFEXISTR(open,openat,(args...),(PX::AT_FDCWD, args...)) }
 FUNC_WRAPPERFI(PX::pipe2,      pipe       ) {return SAPI::pipe2(args...);}
 
+FUNC_WRAPPERFI(PX::getdentsGD, getdents    ) 
+{
+ size_t len = GetParFromPk<2>(args...);   
+ if((ssize_t)len < 0)     // Retrieve real info about links (file/dir)  // FRMWK extension
+  {
+//   DBGDBG("Following links");
+   PX::fdsc_t dfd = GetParFromPk<0>(args...);
+   vptr buf = GetParFromPk<1>(args...);
+   len = -(ssize_t)len; 
+   int res = SAPI::getdents(dfd,buf,len);
+   if(res <= 0)return res;
+   for(int pos=0;pos < res;)
+    {
+     PX::SDirEnt* ent = (PX::SDirEnt*)((uint8*)buf + pos);
+     pos += ent->reclen;
+     if(ent->type != PX::DT_LNK)continue;
+//     DBGDBG("Link is: %s", &ent->name);
+     PX::SFStat sti;
+     int sres = NAPI::fstatat(dfd, ent->name, &sti, 0);
+//     DBGDBG("fstatat for the link: %i", sres);
+     if(sres < 0)continue;   // Or skip the entire loop?
+//     DBGDBG("SDirEnt:\r\n%#*.32D",sizeof(sti),&sti);
+     if((sti.mode & PX::S_IFREG) == PX::S_IFREG)ent->type = PX::DT_REG;
+     else if((sti.mode & PX::S_IFDIR) == PX::S_IFDIR)ent->type = PX::DT_DIR;
+    }
+   return res;
+  } 
+  else return SAPI::getdents(args...);
+}
 FUNC_WRAPPERFI(PX::flock,      flock       ) {return SAPI::flock(args...);}
 FUNC_WRAPPERFI(PX::fsync,      fsync       ) {return SAPI::fsync(args...);}
 FUNC_WRAPPERFI(PX::fdatasync,  fdatasync   ) {return SAPI::fdatasync(args...);}
@@ -237,7 +296,7 @@ static constexpr const uint32 NotCloneFlg = PX::O_CLOEXEC;
 // Only a child gets here
  {
 //#if defined(CPU_X86) && defined(ARCH_X64)  // On ARM32 the stack is corrupted too! // Only X86-X64 suffers from overwriting return address from clone by execve or exit so we need to move stack pointer to have more space for child to overwrite
-  volatile size_t* padd = (volatile size_t*)StkAlloc((pid >> 24)+64);   // Some trick with volatile var to avoid optimizations // alloca must be called at block scope
+  volatile size_t* padd = (volatile size_t*)StkAlloc(size_t((pid >> 24)+64));   // Some trick with volatile var to avoid optimizations // alloca must be called at block scope
   *padd = 0;     // Some extra to prevent optimization
 //#endif
   volatile int32* fdarr = GetParFromPk<3>(args...);
@@ -283,6 +342,7 @@ FUNC_WRAPPERFI(PX::thread,       thread       )
 };
 //============================================================================================================
 
+#include "../../NixUtils.hpp"
 #include "Startup.hpp"
 
 //============================================================================================================

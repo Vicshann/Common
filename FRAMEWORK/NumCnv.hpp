@@ -126,11 +126,17 @@ static void FTOA_Test(void)
 static _finline int HexCharToHalfByte(uint8 CharVal)
 {
  if((CharVal >= '0')&&(CharVal <= '9'))return (CharVal - '0');       // 0 - 9
- if((CharVal >= 'A')&&(CharVal <= 'F'))return (CharVal - ('A'-10));  // A - F
+ if((CharVal >= 'A')&&(CharVal <= 'F'))return (CharVal - ('A'-10));  // A - F      // TODO: CharVal &= ~0x20 to make it uppercase
  if((CharVal >= 'a')&&(CharVal <= 'f'))return (CharVal - ('a'-10));  // a - f
  return -1;
 }
 //---------------------------------------------------------------------------
+static _finline achar HalfByteToHexChar(uint8 Half, bool UpCase)
+{
+ if(Half <= 9)return achar(0x30 + Half);
+ return achar(((int)!UpCase << 5) + 0x41 + (Half - 10));  // << 5 is * 0x20
+}
+//------------------------------------------------------------------------------
 // Output uint16 can be directly written to a string with right half-byte ordering  (little endian)  // TODO: Endianess check
 // 0x30: '0' : 0011 0000
 // 0x39: '9' : 0011 1001
@@ -142,12 +148,13 @@ static _finline int HexCharToHalfByte(uint8 CharVal)
 //
 // Return:  LLHH (LE), HHLL (BE)
 //
-static _finline uint16 ByteToHexChar(uint8 Value, bool UpCase=true)  // Fast but not relocable
+static _finline uint16 ByteToHexChar(uint8 Value, bool UpCase=true)  // Fast but not relocable (?)    // TODO: Use HalfByteToHexChar it should be faster
 {
- const char ChrTable[] = {"0123456789ABCDEF"};    // TODO: Optimize this string
- uint8 cmsk = ((uint8)!UpCase << 5);  // Low case bit mask
- if constexpr(NCFG::IsBigEnd) return (uint16(ChrTable[Value >> 4] << 8) | uint16(ChrTable[Value & 0x0F]));
- else return (uint16(ChrTable[Value & 0x0F] << 8) | uint16(ChrTable[Value >> 4]));
+ achar ChrTable[] = {'0','1','2','3','4','5','6','7','8','9','A','B','C','D','E','F'};    // TODO: Local?
+ uint16 cmsk = uint16((uint8)!UpCase << 5);  // Low case bit mask
+ cmsk |= cmsk << 8;    // Turns upper case to lower by setting bit 5 if required
+ if constexpr(NCFG::IsBigEnd) return (uint16(ChrTable[Value >> 4] << 8) | uint16(ChrTable[Value & 0x0F])) | cmsk;
+ else return (uint16(ChrTable[Value & 0x0F] << 8) | uint16(ChrTable[Value >> 4])) | cmsk;
 }
 //---------------------------------------------------------------------------
 // 'buf' is for storage only, DO NOT expect result to be at beginning of it
@@ -172,7 +179,7 @@ template<typename T, typename S> static S DecNumToStrS(T Val, S buf, uint* Len=n
 }
 //---------------------------------------------------------------------------
 // No Streams support!
-template<typename T, typename O> static O DecNumToStrU(T Val, O buf, int* Len)     // A/W char string and Signed/Unsigned output by constexpr
+template<typename T, typename O> static O DecNumToStrU(T Val, O buf, uint* Len=nullptr)     // A/W char string and Signed/Unsigned output by constexpr
 {
  if(Val == 0){if(Len)*Len = 1; *buf = '0'; buf[1] = 0; return buf;}
  buf  = &buf[20];
@@ -189,7 +196,7 @@ template<typename T, typename O> static O DecNumToStrU(T Val, O buf, int* Len)  
  return buf;     // Optionally move?
 }
 //---------------------------------------------------------------------------
-template<typename O, typename T> static O DecStrToNum(T Str, long* Size=nullptr)
+template<typename O, typename T> static O DecStrToNum(T Str, uint* Size=nullptr)    // TODO: Not null terminated: uint&& Size = -1
 {
  O x = 0;
  T Old = Str;
@@ -201,7 +208,7 @@ template<typename O, typename T> static O DecStrToNum(T Str, long* Size=nullptr)
  return x;
 }
 //---------------------------------------------------------------------------
-template<typename O, typename T> static O HexStrToNum(T Str, long* Size=nullptr)   // Stops on a first invlid hex char    // Negative values?
+template<typename O, typename T> static O HexStrToNum(T Str, uint* Size=nullptr)   // Stops on a first invlid hex char    // Negative values?
 {
  O x = 0;
  T Old = Str;
@@ -210,25 +217,37 @@ template<typename O, typename T> static O HexStrToNum(T Str, long* Size=nullptr)
  return x;
 }
 //---------------------------------------------------------------------------
-template<typename T> static uint HexStrToByteArray(uint8* Buffer, T SrcStr, uint HexByteCnt=(uint)-1)
+template<typename T> static uint HexStrToByteArray(vptr Buffer, T SrcStr, uint MaxBytesOut=(uint)-1)   // TODO: Non null terminated string support
 {
  uint ctr = 0;
- for(uint len = 0;(SrcStr[len]&&SrcStr[len+1])&&(ctr < HexByteCnt);len++)   // If it would be possible to make an unmodified defaults to disappear from compilation...
+ for(uint len = 0;(SrcStr[len] && SrcStr[len+1]) && (ctr < MaxBytesOut);len++)   // If it would be possible to make an unmodified defaults to disappear from compilation...
   {
    if(SrcStr[len] <= 0x20)continue;   // Skip spaces and line delimitters
    int ByteHi  = HexCharToHalfByte(SrcStr[len]);
    int ByteLo  = HexCharToHalfByte(SrcStr[len+1]);
    if((ByteHi  < 0)||(ByteLo < 0))return ctr;  // Not a HEX char
-   Buffer[ctr] = uint8((ByteHi << 4)|ByteLo);
+   ((uint8*)Buffer)[ctr] = uint8((ByteHi << 4)|ByteLo);
    ctr++;
    len++;
   }
  return ctr;
 }
 //---------------------------------------------------------------------------
+template<typename T> static uint ByteArrayToHexStr(vptr Buffer, T DstStr, uint ByteCnt, bool UpCase=true)
+{
+ uint len = 0;
+ for(uint ctr=0;(ctr < ByteCnt);ctr++)
+  {
+   uint16 chr    = ByteToHexChar(((uint8*)Buffer)[ctr], UpCase);
+   DstStr[len++] = chr;   
+   DstStr[len++] = chr >> 8; 
+  }
+ return len;
+}
+//---------------------------------------------------------------------------
 // Return address always points to Number[16-MaxDigits];
 //
-template<typename T, typename S> static S NumToHexStr(T Value, uint MaxDigits, S NumBuf, bool UpCase, uint* Len=nullptr)
+template<typename T, typename S> static S NumToHexStr(T Value, uint MaxDigits, S NumBuf, bool UpCase=true, uint* Len=nullptr)
 {
  const uint cmax = sizeof(T)*2;      // Number of byte halves (Digits)
  char  HexNums[] = {'0','1','2','3','4','5','6','7','8','9','A','B','C','D','E','F','0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f'};     // Must be optimized to PlatLen assignments

@@ -1,5 +1,6 @@
 
 #include "Montgomery.hpp"
+#include "ASN1.hpp"
 
 // Just to test our ability to use Montgomery
 // Modulus = PrimeA * PrimeB
@@ -62,7 +63,7 @@ int HashDataForSign(EHashAlgo Alg, UINT8* Data, UINT Size, UINT8* Out)
      Out[Offs++] = 0;
      memcpy(&Out[Offs], &Desc, sizeof(Desc));      // ByteArrayToHexStr((UINT8*)&Desc, &Out[Offs], sizeof(Desc), false);
      Offs += sizeof(Desc);
-      memcpy(&Out[Offs], &Hash, sizeof(Hash));   //ByteArrayToHexStr((UINT8*)&Hash, &Out[Offs], sizeof(Hash), false);
+     memcpy(&Out[Offs], &Hash, sizeof(Hash));   //ByteArrayToHexStr((UINT8*)&Hash, &Out[Offs], sizeof(Hash), false);
      Offs += sizeof(Hash); 
      HashLenInChars = sizeof(Hash);
     }

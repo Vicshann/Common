@@ -18,10 +18,10 @@
 class CRijndael
 {
 protected:
- int KeyLength;  // Key Length   // Defining its here will cause many functions to be templated and code will bloat but for speed and protection it is better
- int BlockSize;  // Block Size
- int RoundsNum;
- int iMode;
+ size_t KeyLength;  // Key Length   // Defining its here will cause many functions to be templated and code will bloat but for speed and protection it is better
+ size_t BlockSize;  // Block Size
+ size_t RoundsNum;
+ size_t iMode;
                                    // 0 1 2 3 4 5 6 7 8
 static const inline char sm_sidx[] = {0,0,0,0,0,0,1,0,2};   // 4(0),6(1),8(2) DWORDs is 128, 192, 256 bit key sizes
 static const inline char sm_shifts[3][4][2] =
@@ -35,9 +35,9 @@ static const inline char sm_shifts[3][4][2] =
  static inline char sm_rcon[30]  = {0};        // Array pointers: // int (*A)[ny][nx] = (int(*)[ny][nx]) p;
  static inline unsigned char sm_S[256]  = {0};
  static inline unsigned char sm_Si[256] = {0};
- static inline int  sm_U[4][256] = {0};
- static inline int  sm_TS[4][256] = {0};
- static inline int  sm_TSi[4][256] = {0};
+ static inline int  sm_U[4][256] = {{0}};
+ static inline int  sm_TS[4][256] = {{0}};
+ static inline int  sm_TSi[4][256] = {{0}};
 #endif
 
 public:
@@ -56,9 +56,9 @@ private:
  unsigned char m_chain[MAX_BLOCK_SIZE];  //Chain Block
 
 //------------------------------------------------------------------------------------
-static inline void XorBlk(unsigned char* buff, unsigned char* chain, int Size)    // Assumed multiply of 4 for a size   // static
+static inline void XorBlk(unsigned char* buff, unsigned char* chain, size_t Size)    // Assumed multiply of 4 for a size   // static
 {
- for(int i=0;i < Size; i++)*(buff++) ^= *(chain++);
+ for(size_t i=0;i < Size; i++)*(buff++) ^= *(chain++);
 }
 //------------------------------------------------------------------------------------
 static inline int GetShift(int a, int b, int c)
@@ -90,12 +90,12 @@ static void InitTables(void)
        {1, 1, 3, 2}
   };
 
- unsigned char AA[4][8] = {0};    // ~3k on stack or make these static
- unsigned char iG[4][4] = {0};
+ unsigned char AA[4][8] = {{0}};    // ~3k on stack or make these static
+ unsigned char iG[4][4] = {{0}};
  unsigned char log[256] = {0};
  unsigned char alog[256] = {0};
- unsigned char box[256][8] = {0};
- unsigned char cox[256][8] = {0};
+ unsigned char box[256][8] = {{0}};
+ unsigned char cox[256][8] = {{0}};
 
 auto Mul = [&log, &alog](unsigned char a, unsigned char b) -> int  // Multiply two elements of GF(2^m)
 {
@@ -116,11 +116,11 @@ auto Mul4 = [&log, &alog](int a, unsigned char b[]) -> int // Convenience method
  alog[0] = 1;
  for(int i = 1; i < 256; i++)    // produce log and alog tables, needed for multiplying in the field GF(2^m) (generator = 3)
   {
-   unsigned int j = (alog[i-1] << 1) ^ alog[i-1];
+   unsigned int j = (unsigned int)((alog[i-1] << 1) ^ alog[i-1]);
    if((j & 0x100) != 0) j ^= ROOT;
-   alog[i] = j;
+   alog[i] = (unsigned char)j;
   }
- for(int i = 1; i < 255; i++)log[alog[i]] = i;
+ for(int i = 1; i < 255; i++)log[alog[i]] = (unsigned char)i;
 
  box[1][7] = 1;
  for(int i = 2; i < 256; i++)    // substitution box based on F^{-1}(x)
@@ -138,9 +138,9 @@ auto Mul4 = [&log, &alog](int a, unsigned char b[]) -> int // Convenience method
 
  for(int i = 0; i < 256; i++)  // S-boxes and inverse S-boxes
   {
-   sm_S[i] = cox[i][0] << 7;
+   sm_S[i] = (unsigned char)(cox[i][0] << 7);
    for(int t = 1; t < 8; t++)sm_S[i] ^= cox[i][t] << (7-t);
-   sm_Si[(unsigned char)sm_S[i]] = i;
+   sm_Si[(unsigned char)sm_S[i]] = (unsigned char)i;
   }
 
  for(int i = 0; i < 4; i++)
@@ -203,24 +203,24 @@ auto Mul4 = [&log, &alog](int a, unsigned char b[]) -> int // Convenience method
   }
 
  sm_rcon[0] = 1;
- for(int t = 1, r = 1; t < 30; )sm_rcon[t++] = (r = Mul(2, r));   // round constants
+ for(int t = 1, r = 1; t < 30; )sm_rcon[t++] = (char)(r = Mul(2, (unsigned char)r));   // round constants
 }
 #endif
 //------------------------------------------------------------------------------------
 
 public:
-CRijndael(int iMode=ECB, int keylen=16, int blklen=16)   // Default is AES-128-ECB // Memset this to 0?
+CRijndael(int mode=ECB, int keylen=16, int blklen=16)   // Default is AES-128-ECB // Memset this to 0?
 {
- this->KeyLength = (keylen >= 128)?(keylen / 8):keylen;  // Key Length     // Defining its here will cause many functions to be templated and the code will bloat but for speed and protection it is better
- this->BlockSize = (blklen >= 128)?(blklen / 8):blklen;  // Block Size
- this->RoundsNum = (KeyLength == 16)?((BlockSize == 16) ? 10 : (BlockSize == 24 ? 12 : 14)):((KeyLength == 24)?((BlockSize != 32) ? 12 : 14):(14));
- this->iMode     = iMode;
+ this->KeyLength = size_t((keylen >= 128)?(keylen / 8):keylen);  // Key Length     // Defining its here will cause many functions to be templated and the code will bloat but for speed and protection it is better
+ this->BlockSize = size_t((blklen >= 128)?(blklen / 8):blklen);  // Block Size
+ this->RoundsNum = size_t((KeyLength == 16)?((BlockSize == 16) ? 10 : (BlockSize == 24 ? 12 : 14)):((KeyLength == 24)?((BlockSize != 32) ? 12 : 14):(14)));
+ this->iMode     = (size_t)mode;
 #ifndef RIJNDAEL_STATIC
  if(!*sm_rcon)this->InitTables();
 #endif
-};
+}
 //------------------------------------------------------------------------------------
-~CRijndael(){};  // Memset this to 0?
+~CRijndael(){}  // Memset this to 0?
 //------------------------------------------------------------------------------------
 void SetChain(char* chain){ memcpy(m_chain, chain, BlockSize); }
 //------------------------------------------------------------------------------------
@@ -236,51 +236,51 @@ void MakeKey(unsigned char* key, unsigned char* chain)
  if(chain)memcpy(m_chain, chain, BlockSize);   //Initialize the chain
    else memset(m_chain, 0, BlockSize);
 
- int BC = BlockSize / 4;
- for(int i=0; i<=RoundsNum; i++)
-   for(int j=0; j<BC; j++)m_Ke[i][j] = 0;
+ size_t BC = BlockSize / 4;
+ for(size_t i=0; i<=RoundsNum; i++)
+   for(size_t j=0; j<BC; j++)m_Ke[i][j] = 0;
 
- for(int i=0; i<=RoundsNum; i++)
-   for(int j=0; j<BC; j++)m_Kd[i][j] = 0;
+ for(size_t i=0; i<=RoundsNum; i++)
+   for(size_t j=0; j<BC; j++)m_Kd[i][j] = 0;
 
- int ROUND_KEY_COUNT = (RoundsNum + 1) * BC;
- int   KC = KeyLength/4;
+ size_t ROUND_KEY_COUNT = (RoundsNum + 1) * BC;
+ size_t   KC = KeyLength/4;
  int*  pi = tk;
  unsigned char* pc = key;
- for(int i=0; i<KC; i++)   //Copy user material bytes into temporary ints       // TODO: Optimize these SWAP loops
+ for(size_t i=0; i<KC; i++)   //Copy user material bytes into temporary ints       // TODO: Optimize these SWAP loops
   {
    *pi  = *(pc++) << 24;
    *pi |= *(pc++) << 16;
    *pi |= *(pc++) << 8;
    *(pi++) |= *(pc++);
   }
- int t = 0;
- for(int j=0; (j<KC)&&(t<ROUND_KEY_COUNT); j++,t++) //Copy values into round key arrays
+ size_t t = 0;
+ for(size_t j=0; (j<KC)&&(t<ROUND_KEY_COUNT); j++,t++) //Copy values into round key arrays
   {
    m_Ke[t/BC][t%BC] = tk[j];
    m_Kd[RoundsNum - (t/BC)][t%BC] = tk[j];
   }
- for(int rconpointer=0; t < ROUND_KEY_COUNT; rconpointer++)    // Extrapolate using phi (the round key evolution function)
+ for(size_t rconpointer=0; t < ROUND_KEY_COUNT; rconpointer++)    // Extrapolate using phi (the round key evolution function)
   {
    int tt = tk[KC-1];
    tk[0] ^= (sm_S[(unsigned char)(tt >> 16)] << 24) ^ (sm_S[(unsigned char)(tt >> 8)] << 16) ^ (sm_S[(unsigned char)tt] << 8) ^ sm_S[(unsigned char)(tt >> 24)] ^ (sm_rcon[rconpointer] << 24);
    if(KC != 8)
-     for(int i=1, j=0; i<KC;)tk[i++] ^= tk[j++];
+     for(size_t i=1, j=0; i<KC;)tk[i++] ^= tk[j++];
     else
      {
-      for(int i=1, j=0; i<KC/2; )tk[i++] ^= tk[j++];
-      int tt = tk[KC/2-1];
-      tk[KC/2] ^= sm_S[(unsigned char)tt] ^ (sm_S[(unsigned char)(tt >> 8)] << 8) ^ (sm_S[(unsigned char)(tt >> 16)] << 16) ^ (sm_S[(unsigned char)(tt >> 24)] << 24);
-      for(int j = KC/2, i=j+1; i<KC; )tk[i++] ^= tk[j++];
+      for(size_t i=1, j=0; i<KC/2; )tk[i++] ^= tk[j++];   // OPT: div in the loop!
+      int ty = tk[KC/2-1];
+      tk[KC/2] ^= sm_S[(unsigned char)ty] ^ (sm_S[(unsigned char)(ty >> 8)] << 8) ^ (sm_S[(unsigned char)(ty >> 16)] << 16) ^ (sm_S[(unsigned char)(ty >> 24)] << 24);
+      for(size_t j = KC/2, i=j+1; i<KC; )tk[i++] ^= tk[j++];
      }
-   for(int j=0; (j<KC) && (t<ROUND_KEY_COUNT); j++, t++)  // Copy values into round key arrays
+   for(size_t j=0; (j<KC) && (t<ROUND_KEY_COUNT); j++, t++)  // Copy values into round key arrays
     {
      m_Ke[t/BC][t%BC] = tk[j];
      m_Kd[RoundsNum - (t/BC)][t%BC] = tk[j];
     }
   }
- for(int r=1; r<RoundsNum; r++)  // Inverse MixColumn where needed
-   for(int j=0; j<BC; j++)
+ for(size_t r=1; r<RoundsNum; r++)  // Inverse MixColumn where needed
+   for(size_t j=0; j<BC; j++)
     {
      int tt = m_Kd[r][j];
      m_Kd[r][j] = sm_U[0][(unsigned char)(tt >> 24)] ^ sm_U[1][(unsigned char)(tt >> 16)] ^ sm_U[2][(unsigned char)(tt >>  8)] ^ sm_U[3][(unsigned char)tt];
@@ -295,30 +295,30 @@ void EncryptBlock(unsigned char* in, unsigned char* result)
 {
  int a[MAX_BC];
  int t[MAX_BC];
- int BC  = BlockSize / 4;
- int s1  = sm_shifts[sm_sidx[BC]][1][0];
- int s2  = sm_shifts[sm_sidx[BC]][2][0];
- int s3  = sm_shifts[sm_sidx[BC]][3][0];
+ ssize_t BC  = BlockSize / 4;
+ ssize_t s1  = sm_shifts[sm_sidx[BC]][1][0];
+ ssize_t s2  = sm_shifts[sm_sidx[BC]][2][0];
+ ssize_t s3  = sm_shifts[sm_sidx[BC]][3][0];
  int* pi = t;
- for(int i=0; i < BC; i++)
+ for(ssize_t i=0; i < BC; i++)
   {
    *pi  = *(in++) << 24;
    *pi |= *(in++) << 16;
    *pi |= *(in++) << 8;
    (*(pi++) |= *(in++)) ^= m_Ke[0][i];    // ?????????? // L-value here is 'pi' before ++!!!   // First 8 values of m_Ke is 0
   }
- for(int r=1; r<RoundsNum; r++)  // Apply Round Transforms
+ for(size_t r=1; r<RoundsNum; r++)  // Apply Round Transforms
   {
-   for(int i=0; i < BC; i++)a[i] = (sm_TS[0][(unsigned char)(t[i] >> 24)] ^ sm_TS[1][(unsigned char)(t[(i + s1) % BC] >> 16)] ^ sm_TS[2][(unsigned char)(t[(i + s2) % BC] >>  8)] ^ sm_TS[3][(unsigned char)(t[(i + s3) % BC])]) ^ m_Ke[r][i];
-   memcpy(t, a, 4*BC);
+   for(ssize_t i=0; i < BC; i++)a[i] = (sm_TS[0][(unsigned char)(t[i] >> 24)] ^ sm_TS[1][(unsigned char)(t[(i + s1) % BC] >> 16)] ^ sm_TS[2][(unsigned char)(t[(i + s2) % BC] >>  8)] ^ sm_TS[3][(unsigned char)(t[(i + s3) % BC])]) ^ m_Ke[r][i];
+   memcpy(t, a, size_t(4*BC));
   }
- for(int i=0,j=0; i < BC; i++)     // Last Round is Special
+ for(ssize_t i=0,j=0; i < BC; i++)     // Last Round is Special
   {
    int tt = m_Ke[RoundsNum][i];
-   result[j++] = sm_S[(unsigned char)(t[i] >> 24)] ^ (tt >> 24);
-   result[j++] = sm_S[(unsigned char)(t[(i + s1) % BC] >> 16)] ^ (tt >> 16);
-   result[j++] = sm_S[(unsigned char)(t[(i + s2) % BC] >>  8)] ^ (tt >>  8);
-   result[j++] = sm_S[(unsigned char)(t[(i + s3) % BC])] ^ tt;
+   result[j++] = (unsigned char)(sm_S[(unsigned char)(t[i] >> 24)] ^ (tt >> 24));
+   result[j++] = (unsigned char)(sm_S[(unsigned char)(t[(i + s1) % BC] >> 16)] ^ (tt >> 16));
+   result[j++] = (unsigned char)(sm_S[(unsigned char)(t[(i + s2) % BC] >>  8)] ^ (tt >>  8));
+   result[j++] = (unsigned char)(sm_S[(unsigned char)(t[(i + s3) % BC])] ^ tt);
   }
 }
 //------------------------------------------------------------------------------------
@@ -330,31 +330,31 @@ void DecryptBlock(unsigned char* in, unsigned char* result)
 {
  int a[MAX_BC];
  int t[MAX_BC];
- int BC  = BlockSize / 4;
- int s1  = sm_shifts[sm_sidx[BC]][1][1];
- int s2  = sm_shifts[sm_sidx[BC]][2][1];
- int s3  = sm_shifts[sm_sidx[BC]][3][1];
+ ssize_t BC  = BlockSize / 4;
+ ssize_t s1  = sm_shifts[sm_sidx[BC]][1][1];
+ ssize_t s2  = sm_shifts[sm_sidx[BC]][2][1];
+ ssize_t s3  = sm_shifts[sm_sidx[BC]][3][1];
  int* pi = t;
 // LOGMSG("In=%p, Out=%p, BC=%u",in,result,BC);
- for(int i=0; i < BC; i++)
+ for(ssize_t i=0; i < BC; i++)
   {
    *pi  = *(in++) << 24;
    *pi |= *(in++) << 16;
    *pi |= *(in++) << 8;
    (*(pi++) |= *(in++)) ^= m_Kd[0][i];    // ?????????? // L-value here is 'pi' before ++!!!   // First 8 values of m_Kd is 0
   }
- for(int r=1; r < RoundsNum; r++) // Apply Round Transforms
+ for(size_t r=1; r < RoundsNum; r++) // Apply Round Transforms
   {
-   for(int i=0; i < BC; i++)a[i] = (sm_TSi[0][(unsigned char)(t[i] >> 24)] ^ sm_TSi[1][(unsigned char)(t[(i + s1) % BC] >> 16)] ^ sm_TSi[2][(unsigned char)(t[(i + s2) % BC] >> 8)] ^ sm_TSi[3][(unsigned char)(t[(i + s3) % BC])]) ^ m_Kd[r][i];
-   memcpy(t, a, 4*BC);
+   for(ssize_t i=0; i < BC; i++)a[i] = (sm_TSi[0][(unsigned char)(t[i] >> 24)] ^ sm_TSi[1][(unsigned char)(t[(i + s1) % BC] >> 16)] ^ sm_TSi[2][(unsigned char)(t[(i + s2) % BC] >> 8)] ^ sm_TSi[3][(unsigned char)(t[(i + s3) % BC])]) ^ m_Kd[r][i];
+   memcpy(t, a, size_t(4*BC));
   }
- for(int i=0,j=0; i < BC; i++)    // Last Round is Special
+ for(ssize_t i=0,j=0; i < BC; i++)    // Last Round is Special
   {
    int tt = m_Kd[RoundsNum][i];
-   result[j++] = sm_Si[(unsigned char)(t[i] >> 24)] ^ (tt >> 24);
-   result[j++] = sm_Si[(unsigned char)(t[(i + s1) % BC] >> 16)] ^ (tt >> 16);
-   result[j++] = sm_Si[(unsigned char)(t[(i + s2) % BC] >>  8)] ^ (tt >>  8);
-   result[j++] = sm_Si[(unsigned char)(t[(i + s3) % BC])] ^ tt;
+   result[j++] = (unsigned char)(sm_Si[(unsigned char)(t[i] >> 24)] ^ (tt >> 24));
+   result[j++] = (unsigned char)(sm_Si[(unsigned char)(t[(i + s1) % BC] >> 16)] ^ (tt >> 16));
+   result[j++] = (unsigned char)(sm_Si[(unsigned char)(t[(i + s2) % BC] >>  8)] ^ (tt >>  8));
+   result[j++] = (unsigned char)(sm_Si[(unsigned char)(t[(i + s3) % BC])] ^ tt);
   }
 }
 //------------------------------------------------------------------------------------

@@ -20,12 +20,13 @@ DECL_SYSCALL(WPROCID(HashNtDll,"NtQueryVirtualMemory"),       NT::NtQueryVirtual
 DECL_SYSCALL(WPROCID(HashNtDll,"NtCreateFile"),               NT::NtCreateFile,               NtCreateFile               )     // NtFsControlFile
 DECL_SYSCALL(WPROCID(HashNtDll,"NtWriteFile"),                NT::NtWriteFile,                NtWriteFile                )
 DECL_SYSCALL(WPROCID(HashNtDll,"NtReadFile"),                 NT::NtReadFile,                 NtReadFile                 )
-DECL_SYSCALL(WPROCID(HashNtDll,"NtDeleteFile"),               NT::NtDeleteFile,               NtDeleteFile               )   
+DECL_SYSCALL(WPROCID(HashNtDll,"NtDeleteFile"),               NT::NtDeleteFile,               NtDeleteFile               )
 DECL_SYSCALL(WPROCID(HashNtDll,"NtWriteFileGather"),          NT::NtWriteFileGather,          NtWriteFileGather          )
 DECL_SYSCALL(WPROCID(HashNtDll,"NtReadFileScatter"),          NT::NtReadFileScatter,          NtReadFileScatter          )
-DECL_SYSCALL(WPROCID(HashNtDll,"NtFlushBuffersFile"),         NT::NtFlushBuffersFile,         NtFlushBuffersFile         ) 
+DECL_SYSCALL(WPROCID(HashNtDll,"NtFlushBuffersFile"),         NT::NtFlushBuffersFile,         NtFlushBuffersFile         )
 DECL_SYSCALL(WPROCID(HashNtDll,"NtQueryAttributesFile"),      NT::NtQueryAttributesFile,      NtQueryAttributesFile      )   // Uses a file name
 DECL_SYSCALL(WPROCID(HashNtDll,"NtQueryInformationFile"),     NT::NtQueryInformationFile,     NtQueryInformationFile     )   // Uses a file handle
+DECL_SYSCALL(WPROCID(HashNtDll,"NtQueryDirectoryFile"),       NT::NtQueryDirectoryFile,       NtQueryDirectoryFile       )
 DECL_SYSCALL(WPROCID(HashNtDll,"NtSetInformationFile"),       NT::NtSetInformationFile,       NtSetInformationFile       )
 DECL_SYSCALL(WPROCID(HashNtDll,"NtMapViewOfSection"),         NT::NtMapViewOfSection,         NtMapViewOfSection         )
 DECL_SYSCALL(WPROCID(HashNtDll,"NtUnmapViewOfSection"),       NT::NtUnmapViewOfSection,       NtUnmapViewOfSection       )
@@ -55,8 +56,8 @@ struct NAPI   // On NIX all syscall stubs will be in NAPI   // uwin-master
 {
 //#include "../POSX.hpp"
 
-FUNC_WRAPPERFI(PX::exit,       exit       ) { SAPI::NtTerminateThread(NT::NtCurrentThread, GetParFromPk<0>(args...)); }
-FUNC_WRAPPERFI(PX::exit_group, exit_group ) { SAPI::NtTerminateProcess(NT::NtCurrentProcess, GetParFromPk<0>(args...)); }
+FUNC_WRAPPERFI(PX::exit,       exit       ) { SAPI::NtTerminateThread(NT::NtCurrentThread, (uint32)GetParFromPk<0>(args...)); }
+FUNC_WRAPPERFI(PX::exit_group, exit_group ) { SAPI::NtTerminateProcess(NT::NtCurrentProcess, (uint32)GetParFromPk<0>(args...)); }
 FUNC_WRAPPERNI(PX::cloneB0,    clone      ) {return 0;}
 FUNC_WRAPPERNI(PX::fork,       fork       ) {return 0;}
 FUNC_WRAPPERNI(PX::vfork,      vfork      ) {return 0;}
@@ -93,8 +94,8 @@ TODO: MEM_PHYSICAL, MEM_LARGE_PAGES, MEM_4MB_PAGES
 NOTE: Never reserve less memory than Allocation Granularity(64k) or there will be a hole in the address space, unavaliable for further allocations(enlarging of the same block)
 
 NOTE: No way to return an actual allocated region size using only 'mmap' format!
- 
-If the memory is being reserved, the specified address is rounded down to the nearest multiple of the allocation granularity. 
+
+If the memory is being reserved, the specified address is rounded down to the nearest multiple of the allocation granularity.
 If the memory is already reserved and is being committed, the address is rounded down to the next page boundary.
 
  We must implement single mmap call as mem_reserve and mem_commit operations
@@ -104,29 +105,29 @@ If the memory is already reserved and is being committed, the address is rounded
  MEM_RESERVE will not align Size to 64K, only base address. Both MEM_RESERVE and MEM_COMMIT will align Size to 4k
 
 */
-FUNC_WRAPPERNI(PX::mmapGD,     mmap       ) 
+FUNC_WRAPPERNI(PX::mmapGD,     mmap       )
 {
- const vptr   addr     = (vptr)GetParFromPk<0>(args...); 
- const size_t length   = GetParFromPk<1>(args...); 
+ const vptr   addr     = (vptr)GetParFromPk<0>(args...);
+ const size_t length   = GetParFromPk<1>(args...);
  const uint   prot     = GetParFromPk<2>(args...);
  const uint   flags    = GetParFromPk<3>(args...);
- const NT::HANDLE  fd  = (NT::HANDLE*)GetParFromPk<4>(args...); 
+ const NT::HANDLE  fd  = (NT::HANDLE)GetParFromPk<4>(args...);    // TODO: File mappings
  const uint64 pgoffset = GetParFromPk<5>(args...);
 
  if(!(flags & (PX::MAP_PRIVATE|PX::MAP_SHARED)))return -PX::EINVAL;   // One of MAP_SHARED or MAP_PRIVATE must be specified.
  if((flags & (PX::MAP_PRIVATE|PX::MAP_SHARED)) == (PX::MAP_PRIVATE|PX::MAP_SHARED))return -PX::EINVAL;  // ???
 
- vptr   RegionBase  = addr;         // Rounded <<<  
- size_t RegionSize  = AlignP2Frwd(length, MEMGRANSIZE);       // Rounded >>>   
+ vptr   RegionBase  = addr;         // Rounded <<<
+ size_t RegionSize  = AlignP2Frwd(length, MEMGRANSIZE);       // Rounded >>>
  uint32 AllocType   = 0;    // MEM_COMMIT
- uint32 AllocProt   = NTX::MemProtPXtoNT(prot); 
+ uint32 AllocProt   = NTX::MemProtPXtoNT(prot);
  NT::NTSTATUS res   = 0;
 
  if(flags & PX::MAP_NOCACHE)AllocProt |= NT::PAGE_NOCACHE;   // ???
  if((flags & PX::MAP_ANONYMOUS) && (flags & PX::MAP_PRIVATE))   // Allocate simple private virtual memory
   {
-/*   size_t RegResSize = AlignP2Frwd(length, MEMGRANSIZE); 
-   size_t RegComSize = AlignP2Frwd(length, MEMPAGESIZE); 
+/*   size_t RegResSize = AlignP2Frwd(length, MEMGRANSIZE);
+   size_t RegComSize = AlignP2Frwd(length, MEMPAGESIZE);
    if(addr)   // Either we want memory at specific address or we commiting in a previously reserved area (which is not exposed by mmap)
     {
      AllocType |= MEM_RESERVE;  // Attempting to commit a specific address range by specifying MEM_COMMIT without MEM_RESERVE and a non-NULL lpAddress fails unless the entire range has already been reserved.
@@ -159,7 +160,7 @@ FUNC_WRAPPERNI(PX::mmapGD,     mmap       )
 /*
  The address addr must be a multiple of the page size (but length need not be)
  If the MEM_RELEASE flag is set in the FreeType parameter, BaseAddress must be the base address returned by ZwAllocateVirtualMemory when the region was reserved.
- If the MEM_RELEASE flag is set in the FreeType parameter, the variable pointed to by RegionSize must be zero. 
+ If the MEM_RELEASE flag is set in the FreeType parameter, the variable pointed to by RegionSize must be zero.
      ZwFreeVirtualMemory frees the entire region that was reserved in the initial allocation call to ZwAllocateVirtualMemory.
  ZwFreeVirtualMemory does not fail if you attempt to release pages that are in different states, some reserved and some committed
  NOTE: Ideally we must RELEASE only if the Size covers the entire region (But we have to use QueryVirtualMemory to know that)
@@ -167,27 +168,27 @@ FUNC_WRAPPERNI(PX::mmapGD,     mmap       )
 */
 FUNC_WRAPPERNI(PX::munmap,     munmap     )                // ZwUnmapViewOfSectionEx
 {
- const vptr   addr   = (vptr)GetParFromPk<0>(args...); 
- const size_t length = GetParFromPk<1>(args...); 
+ const vptr   addr   = (vptr)GetParFromPk<0>(args...);
+ const size_t length = GetParFromPk<1>(args...);
 
- vptr   RegionBase   = addr;    // Rounded <<<  
+ vptr   RegionBase   = addr;    // Rounded <<<
  size_t RegionSize   = 0;       // Rounded >>>   // If the dwFreeType parameter is MEM_RELEASE, this parameter must be 0
 
  NT::NTSTATUS res = SAPI::NtFreeVirtualMemory(NT::NtCurrentProcess, &RegionBase, &RegionSize, NT::MEM_RELEASE);   // Releases the entire region but only if addr is the same base address that came from mmap (in most cases this is what you do)
- if(!res)return PX::NOERROR;  // The entire allocated region is free now   // TODO: Check returned error, detect shared/private mappings and do UnmapViewOfSection for the addr instead of NtFreeVirtualMemory 
+ if(!res)return PX::NOERROR;  // The entire allocated region is free now   // TODO: Check returned error, detect shared/private mappings and do UnmapViewOfSection for the addr instead of NtFreeVirtualMemory
  RegionBase = addr;
  RegionSize = length;
  res = SAPI::NtFreeVirtualMemory(NT::NtCurrentProcess, &RegionBase, &RegionSize, NT::MEM_DECOMMIT);   // Addr is not region base addr, try at least to decommit some pages (Don`t even try to base your memory manager on this behaviour!)
- if(!res)return PX::NOERROR; 
+ if(!res)return PX::NOERROR;
  return -NTX::NTStatusToLinuxErr(res);
 }
 
 FUNC_WRAPPERNI(PX::mremap,     mremap     ) {return 0;}    // LINUX specific
 
-FUNC_WRAPPERNI(PX::madvise,    madvise    ) 
+FUNC_WRAPPERNI(PX::madvise,    madvise    )
 {
-    // instead of unmapping the address, we're just gonna trick 
-    // the TLB to mark this as a new mapped area which, due to 
+    // instead of unmapping the address, we're just gonna trick
+    // the TLB to mark this as a new mapped area which, due to
     // demand paging, will not be committed until used.
 
  //   mmap(addr, size, PROT_NONE, MAP_FIXED|MAP_PRIVATE|MAP_ANON, -1, 0);
@@ -201,43 +202,43 @@ FUNC_WRAPPERNI(PX::munlock,    munlock    ) {return 0;}    // NtUnlockVirtualMem
 
 FUNC_WRAPPERNI(PX::close,      close      ) {return SAPI::NtClose((NT::HANDLE)GetParFromPk<0>(args...));}
 
-FUNC_WRAPPERFI(PX::read,       read       ) 
+FUNC_WRAPPERFI(PX::read,       read       )
 {
  NT::IO_STATUS_BLOCK iosb = {};
- const NT::HANDLE hnd = (NT::HANDLE)GetParFromPk<0>(args...); 
+ const NT::HANDLE hnd = (NT::HANDLE)GetParFromPk<0>(args...);
  const vptr   buf = (vptr)GetParFromPk<1>(args...);
  const size_t len = GetParFromPk<2>(args...);
- NT::NTSTATUS res = SAPI::NtReadFile(hnd, nullptr, nullptr, nullptr, &iosb, buf, len, nullptr, nullptr);  // Relative to current file position
- if(!res)return iosb.Information;    // Number of bytes read
- return -NTX::NTStatusToLinuxErr(res);
+ NT::NTSTATUS res = SAPI::NtReadFile(hnd, nullptr, nullptr, nullptr, &iosb, buf, (uint32)len, nullptr, nullptr);  // Relative to current file position
+ if(!res)return (ssize_t)iosb.Information;    // Number of bytes read
+ return -(sint)NTX::NTStatusToLinuxErr(res);
 }
 
-FUNC_WRAPPERFI(PX::write,      write      ) 
+FUNC_WRAPPERFI(PX::write,      write      )
 {
  NT::IO_STATUS_BLOCK iosb = {};
- const NT::HANDLE hnd = (NT::HANDLE)GetParFromPk<0>(args...); 
+ const NT::HANDLE hnd = (NT::HANDLE)GetParFromPk<0>(args...);
  const vptr   buf = (vptr)GetParFromPk<1>(args...);
  const size_t len = GetParFromPk<2>(args...);
- NT::NTSTATUS res = SAPI::NtWriteFile(hnd, nullptr, nullptr, nullptr, &iosb, buf, len, nullptr, nullptr);  // Relative to current file position
- if(!res)return iosb.Information;    // Number of bytes written
- return -NTX::NTStatusToLinuxErr(res);
+ NT::NTSTATUS res = SAPI::NtWriteFile(hnd, nullptr, nullptr, nullptr, &iosb, buf, (uint32)len, nullptr, nullptr);  // Relative to current file position
+ if(!res)return (ssize_t)iosb.Information;    // Number of bytes written
+ return -(sint)NTX::NTStatusToLinuxErr(res);
 }
 
 FUNC_WRAPPERNI(PX::readv,      readv      ) {return 0;}
 FUNC_WRAPPERNI(PX::writev,     writev     ) {return 0;}
 
 // Upon successful completion, lseek() returns the resulting offset location as measured in bytes from the beginning of the file.
-FUNC_WRAPPERNI(PX::lseekGD,    lseek      ) 
+FUNC_WRAPPERNI(PX::lseekGD,    lseek      )
 {
  NT::IO_STATUS_BLOCK iosb = {};
  NT::FILE_POSITION_INFORMATION Pos;
 
- const NT::HANDLE hnd = (NT::HANDLE)GetParFromPk<0>(args...); 
+ const NT::HANDLE hnd = (NT::HANDLE)GetParFromPk<0>(args...);
  int64 offset         = GetParFromPk<1>(args...);
  const int whence     = GetParFromPk<2>(args...);
  if(whence > 2)return -PX::EINVAL;
 
- if(whence == PX::SEEK_END) 
+ if(whence == PX::SEEK_END)
   {
    NT::FILE_STANDARD_INFORMATION Inf;
    NT::NTSTATUS res = SAPI::NtQueryInformationFile(hnd, &iosb, &Inf, sizeof(Inf), NT::FileStandardInformation);
@@ -263,21 +264,22 @@ FUNC_WRAPPERNI(PX::lseekGD,    lseek      )
 FUNC_WRAPPERNI(PX::mkfifo,     mkfifo     ) {return 0;}
 
 // Or use 'open' with O_DIRECTORY instead?
-FUNC_WRAPPERNI(PX::mkdir,      mkdir      ) 
+FUNC_WRAPPERNI(PX::mkdir,      mkdir      )
 {
  NT::IO_STATUS_BLOCK iosb = {};
  NT::HANDLE FileHandle = nullptr;
  const achar* path = (achar*)GetParFromPk<0>(args...);
- int mode = GetParFromPk<1>(args...);   // TODO: Mode support
+// int mode = GetParFromPk<1>(args...);   // TODO: Mode support
 
- NT::NTSTATUS res = NTX::OpenFileObject(path, NT::SYNCHRONIZE|NT::FILE_READ_ATTRIBUTES, 0, NT::FILE_ATTRIBUTE_NORMAL, NT::FILE_SHARE_READ|NT::FILE_SHARE_WRITE|NT::FILE_SHARE_DELETE, NT::FILE_CREATE, NT::FILE_DIRECTORY_FILE|NT::FILE_SYNCHRONOUS_IO_NONALERT, &iosb, &FileHandle); 
- if(res)return -NTX::NTStatusToLinuxErr(res);  // Can the handle be open? (Status > 0)
+ NT::NTSTATUS res = NTX::OpenFileObject(&FileHandle, path, NT::SYNCHRONIZE|NT::FILE_READ_ATTRIBUTES, 0, NT::FILE_ATTRIBUTE_NORMAL, NT::FILE_SHARE_READ|NT::FILE_SHARE_WRITE|NT::FILE_SHARE_DELETE, NT::FILE_CREATE, NT::FILE_DIRECTORY_FILE|NT::FILE_SYNCHRONOUS_IO_NONALERT, &iosb);
+ if(res)return -(int32)NTX::NTStatusToLinuxErr(res);  // Can the handle be open? (Status > 0)
  SAPI::NtClose(FileHandle);
- return PX::NOERROR;;
+ return PX::NOERROR;
 }
-FUNC_WRAPPERNI(PX::rmdir,      rmdir      ) 
+
+FUNC_WRAPPERNI(PX::rmdir,      rmdir      )
 {
- 
+ // !!!!!!!!!!!!!!!
  return 0;
 }
 
@@ -288,15 +290,15 @@ FUNC_WRAPPERNI(PX::rmdir,      rmdir      )
 // "File System Behavior Overview.pdf"
 // If the name referred to a SYMBOLIC link, the link is removed.
 //
-FUNC_WRAPPERNI(PX::unlink,     unlink     ) 
+FUNC_WRAPPERNI(PX::unlink,     unlink     )
 {
- 
+
  // !!!!!!!!!!!!!!!
  return 0;
 }
 
 FUNC_WRAPPERNI(PX::rename,     rename     ) {return 0;}
-FUNC_WRAPPERNI(PX::readlink,   readlink   ) 
+FUNC_WRAPPERNI(PX::readlink,   readlink   )
 {
 /* const achar* path = (achar*)GetParFromPk<0>(args...);
  achar* buf = (achar*)GetParFromPk<1>(args...);
@@ -304,24 +306,24 @@ FUNC_WRAPPERNI(PX::readlink,   readlink   )
 
  NT::OBJECT_ATTRIBUTES oattr = {};
  NT::UNICODE_STRING FilePathUS;               // RtlAcquirePrivilege(&v26, 1i64, 0i64, &v29);
-  
- uint plen; 
- NTX::EPathType ptype; 
- uint PathLen = NTX::CalcFilePathBufSize(path, plen, ptype); 
+
+ uint plen;
+ NTX::EPathType ptype;
+ uint PathLen = NTX::CalcFilePathBufSize(path, plen, ptype);
  uint32 ObjAttributes = 0;  //NT::OBJ_OPENLINK;     // Only Hard Links to a file can be safely deleted without this
- wchar FullPath[PathLen];   
+ wchar FullPath[PathLen];
  NTX::InitFileObjectAttributes(path, plen, ptype, ObjAttributes, &FilePathUS, FullPath, &oattr);
 
  NT::HANDLE LinkHandle = nullptr;
  NT::NTSTATUS res = SAPI::NtOpenSymbolicLinkObject(&LinkHandle, NT::GENERIC_READ, &oattr);
- if(res)return -NTX::NTStatusToLinuxErr(res); 
-*/      
+ if(res)return -NTX::NTStatusToLinuxErr(res);
+*/
 
  return 0;
 }
 
 // Compatibility?
-FUNC_WRAPPERNI(PX::access,     access     ) 
+FUNC_WRAPPERNI(PX::access,     access     )
 {
  NT::IO_STATUS_BLOCK iosb = {};
  NT::HANDLE FileHandle = nullptr;
@@ -332,10 +334,74 @@ FUNC_WRAPPERNI(PX::access,     access     )
  if(mode & PX::X_OK)BaseAccess |= NT::FILE_EXECUTE;    // Close enough?
  if(mode & PX::W_OK)BaseAccess |= NT::FILE_WRITE_DATA;
  if(mode & PX::R_OK)BaseAccess |= NT::FILE_READ_DATA;
- NT::NTSTATUS res = NTX::OpenFileObject(path, BaseAccess, 0, NT::FILE_ATTRIBUTE_NORMAL, NT::FILE_SHARE_READ|NT::FILE_SHARE_WRITE|NT::FILE_SHARE_DELETE, NT::FILE_OPEN, NT::FILE_SYNCHRONOUS_IO_NONALERT, &iosb, &FileHandle); 
- if(res)return -NTX::NTStatusToLinuxErr(res);  // Can the handle be open? (Status > 0)
+ NT::NTSTATUS res = NTX::OpenFileObject(&FileHandle, path, BaseAccess, 0, NT::FILE_ATTRIBUTE_NORMAL, NT::FILE_SHARE_READ|NT::FILE_SHARE_WRITE|NT::FILE_SHARE_DELETE, NT::FILE_OPEN, NT::FILE_SYNCHRONOUS_IO_NONALERT, &iosb);
+ if(res)return -(int32)NTX::NTStatusToLinuxErr(res);  // Can the handle be open? (Status > 0)
  SAPI::NtClose(FileHandle);
  return PX::NOERROR;
+}
+
+// NOTE: The buffer size is abstract and number of entries returned will depend on a platform and underlying file system
+// When the NtQueryDirectoryFile routine is called for a particular handle, the RestartScan parameter is treated as if it were set to TRUE, regardless of its value. On subsequent NtQueryDirectoryFile calls, the value of the RestartScan parameter is honored.
+// https://www.boost.org/doc/libs/1_83_0/libs/filesystem/src/directory.cpp
+// The buffer cannot be larger than 64k, because up to Windows 8.1, NtQueryDirectoryFile and GetFileInformationByHandleEx fail with ERROR_INVALID_PARAMETER when trying to retrieve the filenames from a network share
+// Can the directory offset be accessed with NtQueryInformationFile and NtSetInformationFile ?
+// Is '.' and '..' directories always come first on Windows? // On Linux they come first OR last
+// Opened directory happened to be locked from file deletion : NPTM::NAPI::open("", PX::O_DIRECTORY|PX::O_RDONLY, 0666); 
+// On Linux DT_LNK type is set for both file and directory links (Looks like FS itself is not aware to what the links points to when reads its object)  // It is inconvenient but have to be implemented for Windows in similair way (Will have to call 'stat' on any DT_LNK)
+//
+FUNC_WRAPPERNI(PX::getdentsGD,     getdents     )
+{
+ NT::IO_STATUS_BLOCK iosb = {};
+ NT::HANDLE   hnd = (NT::HANDLE)GetParFromPk<0>(args...);
+ const vptr   buf = (vptr)GetParFromPk<1>(args...);
+ size_t len = GetParFromPk<2>(args...);
+ bool  NoLinks = false;     // Retrieve real info about links (file/dor)
+ if((ssize_t)len < 0){len = -(ssize_t)len; NoLinks = true;}    // FRMWK extension
+ NT::NTSTATUS res = SAPI::NtQueryDirectoryFile(hnd, nullptr, nullptr, nullptr, &iosb, buf, len, NT::FileDirectoryInformation, 0, nullptr, 0);
+ if(res)
+  {
+   if(res == NT::STATUS_NO_MORE_FILES)return 0;
+   else if(res == NT::STATUS_BUFFER_OVERFLOW)return PX::EINVAL;     // Only first call could return this  // Only if fixed portion of FILE_XXX_INFORMATION doesn`t fit in the buffer
+   else return -(int32)NTX::NTStatusToLinuxErr(res);   
+  }
+ uint TotalBytes = iosb.Information;
+ if(!TotalBytes)return PX::EINVAL;  // The buffer is too small
+ uint InOffs  = 0;
+ uint OutOffs = 0;
+ for(;;)   // All converted records are expected to fit because they are smaller
+  {
+   PX::SDirEnt* outrec = (PX::SDirEnt*)((uint8*)buf + OutOffs);
+   NT::FILE_DIRECTORY_INFORMATION* inrec = (NT::FILE_DIRECTORY_INFORMATION*)((uint8*)buf + InOffs);  
+   uint NxtOffs = inrec->NextEntryOffset;
+   uint32 Attrs = inrec->FileAttributes;
+   outrec->ino  = inrec->FileIndex;  // Looks like it is always 0   // Actual inode is probably in FILE_ID_FULL_DIR_INFORMATION::FileId
+   outrec->off  = inrec->EndOfFile;  // Who cares
+   size_t nlen  = NUTF::Utf16To8(outrec->name, inrec->FileName, inrec->FileNameLength >> 1);   // Will be smaller     // FileNameLength is in bytes
+   uint offs    = AlignP2Frwd(nlen + sizeof(PX::SDirEnt), sizeof(vptr));
+   outrec->name[nlen] = 0;
+   outrec->reclen = (uint16)offs;
+   OutOffs += offs;
+    
+   if(NoLinks)
+    {
+   if(Attrs & NT::FILE_ATTRIBUTE_DIRECTORY)outrec->type = PX::DT_DIR;            // Put first in case it somehow happen to be together with FILE_ATTRIBUTE_NORMAL   
+   else if(Attrs & (NT::FILE_ATTRIBUTE_NORMAL|NT::FILE_ATTRIBUTE_ARCHIVE))outrec->type = PX::DT_REG;  // FILE_ATTRIBUTE_NORMAL means no other attributes  // For files FILE_ATTRIBUTE_ARCHIVE is valid too and replaces FILE_ATTRIBUTE_NORMAL
+   else if(Attrs & NT::FILE_ATTRIBUTE_REPARSE_POINT)outrec->type = PX::DT_LNK;   // Overrides anything else on Linux        // Directory and file symlinks (mklink /D (not mklink /H)) will have FILE_ATTRIBUTE_REPARSE_POINT                           
+   else if(Attrs & NT::FILE_ATTRIBUTE_DEVICE)outrec->type = PX::DT_CHR;          // DT_CHR is more likely than a DT_BLK     // Reserved for system use anyway
+   else outrec->type = PX::DT_UNKNOWN;
+    }
+    else
+     {
+   if(Attrs & NT::FILE_ATTRIBUTE_REPARSE_POINT)outrec->type = PX::DT_LNK;        // Overrides anything else on Linux        // Directory and file symlinks (mklink /D (not mklink /H)) will have FILE_ATTRIBUTE_REPARSE_POINT                           
+   else if(Attrs & NT::FILE_ATTRIBUTE_DIRECTORY)outrec->type = PX::DT_DIR;       // Put first in case it somehow happen to be together with FILE_ATTRIBUTE_NORMAL
+   else if(Attrs & (NT::FILE_ATTRIBUTE_NORMAL|NT::FILE_ATTRIBUTE_ARCHIVE))outrec->type = PX::DT_REG;  // FILE_ATTRIBUTE_NORMAL means no other attributes  // For files FILE_ATTRIBUTE_ARCHIVE is valid too and replaces FILE_ATTRIBUTE_NORMAL
+   else if(Attrs & NT::FILE_ATTRIBUTE_DEVICE)outrec->type = PX::DT_CHR;          // DT_CHR is more likely than a DT_BLK     // Reserved for system use anyway
+   else outrec->type = PX::DT_UNKNOWN;
+     }
+   if(!NxtOffs)break;
+   InOffs += NxtOffs;
+  }
+ return (int)OutOffs;
 }
 
 /*
@@ -343,10 +409,10 @@ FILE_STANDARD_INFORMATION   // https://learn.microsoft.com/en-us/windows-hardwar
 FILE_BASIC_INFORMATION      // https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ns-wdm-_file_basic_information
 FILE_ALL_INFORMATION        // https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_all_information
 
-Time values CreationTime, LastAccessTime, LastWriteTime, and ChangeTime are expressed in absolute system time format. 
+Time values CreationTime, LastAccessTime, LastWriteTime, and ChangeTime are expressed in absolute system time format.
 Absolute system time is the number of 100-nanosecond intervals since the start of the year 1601 in the Gregorian calendar.
 
-Linux timestamps is the number of seconds since the Unix epoch, which was midnight (00:00:00) on January 1, 1970, in Coordinated Universal Time (UTC). 
+Linux timestamps is the number of seconds since the Unix epoch, which was midnight (00:00:00) on January 1, 1970, in Coordinated Universal Time (UTC).
 Leap seconds are ignored in Linux timestamps, so they aren’t analogous to real time.
 
 https://github.com/chakra-core/ChakraCore/blob/master/pal/src/file/filetime.cpp
@@ -355,47 +421,53 @@ Win32 LastAccessTime is updated after a write operation, but it is not on Unix.
 
 Linux: No permissions are required on the file itself, but-in the case of stat()
 */
-FUNC_WRAPPERNI(PX::stat,       stat       ) 
+FUNC_WRAPPERNI(PX::fstatat,       fstatat       )       // TODO: AT_SYMLINK_FOLLOW ?      // Flags are ignored for now
 {
  NT::IO_STATUS_BLOCK iosb = {};
+ NT::HANDLE DirHandle = nullptr;
  NT::HANDLE FileHandle = nullptr;
- const achar* path = (achar*)GetParFromPk<0>(args...);
- PX::SFStat* sti = (PX::SFStat*)GetParFromPk<1>(args...);
- NT::NTSTATUS res = NTX::OpenFileObject(path, NT::SYNCHRONIZE|NT::FILE_READ_ATTRIBUTES, 0, NT::FILE_ATTRIBUTE_NORMAL, NT::FILE_SHARE_READ|NT::FILE_SHARE_WRITE|NT::FILE_SHARE_DELETE, NT::FILE_OPEN, NT::FILE_SYNCHRONOUS_IO_NONALERT, &iosb, &FileHandle); 
+ PX::fdsc_t dirfd  = GetParFromPk<0>(args...);     // How to process AT_FDCWD?   // Add the CWD to the name if it is relative or open the CWD and use its handle? // Is it by default on Windows?  // If pathname is absolute, then dirfd is ignored
+ const achar* path = (achar*)GetParFromPk<1>(args...);
+ PX::SFStat* sti = (PX::SFStat*)GetParFromPk<2>(args...);
+ if(dirfd >= 0)DirHandle = (NT::HANDLE)dirfd;
+ NT::NTSTATUS res = NTX::OpenFileObject(&FileHandle, path, NT::SYNCHRONIZE|NT::FILE_READ_ATTRIBUTES, 0, NT::FILE_ATTRIBUTE_NORMAL, NT::FILE_SHARE_READ|NT::FILE_SHARE_WRITE|NT::FILE_SHARE_DELETE, NT::FILE_OPEN, NT::FILE_SYNCHRONOUS_IO_NONALERT, &iosb, DirHandle);
  if(res)return -NTX::NTStatusToLinuxErr(res);  // Can the handle be open? (Status > 0)
  int rs = NAPI::fstat((PX::fdsc_t)FileHandle, sti);
  SAPI::NtClose(FileHandle);
  return rs;
 }
 
-FUNC_WRAPPERNI(PX::fstat,      fstat      ) 
+FUNC_WRAPPERNI(PX::stat,       stat       )
+{
+ return NAPI::fstatat(PX::AT_FDCWD, args..., 0);   
+}
+
+FUNC_WRAPPERNI(PX::fstat,      fstat      )
 {
  NT::IO_STATUS_BLOCK iosb = {};
  NT::FILE_ALL_INFORMATION inf = {};
- NT::HANDLE  hnd = (NT::HANDLE)GetParFromPk<0>(args...); 
+ NT::HANDLE  hnd = (NT::HANDLE)GetParFromPk<0>(args...);
  PX::SFStat* sti = (PX::SFStat*)GetParFromPk<1>(args...);
  NT::NTSTATUS res = SAPI::NtQueryInformationFile(hnd, &iosb, &inf, sizeof(inf), NT::FileAllInformation);
  if(res && (res != NT::STATUS_BUFFER_OVERFLOW))return -NTX::NTStatusToLinuxErr(res);
 
- sti->st_dev     = 0;  // TODO: How?
- sti->st_ino     = inf.InternalInformation.IndexNumber;
- sti->st_nlink   = inf.StandardInformation.NumberOfLinks;
- sti->st_mode    = 0;
- sti->st_uid     = 0;  // Requires ACL read
- sti->st_gid     = 0;  // Requires ACL read
- sti->__pad0     = 0;
- sti->st_rdev    = 0;  // ???
- sti->st_size    = inf.StandardInformation.EndOfFile;
- sti->st_blksize = 0;  // TODO: From AlignmentInformation.AlignmentRequirement somehow
- sti->st_blocks  = inf.StandardInformation.AllocationSize / 512;  // AlignP2Frwd(sti->st_size,512) / 512;   // Number 512-byte blocks allocated. 
- sti->__unused[0] = sti->__unused[1] = sti->__unused[2] = 0;
-  
- if(inf.StandardInformation.Directory)sti->st_mode |= PX::S_IFDIR;
-   else sti->st_mode |= PX::S_IFREG;   // Anything else?    // How to get rwe flags of a file?
-                                                
- sti->st_atime.sec = NDT::FileTimeToUnixTime(inf.BasicInformation.LastAccessTime, &sti->st_atime.nsec);
- sti->st_mtime.sec = NDT::FileTimeToUnixTime(inf.BasicInformation.LastWriteTime, &sti->st_mtime.nsec);
- sti->st_ctime.sec = NDT::FileTimeToUnixTime(inf.BasicInformation.CreationTime, &sti->st_ctime.nsec);  // On Unix creation time is not stored (only: access, modification and change) // Last inode change time is close enough    // xstat ?
+ sti->dev     = 0;  // TODO: How?
+ sti->ino     = (uint64)inf.InternalInformation.IndexNumber;   // ???
+ sti->nlink   = inf.StandardInformation.NumberOfLinks;
+ sti->mode    = 0;
+ sti->uid     = 0;  // Requires ACL read
+ sti->gid     = 0;  // Requires ACL read
+ sti->rdev    = 0;  // ???
+ sti->size    = inf.StandardInformation.EndOfFile;
+ sti->blksize = 0;  // TODO: From AlignmentInformation.AlignmentRequirement somehow
+ sti->blocks  = inf.StandardInformation.AllocationSize / 512;  // AlignP2Frwd(sti->size,512) / 512;   // Number 512-byte blocks allocated.
+
+ if(inf.StandardInformation.Directory)sti->mode |= PX::S_IFDIR;
+   else sti->mode |= PX::S_IFREG;   // Anything else?    // How to get rwe flags of a file?
+
+ sti->atime.sec = NDT::FileTimeToUnixTime((uint64)inf.BasicInformation.LastAccessTime, &sti->atime.nsec);
+ sti->mtime.sec = NDT::FileTimeToUnixTime((uint64)inf.BasicInformation.LastWriteTime, &sti->mtime.nsec);
+ sti->ctime.sec = NDT::FileTimeToUnixTime((uint64)inf.BasicInformation.CreationTime, &sti->ctime.nsec);  // On Unix creation time is not stored (only: access, modification and change) // Last inode change time is close enough    // xstat ?
 
  return PX::NOERROR;
 }
@@ -425,9 +497,9 @@ FUNC_WRAPPERNI(PX::fstat,      fstat      )
 
  https://github.com/hfiref0x/WinObjEx64
  DOS device path format:
-   \\.\C:\Test\Foo.txt 
+   \\.\C:\Test\Foo.txt
    \\?\C:\Test\Foo.txt
-   \\.\Volume{b75e2c83-0000-0000-0000-602f00000000}\Test\Foo.txt 
+   \\.\Volume{b75e2c83-0000-0000-0000-602f00000000}\Test\Foo.txt
    \\?\Volume{b75e2c83-0000-0000-0000-602f00000000}\Test\Foo.txt
 
  OpenFileById ?  // inode?
@@ -449,11 +521,13 @@ If the caller sets only the FILE_APPEND_DATA and SYNCHRONIZE flags, it can write
 TODO: Async  (O_ASYNC, O_NONBLOCK, )
  https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-zwreadfile
 
-To create a handle that has an associated current file-position pointer, specify the SYNCHRONIZE access right in 
-the DesiredAccess parameter to ZwCreateFile, IoCreateFile, or ZwOpenFile, and either FILE_SYNCHRONOUS_IO_ALERT or FILE_SYNCHRONOUS_IO_NONALERT 
+To create a handle that has an associated current file-position pointer, specify the SYNCHRONIZE access right in
+the DesiredAccess parameter to ZwCreateFile, IoCreateFile, or ZwOpenFile, and either FILE_SYNCHRONOUS_IO_ALERT or FILE_SYNCHRONOUS_IO_NONALERT
 in the CreateOptions or OpenOptions parameter. Be sure that you do not also specify the FILE_APPEND_DATA access right.
+
+FILE_OPEN_REPARSE_POINT is probably needed together with FILE_DIRECTORY_FILE|FILE_OPEN_FOR_BACKUP_INTENT when opening a directory // FindFirstFile doesn`t use FILE_OPEN_REPARSE_POINT, but uses FILE_OPEN_FOR_BACKUP_INTENT
 */
-FUNC_WRAPPERNI(PX::open,       open       ) 
+FUNC_WRAPPERNI(PX::open,       open       )
 {
  NT::IO_STATUS_BLOCK iosb = {};
  NT::HANDLE FileHandle = nullptr;
@@ -466,8 +540,8 @@ FUNC_WRAPPERNI(PX::open,       open       )
 
  const achar* path  = (achar*)GetParFromPk<0>(args...);
  const uint   flags = GetParFromPk<1>(args...);
- const uint   mode  = GetParFromPk<2>(args...);
-                                             
+// const uint   mode  = GetParFromPk<2>(args...);
+
  if(!(flags & PX::O_CLOEXEC))ObjAttributes |= NT::OBJ_INHERIT;
  if(flags & PX::O_SYMLINK)ObjAttributes |= NT::OBJ_OPENLINK;       // NOTE: There is no O_SYMLINK on Linux
  if(flags & PX::O_EXCL   )ObjAttributes |= NT::OBJ_EXCLUSIVE;
@@ -481,7 +555,7 @@ FUNC_WRAPPERNI(PX::open,       open       )
   {
    if(amode){DesiredAccess |= NT::FILE_APPEND_DATA; ShareAccess |= NT::FILE_SHARE_WRITE;}
     else {DesiredAccess = NT::FILE_APPEND_DATA|NT::SYNCHRONIZE; ShareAccess = NT::FILE_SHARE_WRITE; CreateOptions = 0;}
-  }    
+  }
 
  if(flags & PX::O_CREAT)      // S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH|S_IWOTH;
   {
@@ -497,10 +571,14 @@ FUNC_WRAPPERNI(PX::open,       open       )
 
  if(flags & PX::O_SYNC     )CreateOptions |= NT::FILE_WRITE_THROUGH;
  if(flags & PX::O_DIRECT   )CreateOptions |= NT::FILE_NO_INTERMEDIATE_BUFFERING;
- if(flags & PX::O_DIRECTORY)CreateOptions |= NT::FILE_DIRECTORY_FILE;     // Directory object
+ if(flags & PX::O_DIRECTORY)
+  {
+   CreateOptions |= NT::FILE_DIRECTORY_FILE;     // Directory object     // ??? FILE_OPEN_REPARSE_POINT|FILE_OPEN_FOR_BACKUP_INTENT    // Virtual directories/junctions can be mounted as reparse points 
+   ShareAccess   |= NT::FILE_SHARE_READ|NT::FILE_SHARE_WRITE|NT::FILE_SHARE_DELETE;    // To avoid locking the directory from modification by anyone else while its descriptor is open (Most likely for 'getdents')
+  }
   else CreateOptions |= NT::FILE_NON_DIRECTORY_FILE;    // File object: a data file, a logical, virtual, or physical device, or a volume
-      
- NT::NTSTATUS res = NTX::OpenFileObject(path, DesiredAccess, ObjAttributes, FileAttributes, ShareAccess, CreateDisposition, CreateOptions, &iosb, &FileHandle);                        
+
+ NT::NTSTATUS res = NTX::OpenFileObject(&FileHandle, path, DesiredAccess, ObjAttributes, FileAttributes, ShareAccess, CreateDisposition, CreateOptions, &iosb);
  if(!res)return (PX::fdsc_t)FileHandle;
 // iosb.Status : EFIOStatus
  return -NTX::NTStatusToLinuxErr(res);   // TODO: Verify conformance with https://man7.org/linux/man-pages/man2/open.2.html
@@ -517,18 +595,18 @@ FUNC_WRAPPERNI(PX::dup3,       dup        ) {return 0;}
 FUNC_WRAPPERNI(PX::spawn,      spawn      ) {return 0;}
 FUNC_WRAPPERNI(PX::thread,     thread     ) {return 0;}
 
-FUNC_WRAPPERNI(PX::gettimeofday,  gettimeofday  ) 
+FUNC_WRAPPERNI(PX::gettimeofday,  gettimeofday  )
 {
  PX::timeval*  tv = GetParFromPk<0>(args...);
  PX::timezone* tz = GetParFromPk<1>(args...);
  uint64 ut = (NTX::GetSystemTime() - NDT::EPOCH_BIAS);
  if(tv)
-  { 
-   tv->sec   = ut / NDT::SECS_TO_FT_MULT; 
-   uint64 rm = ut % NDT::SECS_TO_FT_MULT;     //   uint64 rm = ut - (tv->sec * NDT::SECS_TO_FT_MULT);  
+  {
+   tv->sec   = ut / NDT::SECS_TO_FT_MULT;
+   uint64 rm = ut % NDT::SECS_TO_FT_MULT;     //   uint64 rm = ut - (tv->sec * NDT::SECS_TO_FT_MULT);
    tv->usec  = rm / (NDT::SECS_TO_FT_MULT/NDT::MICSEC_IN_SEC);
   }
- if(tz)       
+ if(tz)
   {
    if(tz->utcoffs == -1)UpdateTZOffsUTC();
    tz->dsttime = 0;
@@ -596,7 +674,7 @@ sint Initialize(void* StkFrame=nullptr, vptr ArgA=nullptr, vptr ArgB=nullptr, vp
    NPTM::NLOG::GLog.LogModes   = NPTM::NLOG::lmCons;
    NPTM::NLOG::GLog.ConsHandle = NPTM::GetStdErr();
   }
- InitSyscalls(); 
+ InitSyscalls();
  InitStartupInfo(StkFrame, ArgA, ArgB, ArgC);
  SetErrorHandlers();
 
@@ -606,5 +684,8 @@ sint Initialize(void* StkFrame=nullptr, vptr ArgA=nullptr, vptr ArgB=nullptr, vp
 
 };
 //============================================================================================================
-
+/*
+ 	SetConsoleCP(CP_UTF8);
+	SetConsoleOutputCP(CP_UTF8);
+*/
 

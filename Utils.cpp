@@ -2558,7 +2558,7 @@ long _stdcall NormalizeDrivePath(PWSTR PathBuffer, long BufferLength)
 long  _stdcall GetProcessPathById(DWORD ProcID, PWSTR PathBuffer, long BufferLength, bool Norm)   // Vista+ ???
 {
  SYSTEM_PROCESS_ID_INFORMATION SysInfo;
- SysInfo.ProcessId = (PVOID)ProcID;
+ SysInfo.ProcessId = PVOID((SIZE_T)ProcID);
  SysInfo.ImageName.Length = 0;
  SysInfo.ImageName.MaximumLength = BufferLength * sizeof(wchar_t);
  SysInfo.ImageName.Buffer = PathBuffer;
@@ -2933,6 +2933,19 @@ HANDLE WINAPI CreateFileX(PVOID lpFileName,DWORD dwDesiredAccess,DWORD dwShareMo
 {
  if(!((PBYTE)lpFileName)[1])return CreateFileW((PWSTR)lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
  return CreateFileA((LPSTR)lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);
+}
+//---------------------------------------------------------------------------
+int _stdcall SaveMemToFile(PVOID FileName, PVOID Addr, SIZE_T Size) 
+{
+ DWORD  Result;
+ HANDLE hFile;
+ if(!((PBYTE)FileName)[1])hFile = CreateFileW((PWSTR)FileName,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
+   else hFile = CreateFileA((LPSTR)FileName,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
+ if(hFile == INVALID_HANDLE_VALUE){LOGMSG("Failed to save file: %s", FileName);return -1;}
+ WriteFile(hFile,Addr,Size,&Result,NULL);
+ CloseHandle(hFile);
+ if((DWORD)Size != Result)return -2;
+ return 0;
 }
 //---------------------------------------------------------------------------
 void _stdcall ReverseBytes(PBYTE Array, UINT Size)

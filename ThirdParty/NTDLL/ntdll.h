@@ -1336,8 +1336,8 @@ typedef struct _RTL_BALANCED_NODE
 
 template<typename T> struct TLIST_ENTRY 
 {
-   T *Flink;
-   T *Blink;
+   T* Flink;    // Next
+   T* Blink;    // Prev
 };
 
 

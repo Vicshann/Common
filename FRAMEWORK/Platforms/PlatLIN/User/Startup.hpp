@@ -10,13 +10,13 @@ struct SSINF
  syschar**        CLArgs;  // Points to ARGV array  // Not split on windows!
  syschar**        EVVars;  // Points to EVAR array (cannot cache this pointer?)
  ELF::SAuxVecRec* AuxInf;  // Auxilary vector // LINUX/BSD: ELF::SAuxVecRec*
- sint32           UTCOffs; // In seconds
  vptr             NullPtr; // For any pointer that should point to NULL
 
  void*  TheModBase;
  size_t TheModSize;
  achar  SysDrive[8];
- bool   HaveLoader;
+ sint32 UTCOffs;   // In seconds
+ sint32 HaveLoader;   // TODO: Flags
 
 // Exe path (Even if this module is a DLL)
 // Current directory(at startup)   // Required?
@@ -39,23 +39,6 @@ static ELF::SAuxVecRec* GetAuxVRec(size_t Type)
  return nullptr;
 }
 //------------------------------------------------------------------------------------------------------------
-static int UpdateTZOffsUTC(sint64 CurTimeUTC)
-{
- int df = NAPI::open("/etc/localtime",PX::O_RDONLY,0);
-//  LOGMSG("TZFILE open: %i",df);
- if(df < 0)return df;
- uint8 TmpBuf[2048];       // Should be enough for V1 header
- sint rlen = NAPI::read(df, &TmpBuf, sizeof(TmpBuf));
- NAPI::close(df);
- if(rlen <= 44)return PX::ENODATA;     // sizeof(SHdrTZ)
- sint32 offs = STZF::GetTimeZoneOffset(&TmpBuf,CurTimeUTC);
-//    LOGMSG("TZFILE offs: %i",offs);
- if(offs < 0)return PX::EINVAL;
- fwsinf.UTCOffs = offs;
- return 0;
-}
-//------------------------------------------------------------------------------------------------------------
-
 
 //------------------------------------------------------------------------------------------------------------
 static _finline PX::fdsc_t GetStdIn(void)  {return PX::STDIN; }  // 0
@@ -79,25 +62,25 @@ symlink that points to your program file, maybe there are even more possibilitie
 // Quotes are stripped by the shell and quoted args are kept intact
 // NOTE: Do not expect the return value to be an argument index!
 //
-static sint GetCLArg(sint& AOffs, achar* DstBuf, uint DstCCnt=-1)    // Enumerate and copy     // NOTE: Copying is inefficient!
+static sint GetCLArg(sint& AOffs, achar* DstBuf, uint DstCCnt=uint(-1))    // Enumerate and copy     // NOTE: Copying is inefficient!
 {
  return UELF::GetStrFromArr(&AOffs, GetArgV(), DstBuf, DstCCnt);
 }
 //------------------------------------------------------------------------------------------------------------
-static sint GetEnvVar(sint& AOffs, achar* DstBuf, uint DstCCnt=-1)   // Enumerate and copy     // NOTE: Copying is inefficient!
+static sint GetEnvVar(sint& AOffs, achar* DstBuf, uint DstCCnt=uint(-1))   // Enumerate and copy     // NOTE: Copying is inefficient!
 {
  return UELF::GetStrFromArr(&AOffs, GetEnvP(), DstBuf, DstCCnt);
 }
 //------------------------------------------------------------------------------------------------------------
-static _ninline sint GetEnvVar(const achar* Name, achar* DstBuf, uint DstCCnt=-1)   // Find by name and copy   // NOTE: Copying is inefficient!  // NOTE: Broken on ARM64 if inlined! Why?
+static _ninline sint GetEnvVar(const achar* Name, achar* DstBuf, uint DstCCnt=uint(-1))   // Find by name and copy   // NOTE: Copying is inefficient!  // NOTE: Broken on ARM64 if inlined! Why?
 {
  const  achar** vars = GetEnvP();
  bool Unnamed = !Name || !*Name;
  for(;const achar* evar = *vars;vars++)
   {
-   int spos = NSTR::ChrOffset(evar, '=');
+   sint spos = NSTR::ChrOffset(evar, '=');
    if(spos < 0)continue;  // No separator!
-   if((!spos && Unnamed) || NSTR::IsStrEqualSC(Name, evar, spos))return NSTR::StrCopy(DstBuf, &evar[spos+1], DstCCnt);
+   if((!spos && Unnamed) || NSTR::IsStrEqualSC(Name, evar, (uint)spos))return (sint)NSTR::StrCopy(DstBuf, &evar[spos+1], DstCCnt);
   }
  return -1;
 }
@@ -128,9 +111,9 @@ static const syschar* GetEnvVar(const achar* Name, uint* Size=nullptr)          
  bool Unnamed = !Name || !*Name;
  for(;const achar* evar = *vars;vars++)
   {
-   int spos = NSTR::ChrOffset(evar, '=');
+   sint spos = NSTR::ChrOffset(evar, '=');
    if(spos < 0)continue;  // No separator!
-   if((!spos && Unnamed) || NSTR::IsStrEqualSC(Name, evar, spos))
+   if((!spos && Unnamed) || NSTR::IsStrEqualSC(Name, evar, (uint)spos))
     {
      if(Size)*Size = NSTR::StrLen(&evar[spos+1]);
      return &evar[spos+1];
@@ -159,7 +142,7 @@ static _finline size_t GetModuleSize(void)
 }
 //------------------------------------------------------------------------------------------------------------
 // Returns full path to current module and its name in UTF8
-static size_t _finline GetModulePath(achar* DstBuf, size_t BufSize=-1)
+static sint _finline GetModulePath(achar* DstBuf, size_t BufSize=uint(-1))
 {
  sint aoffs = 0;
  return GetCLArg(aoffs, DstBuf, BufSize);       // Will work for now
@@ -193,9 +176,11 @@ static sint InitStartupInfo(void* StkFrame=nullptr, void* ArgA=nullptr, void* Ar
          else StkFrame = &((void**)StkFrame)[1];  // No ret addr on stack, only stack frame ptr
       }
   }*/
+
  if(StkFrame){StkFrame = UELF::FindStartupInfo(StkFrame); DBGDBG("FoundInfoPtr: %p", StkFrame);}
  if(StkFrame)
   {
+ //  LOGMSG("StkFrame %p:\r\n%#*.32D",StkFrame,128,StkFrame);
    fwsinf.STInfo = StkFrame;
    uint ArgNum   = ((size_t*)StkFrame)[0];           // Number of command line arguments
    fwsinf.CLArgs = (char**)&((void**)StkFrame)[1];   // Array of cammond line arguments
@@ -217,7 +202,11 @@ static sint InitStartupInfo(void* StkFrame=nullptr, void* ArgA=nullptr, void* Ar
  //PX::timezone tz = {};
  //if(!NAPI::gettimeofday(nullptr, &tz))fwsinf.UTCOffs = tz.minuteswest;
  PX::timeval tv = {};
- if(!NAPI::gettimeofday(&tv, nullptr))UpdateTZOffsUTC(tv.sec);    // Log any errors?
+ if(int r = NAPI::gettimeofday(&tv, nullptr); r >= 0)
+  {
+   if(int t = UpdateTZOffsUTC(tv.sec);t < 0){DBGDBG("UpdateTZOffsUTC failed with %i", t);}    // Log any errors?
+  }
+   else {DBGDBG("gettimeofday failed with %i", r);}
  DBGDBG("UTC offset is %i seconds", fwsinf.UTCOffs); //LOGMSG("TZFILE offs: %i",tz.minuteswest);
 
  //  DbgLogStartupInfo();
@@ -227,6 +216,7 @@ static sint InitStartupInfo(void* StkFrame=nullptr, void* ArgA=nullptr, void* Ar
 //============================================================================================================
 static void DbgLogStartupInfo(void)
 {
+      return;
  if(!fwsinf.STInfo)return;
  // Log command line arguments
  if(fwsinf.CLArgs)
@@ -256,7 +246,7 @@ static void DbgLogStartupInfo(void)
  // Log auxilary vector
  if(fwsinf.AuxInf)
   {
-   LOGDBG("AVariables : ");
+   LOGDBG("AVariables: ");
    for(ELF::SAuxVecRec* Rec=(ELF::SAuxVecRec*)fwsinf.AuxInf;Rec->type != ELF::AT_NULL;Rec++)
     {
      LOGDBG("  Aux: Type=%.3u, Value=%p",Rec->type, (void*)Rec->val);

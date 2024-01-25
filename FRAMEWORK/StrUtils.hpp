@@ -23,9 +23,13 @@ struct NSTR
 // These templates should work on ANY input strings, built in ones or some classes
 // NUL char is always terminates but strings not have to be NUL terminated
 //
+
+static auto _finline CharToLoASCII(auto chr){return chr | 0x20;}
+static auto _finline CharToUpASCII(auto chr){return chr & ~0x20;}
+
 template<typename T=wchar_t> union ChrOpNone {static const int Dir=1; static T DoOp(T val){return val;}};
-template<typename T=wchar_t> union ChrOpSiLC {static const int Dir=0; static T DoOp(T val){return (((val >= 'A')&&(val <= 'Z'))?(val + 0x20):(val));}};
-template<typename T=wchar_t> union ChrOpSiUC {static const int Dir=0; static T DoOp(T val){return (((val >= 'a')&&(val <= 'z'))?(val - 0x20):(val));}};    // TODO: Use tables(Optional)
+template<typename T=wchar_t> union ChrOpSiLC {static const int Dir=0; static T DoOp(T val){return CharToLoASCII(val);}};
+template<typename T=wchar_t> union ChrOpSiUC {static const int Dir=0; static T DoOp(T val){return CharToUpASCII(val);}};    // TODO: Use tables(Optional)
 
 // Return: 0 if strings match
 //   UNRELIABLE !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -33,14 +37,14 @@ template<typename T=wchar_t> union ChrOpSiUC {static const int Dir=0; static T D
 //
 template<typename COp=ChrOpNone<>, typename A=wchar_t*, typename B=wchar_t*> _finline static sint StrCompare(A StrValA, B StrValB, size_t MaxLen=(size_t)-1)  // Not exactly standard!  // NOTE: For a case sensitive strings there should be a faster way
 {
- for(size_t voffs=0;;voffs++,MaxLen--)    // TODO: Do not decrement, precalculate EndOfStr
+ for(sint voffs=0;;voffs++,MaxLen--)    // TODO: Do not decrement, precalculate EndOfStr
   {
    if(!MaxLen)return 0;               // Match by size????????????????????????????????????????????????????????????????????????
    int ValA = StrValA[voffs];
    int ValB = StrValB[voffs];
    if(!(ValA|ValB))return 0;          // Strings match by specified size or by a terminating 0
    if(!ValA)return -1;                // With this you can simply compare some substring value (StrValA) at any position in a base string (StrValB) without specifying size of StrValA; !!!!!!!!!!!!!!!!!!!!
-   if(COp::DoOp(ValA) != COp::DoOp(ValB))return voffs+1;     // Returns 'voffs+1' to avoid 0 when a first char didn`t match
+   if(COp::DoOp((wchar_t)ValA) != COp::DoOp((wchar_t)ValB))return voffs+1;     // Returns 'voffs+1' to avoid 0 when a first char didn`t match
   }
 }
 //---------------------------------------------------------------------------
@@ -50,7 +54,7 @@ template<typename COp=ChrOpNone<>, typename A=wchar_t*> _finline static sint Chr
  ChrVal = COp::DoOp(ChrVal);
  for(;StrVal[Offs] && Len;Offs++,Len--)    // NOTE: Would be nice to have an optional ability to exclude any operation on an argument which hasn`t been changed from its default value
   {
-   if(COp::DoOp(StrVal[Offs]) == ChrVal)return Offs;
+   if(COp::DoOp(StrVal[Offs]) == ChrVal)return (sint)Offs;
   }
  return -1;
 }
@@ -64,7 +68,7 @@ template<typename COp=ChrOpNone<>, typename A=wchar_t*, typename B=wchar_t*> _fi
  for(size_t voffs=0;StrBase[Offs] && (Offs < BaseLen);)     // Slow, by one char. TODO: Use memcmp for case sensitive strngs
   {
    if(COp::DoOp(StrBase[Offs]) != COp::DoOp(StrVal[voffs])){Offs += (bool)!voffs; voffs = 0; continue;}  // Reset scan
-    else { voffs++; if(!StrVal[voffs] || (voffs >= ValLen))return Offs-voffs+1; }  // Exit if Full sub str match found
+    else { voffs++; if(!StrVal[voffs] || (voffs >= ValLen))return sint(Offs-voffs+1); }  // Exit if Full sub str match found
    Offs++;
   }
  return -1;  // BaseStr terminated early
@@ -111,21 +115,37 @@ template<typename D, typename S> _finline static size_t StrCnat(D Dst, S Src)
 //template<typename COp=ChrOpNone<>, typename A=wchar_t*, typename B=wchar_t*> bool IsContainSubStr(A StrVal, B StrBase){return (SubOffset<COp>(StrVal, StrBase) >= 0);}
 
 // NOTE: Offsets are provided since source str may be a class, not a pointer   // TODO: Support passing by refs for a classes
-template<typename A> _finline static int CharOffsetSC(A StrVal, wchar_t ChrVal, size_t Offs=0, size_t Len=(size_t)-1){return ChrOffset<ChrOpNone<>, A>(StrVal, ChrVal, Offs, Len);}
-template<typename A> _finline static int CharOffsetIC(A StrVal, wchar_t ChrVal, size_t Offs=0, size_t Len=(size_t)-1){return ChrOffset<ChrOpSiLC<>, A>(StrVal, ChrVal, Offs, Len);}
+template<typename A> _finline static int CharOffsetCS(A StrVal, wchar_t ChrVal, size_t Offs=0, size_t Len=(size_t)-1){return ChrOffset<ChrOpNone<>, A>(StrVal, ChrVal, Offs, Len);}
+template<typename A> _finline static int CharOffsetCI(A StrVal, wchar_t ChrVal, size_t Offs=0, size_t Len=(size_t)-1){return ChrOffset<ChrOpSiLC<>, A>(StrVal, ChrVal, Offs, Len);}
 
-template<typename A, typename B> _finline static int StrOffsetSC(A StrBase, B StrVal, size_t Offs=0){return StrOffset<ChrOpNone<> >(StrBase, StrVal, Offs);}
-template<typename A, typename B> _finline static int StrOffsetIC(A StrBase, B StrVal, size_t Offs=0){return StrOffset<ChrOpSiLC<> >(StrBase, StrVal, Offs);}
+template<typename A, typename B> _finline static int StrOffsetCS(A StrBase, B StrVal, size_t Offs=0){return StrOffset<ChrOpNone<> >(StrBase, StrVal, Offs);}
+template<typename A, typename B> _finline static int StrOffsetCI(A StrBase, B StrVal, size_t Offs=0){return StrOffset<ChrOpSiLC<> >(StrBase, StrVal, Offs);}
 
-template<typename A, typename B> _finline static bool IsContainSubStrSC(A StrBase, B StrVal){return (StrOffset<ChrOpNone<> >(StrBase, StrVal) >= 0);}
-template<typename A, typename B> _finline static bool IsContainSubStrIC(A StrBase, B StrVal){return (StrOffset<ChrOpSiLC<> >(StrBase, StrVal) >= 0);}
+template<typename A, typename B> _finline static bool IsContainSubStrCS(A StrBase, B StrVal){return (StrOffset<ChrOpNone<> >(StrBase, StrVal) >= 0);}
+template<typename A, typename B> _finline static bool IsContainSubStrCI(A StrBase, B StrVal){return (StrOffset<ChrOpSiLC<> >(StrBase, StrVal) >= 0);}
 
-template<typename A, typename B> _finline static int CompareSC(A StrValA, B StrValB, size_t MaxLen=(size_t)-1){return StrCompare<ChrOpNone<>, A, B>(StrValA, StrValB, MaxLen);}  // Template alias argument deduction is not implemented in C++
-template<typename A, typename B> _finline static int CompareIC(A StrValA, B StrValB, size_t MaxLen=(size_t)-1){return StrCompare<ChrOpSiLC<>, A, B>(StrValA, StrValB, MaxLen);}
+template<typename A, typename B> _finline static int CompareCS(A StrValA, B StrValB, size_t MaxLen=(size_t)-1){return StrCompare<ChrOpNone<>, A, B>(StrValA, StrValB, MaxLen);}  // Template alias argument deduction is not implemented in C++
+template<typename A, typename B> _finline static int CompareCI(A StrValA, B StrValB, size_t MaxLen=(size_t)-1){return StrCompare<ChrOpSiLC<>, A, B>(StrValA, StrValB, MaxLen);}
 
-template<typename A, typename B> _finline static bool IsStrEqualSC(A StrValA, B StrValB, size_t MaxLen=(size_t)-1){return !StrCompare<ChrOpNone<>, A, B>(StrValA, StrValB, MaxLen);}  // == 0
-template<typename A, typename B> _finline static bool IsStrEqualIC(A StrValA, B StrValB, size_t MaxLen=(size_t)-1){return !StrCompare<ChrOpSiLC<>, A, B>(StrValA, StrValB, MaxLen);}  // == 0
+template<typename A, typename B> _finline static bool IsStrEqualCS(A StrValA, B StrValB, size_t MaxLen=(size_t)-1){return !StrCompare<ChrOpNone<>, A, B>(StrValA, StrValB, MaxLen);}  // == 0
+template<typename A, typename B> _finline static bool IsStrEqualCI(A StrValA, B StrValB, size_t MaxLen=(size_t)-1){return !StrCompare<ChrOpSiLC<>, A, B>(StrValA, StrValB, MaxLen);}  // == 0
 
+//---------------------------------------------------------------------------
+//---------------------------------------------------------------------------
+// Return is negative if there is more elements
+template<typename T> static sint SplitBySep(T Str, T* PtrArr, uint Cnt, RemovePtr<T>::T Sep)
+{
+ uint Total = 0;
+ PtrArr[Total++] = Str;
+ for(decltype(Sep) v=0;(v=*Str);Str++)
+  {
+   if(v != Sep)continue;
+   if(Total >= (int)Cnt)return -(sint)Total;
+   PtrArr[Total++] = &Str[1];
+   *Str = 0;
+  }
+ return Total;
+}
 //---------------------------------------------------------------------------
 struct SCStr       // SCStr cstr("Hello World");
 {

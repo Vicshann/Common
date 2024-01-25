@@ -40,7 +40,7 @@ struct SHdrTZ       // NOTE: Misalignment will be on each access!
  uint32   TimeSize;
  union
   {
- uint64*  TransTimes; 
+ uint64*  TransTimes;
  uint32*  TransTimes32; // timecnt x sizeof(int32)  // TIME_SIZE
   };
  uint8*   TransTypes;   // timecnt
@@ -86,7 +86,7 @@ static uint8* ParseHdrTZF(SHdrTZ* hdr, void* tzf)
 template<typename T> static uint8* ParseBodyTZF(SHdrTZ* hdr, uint8* Ptr)
 {
  if(hdr->timecnt)hdr->TransTimes    = (uint64*)Ptr; Ptr += sizeof(T) * hdr->timecnt;    // Always 32bit, take full time values from extended header
- if(hdr->timecnt)hdr->TransTypes    = Ptr;          Ptr += sizeof(uint8) * hdr->timecnt; 
+ if(hdr->timecnt)hdr->TransTypes    = Ptr;          Ptr += sizeof(uint8) * hdr->timecnt;
  if(hdr->typecnt)hdr->LTTRecs       = (SLTT*)Ptr;   Ptr += sizeof(SLTT) * hdr->typecnt;
  if(hdr->charcnt)hdr->TZDesigns     = (achar*)Ptr;  Ptr += sizeof(uint8) * hdr->charcnt;
  if(hdr->leapcnt)hdr->LeapSecRecs   = Ptr;          Ptr += ((hdr->Version > 1)?sizeof(SLSRec<uint64>):sizeof(SLSRec<uint32>)) * hdr->leapcnt;
@@ -95,25 +95,26 @@ template<typename T> static uint8* ParseBodyTZF(SHdrTZ* hdr, uint8* Ptr)
  return Ptr;
 }
 //---------------------------------------------------------------------------
-static int ParseTZF(SHdrTZ* hdr, void* tzf)
+static sint ParseTZF(SHdrTZ* hdr, void* tzf)
 {
  uint8* Ptr = ParseHdrTZF(hdr, tzf);
  if(!Ptr)return -1;
- Ptr = ParseBodyTZF<uint32>(hdr, Ptr); 
+ Ptr = ParseBodyTZF<uint32>(hdr, Ptr);
  Ptr = ParseHdrTZF(hdr, Ptr);    // Counters expected to be same as in V1 header
- if(!Ptr)return hdr->Version;    // No extended header (V1)
+ if(!Ptr)return sint(hdr->Version);    // No extended header (V1)
  Ptr = ParseBodyTZF<uint64>(hdr, Ptr);
- return hdr->Version;
+ return sint(hdr->Version);
 }
 //---------------------------------------------------------------------------
 template<typename T> static SLTT* GetTZFor(SHdrTZ* hdr, sint64 whence)
 {
- int l = 1, r = hdr->timecnt;
+ int tc = (int)hdr->timecnt;
+ int l = 1, r = tc;
  if(r == 0)return &hdr->LTTRecs[0];
  int i = (l+r)>>1;  // >> /2
  while(i > l)
   {
-   if(l >= hdr->timecnt){ i = hdr->timecnt; break; }
+   if(l >= tc){ i = tc; break; }
    if(l == i) break;
    sint64 tv = ReadField<T>(&((T*)hdr->TransTimes)[i]);
    if(tv == whence){ i++; break; }
@@ -121,7 +122,7 @@ template<typename T> static SLTT* GetTZFor(SHdrTZ* hdr, sint64 whence)
     else l = i+1;
    i = (l+r)>>1;    // >> /2
   }
- if(i > hdr->timecnt)i = hdr->timecnt;
+ if(i > tc)i = tc;
  if(whence > (sint64)ReadField<T>(&((T*)hdr->TransTimes)[i]))i++;
  return &hdr->LTTRecs[hdr->TransTypes[i-1]];
 }
@@ -130,8 +131,8 @@ static sint32 GetTimeZoneOffset(void* tzf, sint64 whence)  // In seconds
 {
  SHdrTZ hdr = {};
  if(ParseTZF(&hdr, tzf) < 0)return -1;
- SLTT* rec = (hdr.Version > 1)?GetTZFor<sint64>(&hdr, whence):GetTZFor<sint32>(&hdr, whence);
- return ReadField<uint32>(&rec->utoff);
+ SLTT*  rec = (hdr.Version > 1)?GetTZFor<sint64>(&hdr, whence):GetTZFor<sint32>(&hdr, whence);
+ return ReadField<sint32>(&rec->utoff);
 }
 };
 //---------------------------------------------------------------------------

@@ -282,7 +282,7 @@ __declspec(noinline) static PVOID PEImageInitialize(PVOID BaseAddr, PVOID NtDllB
  int    mres  = 0;
  if(!NtDllBase)NtDllBase = (PVOID)*(UINT64*)&DosHdr->Reserved2;
  if(!NtDllBase)NPEFMT::GetNtDllBaseFast(false);
- if(Flags & mfX64Mod)mres = NPEFMT::TFixUpModuleInplace<NPEFMT::PETYPE64>(ModuleBase,NtDllBase,Flags,&RetFix);    
+ if(Flags & mfX64Mod)mres = NPEFMT::TFixUpModuleInplace<NPEFMT::PETYPE64>(ModuleBase,NtDllBase,Flags,&RetFix);    // TODO: Take it from PE header if it is valid
   else mres = NPEFMT::TFixUpModuleInplace<NPEFMT::PETYPE32>(ModuleBase,NtDllBase,Flags,&RetFix); 
  if(mres < 0)return NULL;
  if(OffsToVA)*OffsToVA = NPEFMT::FileOffsetToRvaConvert(ModuleBase, *OffsToVA);           
@@ -326,6 +326,37 @@ _declspec(noinline) static PVOID ReflectiveRelocateSelf(PVOID BaseAddr, PVOID Nt
  if(!BaseAddr)return NULL;
  *RetPtr  = (PBYTE)BaseAddr + RetRVA;    // Return to the relocated copy
  return BaseAddr;
+}
+//------------------------------------------------------------------------------------
+_declspec(noinline) static PVOID RelocateSelf(PVOID BaseAddr, PVOID NtDllBase=NULL)  
+{
+ return nullptr;
+}
+//------------------------------------------------------------------------------------
+static PVOID RemoveModuleFromLdrList(HMODULE Module)  // NOTE: Old   // The module still will be visible as file mapping
+{
+ PPEB peb          = NtCurrentTeb()->ProcessEnvironmentBlock;
+ PPEB_LDR_DATA ldr = peb->Ldr;
+
+ for(LDR_DATA_TABLE_ENTRY_LO* me = peb->Ldr->InLoadOrderModuleList.Flink;me != (LDR_DATA_TABLE_ENTRY_LO*)&peb->Ldr->InLoadOrderModuleList;me = me->InLoadOrderLinks.Flink)
+  {
+   if(Module == me->DllBase)
+    {
+     me->InLoadOrderLinks.Blink->InLoadOrderLinks.Flink = me->InLoadOrderLinks.Flink;
+     me->InLoadOrderLinks.Flink->InLoadOrderLinks.Blink = me->InLoadOrderLinks.Blink;
+     me->InMemoryOrderLinks.Blink->InMemoryOrderLinks.Flink = me->InMemoryOrderLinks.Flink;
+     me->InMemoryOrderLinks.Flink->InMemoryOrderLinks.Blink = me->InMemoryOrderLinks.Blink;
+     me->InInitializationOrderLinks.Blink->InInitializationOrderLinks.Flink = me->InInitializationOrderLinks.Flink;
+     me->InInitializationOrderLinks.Flink->InInitializationOrderLinks.Blink = me->InInitializationOrderLinks.Blink;
+     /// TODO: Remove from Hash table
+     memset(me->FullDllName.Buffer,0,me->FullDllName.Length);  // BaseDllName is part of it
+     me->DllBase = nullptr;  
+     me->EntryPoint = nullptr;    
+     //  memset(me,0,sizeof(LDR_DATA_TABLE_ENTRY_LO));   // This may cause a random crash later if done from DllMain
+     return me;
+    }
+  }
+ return nullptr;
 }
 //------------------------------------------------------------------------------------
 __declspec(noinline) static void RedirRet(PBYTE OldBase, PBYTE NewBase)  

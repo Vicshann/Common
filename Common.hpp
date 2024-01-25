@@ -22,6 +22,8 @@
 
 #include "Utils.h"
 
+#define _ninline __declspec(noinline)
+
 extern char* _cdecl gcvt(double f, size_t ndigit, char* buf);
 
 // CRC32 hash: CRC32A("Hello World!")
@@ -90,7 +92,7 @@ static consteval __forceinline SIZE_T MakeBuildKey(void)
    Result <<= 32;
    Result  |= DTCrc;
   }    
- return Result;
+ return Result; 
 }
 
 struct NCMN

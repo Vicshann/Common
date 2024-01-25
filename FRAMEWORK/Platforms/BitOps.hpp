@@ -8,14 +8,14 @@
 // https://en.cppreference.com/w/cpp/numeric/countl_zero
 
 // Count Leading Zeros
-template<typename T> constexpr static inline int clz(T Num)
+template<typename T> constexpr static inline unsigned int clz(T Num)
 {
  return 0;
 }
 //------------------------------------------------------------------------------------
 // Count Trailing Zeros
 //
-template<typename T> constexpr static inline int ctz(T Num)
+template<typename T> constexpr static inline unsigned int ctz(T Num)
 {
 #ifdef REAL_MSVC
  unsigned long Index;   // Is it changed by _BitScanForward in case of Zero input? If not we can store (sizeof(Num)*8) in it
@@ -31,11 +31,11 @@ template<typename T> constexpr static inline int ctz(T Num)
      }
   }
    else res = _BitScanForward(&Index, (unsigned long)Num);
- if(res)return Index;    // Found 1 at some position
-  else return (sizeof(Num)*8);  // Num is zero, all bits is zero
+ if(res)return (unsigned int)Index;    // Found 1 at some position
+  else return (unsigned int)(sizeof(Num)*8);  // Num is zero, all bits is zero
 #else
- if constexpr (sizeof(T) > sizeof(long))return  __builtin_ctzll((unsigned long long)Num);  // X64 CPUs only?
-   else return __builtin_ctz((unsigned long)Num);
+ if constexpr (sizeof(T) > sizeof(long))return (unsigned int)__builtin_ctzll((uint64)Num);  // X64 CPUs only?
+   else return (unsigned int)__builtin_ctz((uint32)Num);
 #endif
 /* else   // TODO: optimize?
   {
@@ -129,7 +129,7 @@ template<typename T> T RevBits( T n )
 template<typename T> constexpr _finline static T SwapBytes(T Value)  // Unsafe with optimizations?  // TODO: Expand for basic types
 {
  uint8* SrcBytes = (uint8*)&Value;     // TODO: replace the cast with __builtin_bit_cast because it cannot be constexpr if contains a pointer cast
- uint8  DstBytes[sizeof(T)];
+ alignas(T) uint8  DstBytes[sizeof(T)];
  for(uint idx=0;idx < sizeof(T);idx++)DstBytes[idx] = SrcBytes[(sizeof(T)-1)-idx];    // Lets hope it will be optimized to bswap
  return *(T*)&DstBytes;
 }

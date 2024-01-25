@@ -40,7 +40,7 @@ static constexpr uint64 MICSEC_IN_SEC   = 1000000;
 static constexpr uint64 SECS_TO_FT_MULT = 10000000;   // Number of 100-nanosecond units in a second
 static constexpr uint64 TIME_T_BASE     = EPOCH_BIAS / SECS_TO_FT_MULT;
 
-static constexpr uint16 _finline MakeOffsTZ(uint16 Hour, uint16 Minute){return (Hour<<8)|Minute;}
+static constexpr uint16 _finline MakeOffsTZ(uint16 Hour, uint16 Minute){return uint16((Hour<<8)|Minute);}
 //---------------------------------------------------------------------------
 //Return the time as seconds elapsed since midnight, January 1, 1970, or -1 in the case of an error.
 //
@@ -92,7 +92,7 @@ static time_t _finline FileTimeToUnixTime(uint64 ft)
 //---------------------------------------------------------------------------
 static uint64 _finline UnixTimeToFileTime(time_t ut)
 {
- return (ut * SECS_TO_FT_MULT) + EPOCH_BIAS;
+ return (((uint64)ut * SECS_TO_FT_MULT) + EPOCH_BIAS);
 }
 //---------------------------------------------------------------------------
 // 1 second = 1,000000000 Nano seconds
@@ -120,7 +120,7 @@ template<typename T> static time_t DateTimeToUnixTime(const DT* dt, T* ts)
  uint m = dt->Month;
  uint d = dt->Day;
  if(m <= 2){y -= 1;m += 12;}     // Consider Jan and Feb to be months 13 and 14 of prev year
- uint32 t = (365 * y) + (y / 4) - (y / 100) + (y / 400);  // Years to days
+ uint32 t = uint32((365 * y) + (y / 4) - (y / 100) + (y / 400));  // Years to days
  t += (30 * m) + (3 * (m + 1) / 5) + d;  // Months to days
  t -= 719561;  // Unix EPOCH (January 1st, 1970)
  t *= 86400;   // Days to seconds
@@ -136,11 +136,11 @@ template<typename T> static void UnixTimeToDateTime(const T* ts, DT* dt, sint32 
  time_t t = ts->sec + tz_offs;    //((((tz_offs >> 8) * 60) + (tz_offs & 0xFF)) * 60);     // + (tz_offset * 60 * 60);
  if(t < 1)t = 0;  // No negative time support!
 
- dt->Second = t % 60;
+ dt->Second = uint16(t % 60);
  t /= 60;
- dt->Minute = t % 60;
+ dt->Minute = uint16(t % 60);
  t /= 60;
- dt->Hour   = t % 24;
+ dt->Hour   = uint16(t % 24);
  t /= 24;
 
  // Unix time to date
@@ -154,11 +154,11 @@ template<typename T> static void UnixTimeToDateTime(const T* ts, DT* dt, sint32 
  if(e <= 13){e -= 1;c -= 4716;}   // Consider Jan and Feb to be months 13 and 14 of prev year
   else {e -= 13;c -= 4715;}
 
- dt->Year  = c;
- dt->Month = e;
- dt->Day   = f;
+ dt->Year  = (uint16)c;
+ dt->Month = (uint16)e;
+ dt->Day   = (uint16)f;
 
- constexpr bool HaveNSecs = requires(const T* t) {t->nsec;};
+ constexpr bool HaveNSecs = requires(const T* tm) {tm->nsec;};
  if constexpr (HaveNSecs)    // T is STSpec
   {
    dt->Milliseconds = ts->nsec / NSEC_IN_MSEC;   // Nanoseconds
@@ -169,7 +169,7 @@ template<typename T> static void UnixTimeToDateTime(const T* ts, DT* dt, sint32 
      dt->Milliseconds = ts->usec / 1000;  // Microseconds
      dt->Nanoseconds  = ts->usec % 1000;  // Microseconds instead of Nanoseconds
     }
- if(!dt->DayOfWeek)dt->DayOfWeek = CalcDayOfWeek(c, e, f);    // Optional
+ if(!dt->DayOfWeek)dt->DayOfWeek = CalcDayOfWeek((uint16)c, (uint8)e, (uint8)f);    // Optional
 }
 //---------------------------------------------------------------------------
 sint CompareDateTime(const DT* dt1, const DT* dt2)

@@ -4,7 +4,7 @@
 // >>>>>>>>>>>>>>>>>>>>>>> OBFUSCATED INTEGER <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
 //#pragma intrinsic(_BitScanReverse)
-
+/*
 #if defined(_MSC_VER) && !defined(__clang__)
 #define REAL_MSVC
 #pragma message(">>>> Compiler is MSVC")
@@ -19,7 +19,7 @@
 #define FUNCSIG __PRETTY_FUNCTION__
 #define  _finline __attribute__((always_inline))
 #endif
-
+*/
 
 enum EBbfLevel {
                olNone,      // No obfuscation
@@ -34,7 +34,7 @@ constexpr int GObfuLevel = olStrong;
 
 namespace NARNUM
 {
-using uint   = unsigned long;
+/*using uint   = unsigned long;
 using uint32 = unsigned int;
 
 template<typename Ty> struct RemoveRef { using T = Ty; };
@@ -108,13 +108,13 @@ template<typename T> constexpr static inline int ctz(T Num)
  if constexpr (sizeof(T) > sizeof(long))return  __builtin_ctzll((unsigned long long)Num);  // X64 CPUs only?
    else return __builtin_ctz((unsigned long)Num);
 #endif
-/* else   // TODO: optimize?
-  {
-    int i = 0;
-	for(;!(Num & 1u); Num >>= 1, i++);
-	return i;
-  }
- return 0; */
+// else   // TODO: optimize?
+//  {
+//    int i = 0;
+//	for(;!(Num & 1u); Num >>= 1, i++);
+//	return i;
+//  }
+// return 0;
 }
 //------------------------------------------------------------------------------------
 // https://stackoverflow.com/questions/3849337/msvc-equivalent-to-builtin-popcount
@@ -136,7 +136,7 @@ template<typename T> constexpr static inline int popcount(T Num)
   Num = (Num + (Num >> 4)) & (T)~(T)0/255*15;
   return (T)(Num * ((T)~(T)0/255)) >> (sizeof(T) - 1) * 8;  // 8 is number of bits in char
  }
-}
+} */
 //====================================================================================
 // https://www.techtarget.com/whatis/definition/logic-gate-AND-OR-XOR-NOT-NAND-NOR-and-XNOR
 struct SBitLogic
@@ -239,11 +239,11 @@ consteval static auto GetMaxType(void)       // Usage: struct SMyStruct { declty
 // Return a byte with halves in range 1 - 14
 consteval static unsigned char NextRndByte(unsigned int Idx, unsigned int& Val)
 {
- constexpr unsigned int TheID = CT_CRC32(FUNCSIG);   // __func__ skips template parameters, use __PRETTY_FUNCTION__ instead (__FUNCSIG__ in MSVC)
+ constexpr unsigned int TheID = NCRYPT::CRC32(FUNC_SIG);    // __func__ skips template parameters, use __PRETTY_FUNCTION__ instead (__FUNCSIG__ in MSVC)
  unsigned char res = 0;
  for(int ctr=2,trp=8;ctr && trp;)
   {
-   if(!Val){Val = CT_Random(Idx) ^ TheID; trp--;}
+   if(!Val){Val = NCRYPT::CT_Random(Idx) ^ TheID; trp--;}
    char v = Val & 0x0F;
    if(v && (v < 0x0F))
     {
@@ -434,7 +434,7 @@ constexpr _finline void ModNext(bool Val, SBitLogic::EBitOp Op, unsigned int& Id
 constexpr _finline void ModPrev(bool Val, SBitLogic::EBitOp Op, unsigned int& Idx, unsigned int& Offs)
 {
  this->ModBitAt(Val, Op, Idx, Offs);
- StepPrev(Idx, Offs);;
+ StepPrev(Idx, Offs);
 }
 //------------------------------------------------------------------------------------
 _finline bool GetBitAt(unsigned int Idx, unsigned int Offs) const
@@ -461,7 +461,7 @@ constexpr _finline bool SetBitAt(bool Val, unsigned int Idx, unsigned int Offs)
    if(!(mval & (1 << Offs)))return Val;    // No change  // NOTE: More secure is to always rotate(Rotate 1 bit first to begin rotation)
    int  mstp  = (Offs >= 4)?(-1):(1);
    unsigned int  NOffs = Offs;
-   for(unsigned int ctr=4;ctr && (mval & (1 << NOffs));ctr--)NOffs += mstp;  // NOTE: Cannot unroll, condition depends on result  // Scan left or right from Offs position
+   for(unsigned int ctr=4;ctr && (mval & (1 << NOffs));ctr--)NOffs = (unsigned int)((int)NOffs + mstp);  // NOTE: Cannot unroll, condition depends on result  // Scan left or right from Offs position
    if(NOffs > Offs)bval = RotR(bval, NOffs - Offs);
    else bval = RotL(bval, Offs - NOffs);
   }
@@ -551,7 +551,7 @@ static _finline auto BinAdd(auto& Val1, const auto& Val2) // -> decltype(Val1)
     else BitA = GetBitAt(idx, Val1);
    if constexpr(V2IsBN)BitB = Val2.bitv.GetNext(bidx2,boffs2);
     else BitB = GetBitAt(idx, Val2);
-   Summ += (BitA + BitB);
+   Summ += (unsigned int)(BitA + BitB);
    char BitV = Summ & 1;
    if(BitA ^ BitV)
     {

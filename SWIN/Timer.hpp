@@ -11,7 +11,7 @@ friend CWndBase;
 //------------------------------------------------------------------------------------------------------------
 static bool ProcessTimerCallback(CWndBase* Parent, WPARAM& wParam, LPARAM& lParam)
 {
- CSWTimer* ti = (CSWTimer*)Parent->GetObj(wParam);
+ CSWTimer* ti = (CSWTimer*)Parent->GetObj((UINT)wParam);
  if(!ti)return false;                  //TODO: Check class name hash to avoid processing of someone`s WM_TIMER messages
  if(ti->OnInterval)(ti->GetOwnerWnd()->*(ti->OnInterval))(ti);
  return true;
@@ -43,12 +43,12 @@ int  SetInterval(UINT Intv)
 int  Start(UINT Intv=0)
 {
  if(Intv)this->Interval = Intv;
- return SetTimer(this->GetOwnerHandle(), this->IdxInPar, this->Interval, nullptr) - 1;
+ return (int)SetTimer(this->GetOwnerHandle(), this->IdxInPar, this->Interval, nullptr) - 1;
 }
 //------------------------------------------------------------------------------------------------------------
 int  Stop(void)
 {
- return KillTimer(this->GetOwnerHandle(), this->IdxInPar) - 1;
+ return (int)KillTimer(this->GetOwnerHandle(), this->IdxInPar) - 1;
 }
 //------------------------------------------------------------------------------------------------------------
 

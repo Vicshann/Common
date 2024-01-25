@@ -47,10 +47,10 @@ template<typename T> void S_R2(T& v,T& w,T& x,T& y,T& z,int i) {z+=(w^x^y)+SHABL
 template<typename T> void S_R3(T& v,T& w,T& x,T& y,T& z,int i) {z+=(((w|x)&y)|(w&x))+SHABLK(i)+0x8F1BBCDC+ROL32(v,5);w=ROL32(w,30);}
 template<typename T> void S_R4(T& v,T& w,T& x,T& y,T& z,int i) {z+=(w^x^y)+SHABLK(i)+0xCA62C1D6+ROL32(v,5);w=ROL32(w,30);}
 //------------------------------------------------------------------------------
-static uint8 HalfToHex(uint8 Half, bool UpCase)
+static achar HalfToHex(uint8 Half, bool UpCase)
 {
- if(Half <= 9)return 0x30 + Half;
- return ((int)!UpCase * 0x20) + 0x41 + (Half - 10);
+ if(Half <= 9)return achar(0x30 + Half);
+ return achar(((int)!UpCase << 5) + 0x41 + (Half - 10));  // << 5 is * 0x20
 }
 //------------------------------------------------------------------------------
 void Transform(uint32* pState, uint8* pBuffer)
@@ -136,9 +136,9 @@ void Final(void)
  for(uint32 i = 0; i < HashSize; ++i)m_digest[i] = static_cast<uint8>((m_state[i >> 2] >> ((3 - (i & 3)) * 8)) & 0xFF);
 }
 //------------------------------------------------------------------------------
-unsigned char* GetHash(void){return reinterpret_cast<unsigned char*>(&m_digest);}
+uint8* GetHash(void){return this->m_digest;}
 
-void GetHashStr(char* str, bool UpCase) // str size must be >= 65 bytes!
+void GetHashStr(achar* str, bool UpCase) // str size must be >= 65 bytes!
 {
  for(int ctr =0;ctr < HashSize;ctr++,str+=2)
   {
@@ -158,8 +158,8 @@ template<typename T=uint8> static constexpr void FWICALL Digest_SHA1(uint8 *dige
   uint32 H[]  = {0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0};
   uint32 didx = 0;
   uint64 databits  = ((uint64)databytes) * 8;
-  uint32 loopcount = (databytes + 8) / 64 + 1;
-  uint32 tailbytes = 64 * loopcount - databytes;
+  uint   loopcount = (databytes + 8) / 64 + 1;
+  uint   tailbytes = 64 * loopcount - databytes;
   uint8  datatail[128] = {0};
 
   // Pre-processing of data tail (includes padding to fill out 512-bit chunk):
@@ -176,7 +176,7 @@ template<typename T=uint8> static constexpr void FWICALL Digest_SHA1(uint8 *dige
   datatail[tailbytes - 1] = (uint8) (databits >> 0  & 0xFF);
 
   // Process each 512-bit chunk
-  for (uint32 lidx = 0; lidx < loopcount; lidx++)
+  for (uint lidx = 0; lidx < loopcount; lidx++)
   {
     // Compute all elements in W
     uint32 W[80] = {0};  // Memset is a problem

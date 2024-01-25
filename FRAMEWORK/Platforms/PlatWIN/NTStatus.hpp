@@ -2,7 +2,32 @@
 #pragma once
 
 //============================================================================================================
-enum ENTStatus
+// Values are 32 bit values laid out as follows:
+//
+// 3 3 2 2 2 2 2 2 2 2 2 2 1 1 1 1 1 1 1 1 1 1
+// 1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0
+// +---+-+-+-----------------------+-------------------------------+
+// |Sev|C|R| Facility | Code |
+// +---+-+-+-----------------------+-------------------------------+
+//
+// where
+//
+// Sev - is the severity code
+//
+// 00 - Success
+// 01 - Informational
+// 10 - Warning
+// 11 - Error
+//
+// C - is the Customer code flag
+//
+// R - is a reserved bit
+//
+// Facility - is the facility code
+//
+// Code - is the facility's status code
+//
+enum ENTStatus : uint32 // Enum size is size_t
 {
     STATUS_SUCCESS                                                  = 0x00000000,
     STATUS_WAIT_0                                                   = 0x00000000,
@@ -1064,7 +1089,7 @@ enum ENTStatus
     STATUS_SXS_INVALID_ACTCTXDATA_FORMAT                            = 0xC0150003,
     STATUS_SXS_ASSEMBLY_NOT_FOUND                                   = 0xC0150004,
     STATUS_SXS_MANIFEST_FORMAT_ERROR                                = 0xC0150005,
-    STATUS_SXS_MANIFEST_PARSE_ERROR                                 = 0xC0150006,                                                                                                                                    
+    STATUS_SXS_MANIFEST_PARSE_ERROR                                 = 0xC0150006,
     STATUS_SXS_ACTIVATION_CONTEXT_DISABLED                          = 0xC0150007,
     STATUS_SXS_KEY_NOT_FOUND                                        = 0xC0150008,
     STATUS_SXS_VERSION_CONFLICT                                     = 0xC0150009,

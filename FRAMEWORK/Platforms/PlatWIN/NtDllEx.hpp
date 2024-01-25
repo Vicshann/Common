@@ -14,25 +14,25 @@ static _finline uint8* GetUserSharedData(void)
 static _finline bool IsWinXPOrOlder(void)
 {
  uint8* pKiUserSharedData = GetUserSharedData();
- return (bool)*(PDWORD)pKiUserSharedData;    // Deprecated since 5.2(XP x64) and equals 0
+ return (bool)*(uint32*)pKiUserSharedData;    // Deprecated since 5.2(XP x64) and equals 0
 }
 //---------------------------------------------------------------------------
 static _finline uint64 GetTicks(void)
 {
  uint8* pKiUserSharedData = GetUserSharedData();
- return (*(uint16*)pKiUserSharedData)?((uint64)*(PDWORD)pKiUserSharedData):(*(uint64*)&pKiUserSharedData[0x320]); 
+ return (*(uint16*)pKiUserSharedData)?((uint64)*(uint32*)pKiUserSharedData):(*(uint64*)&pKiUserSharedData[0x320]);
 }
 //----------------------------------------------------------------------------
 static _finline uint64 GetTicksCount(void)
 {
  uint8* pKiUserSharedData = GetUserSharedData();
- return (GetTicks() * *(PDWORD)&pKiUserSharedData[4]) >> 24;  // 'TickCountLow * TickCountMultiplier' or 'TickCount * TickCountMultiplier'
+ return (GetTicks() * *(uint32*)&pKiUserSharedData[4]) >> 24;  // 'TickCountLow * TickCountMultiplier' or 'TickCount * TickCountMultiplier'
 }
 //----------------------------------------------------------------------------
 static _finline uint64 GetInterruptTime(void)   // FILETIME
 {
  uint8* pKiUserSharedData = GetUserSharedData();
- return *(uint64*)&pKiUserSharedData[0x0008]; 
+ return *(uint64*)&pKiUserSharedData[0x0008];
 }
 //----------------------------------------------------------------------------
 static _finline uint64 GetTimeZoneBias(void)  // FILETIME
@@ -44,69 +44,69 @@ static _finline uint64 GetTimeZoneBias(void)  // FILETIME
 static _finline uint64 GetSystemTime(void)  // FILETIME
 {
  uint8* pKiUserSharedData = GetUserSharedData();
- return *(uint64*)&pKiUserSharedData[0x0014]; 
+ return *(uint64*)&pKiUserSharedData[0x0014];
 }
 //----------------------------------------------------------------------------
 static _finline uint64 GetLocalTime(void)  // FILETIME
 {
- return GetSystemTime() - GetTimeZoneBias(); 
+ return GetSystemTime() - GetTimeZoneBias();
 }
 //----------------------------------------------------------------------------
 // _ReadBarrier       // Forces memory reads to complete
 // _WriteBarrier      // Forces memory writes to complete
-// _ReadWriteBarrier  // Block the optimization of reads and writes to global memory 
+// _ReadWriteBarrier  // Block the optimization of reads and writes to global memory
 //
 /*static inline volatile UINT64 GetAbstractTimeStamp(UINT64 volatile* PrevVal)
 {
  volatile UINT64 cval = __rdtsc();
  volatile UINT64 pval = *PrevVal;   // Interlocked.Read
- if(cval <= pval)return pval;       // Sync to increment   
+ if(cval <= pval)return pval;       // Sync to increment
  _InterlockedCompareExchange64((INT64*)PrevVal,cval, pval);  // Assign atomically if it is not changed yet  // This is the only one 64bit operand LOCK instruction available on x32 (cmpxchg8b)
  return *PrevVal;   // Return a latest value
 } */
 //----------------------------------------------------------------------------
-static NTSTATUS NtSleep(DWORD dwMiliseconds, bool Alertable=false)
+static NT::NTSTATUS NtSleep(uint32 dwMiliseconds, bool Alertable=false)
 {
  struct
   {
-   DWORD Low;
-   DWORD Hi;
-  } MLI = {{-10000 * dwMiliseconds},{0xFFFFFFFF}};    // Relative time used
- return NtDelayExecution(Alertable, (PLARGE_INTEGER)&MLI);
-}  
+   uint32 Low;
+   uint32 Hi;
+  } MLI = {{uint32((uint32)-10000 * dwMiliseconds)},{uint32(0xFFFFFFFFu)}};    // Relative time used
+ return SAPI::NtDelayExecution(Alertable, (NT::PLARGE_INTEGER)&MLI);
+}
 //----------------------------------------------------------------------------
-static inline uint64 GetNativeWowTebAddrWin10(void)   
+static inline uint64 GetNativeWowTebAddrWin10(void)
 {
- PTEB teb = NtCurrentTeb();
+ NT::PTEB teb = NT::NtCurrentTeb();
  if(!teb->WowTebOffset)return 0;  // Not WOW or below Win10  // From 10.0 and higher
- PBYTE TebX64 = (PBYTE)teb;
+ uint8* TebX64 = (uint8*)teb;
  if(long(teb->WowTebOffset) < 0)
   {
    TebX64 = &TebX64[(long)teb->WowTebOffset];  // In WOW processes WowTebOffset is negative in x32 TEB and positive in x64 TEB
    if(*(uint64*)&TebX64[0x30] != (uint64)TebX64)return 0;   // x64 Self
   }
-   else if(*(PDWORD)&TebX64[0x18] != (DWORD)TebX64)return 0;   // x32 Self
+   else if((size_t)(*(uint32*)&TebX64[0x18]) != (size_t)TebX64)return 0;   // x32 Self
  return uint64(TebX64);
 }
 //---------------------------------------------------------------------------
 // Returns 'false' if running under native x32 or native x64
 static inline bool IsWow64(void)
 {
- if constexpr(!IsArchX64)return NtCurrentTeb()->WOW32Reserved;   // Is it reliable?  Is it always non NULL under Wow64?   // Contains pointer to 'jmp far 33:Addr' 
+ if constexpr(!IsArchX64)return NT::NtCurrentTeb()->WOW32Reserved;   // Is it reliable?  Is it always non NULL under Wow64?   // Contains pointer to 'jmp far 33:Addr'
  return false;
 }
 //---------------------------------------------------------------------------
 // Returns base of NTDLL and optionally its path (can be used to get the system drive letter)
 //
-static PVOID GetBaseOfNtdll(PWSTR buf=nullptr, uint len=0)
+static vptr GetBaseOfNtdll(wchar* buf=nullptr, uint len=0)
 {
- PEB* CurPeb = NtCurrentPeb();
+ NT::PEB* CurPeb = NT::NtCurrentPeb();
  uint8* AddrInNtDll = (uint8*)CurPeb->FastPebLock;    // Stable?
- PEB_LDR_DATA* ldr = CurPeb->Ldr; //  CurTeb->ProcessEnvironmentBlock->Ldr;
- for(LDR_DATA_TABLE_ENTRY_MO* me = ldr->InMemoryOrderModuleList.Flink;me != (LDR_DATA_TABLE_ENTRY_MO*)&ldr->InMemoryOrderModuleList;me = me->InMemoryOrderLinks.Flink)     // Or just use LdrFindEntryForAddress?
+ NT::PEB_LDR_DATA* ldr = CurPeb->Ldr; //  CurTeb->ProcessEnvironmentBlock->Ldr;
+ for(NT::LDR_DATA_TABLE_ENTRY_MO* me = ldr->InMemoryOrderModuleList.Flink;me != (NT::LDR_DATA_TABLE_ENTRY_MO*)&ldr->InMemoryOrderModuleList;me = me->InMemoryOrderLinks.Flink)     // Or just use LdrFindEntryForAddress?
   {
    uint8* DllBeg = (uint8*)me->DllBase;
-   uint8* DllEnd = DllBeg + me->SizeOfImage; 
+   uint8* DllEnd = DllBeg + me->SizeOfImage;
    if((AddrInNtDll >= DllBeg)&&(AddrInNtDll < DllEnd))
     {
      if(buf && len)NSTR::StrCopy((wchar*)buf, (wchar*)(me->FullDllName.Buffer), (len > me->FullDllName.Length)?me->FullDllName.Length:len);
@@ -178,12 +178,12 @@ static PVOID GetBaseOfNtdll(PWSTR buf=nullptr, uint len=0)
  return -1;
 }*/
 //------------------------------------------------------------------------------------
-static PVOID LdrGetModuleByAddr(PVOID ModAddr, size_t* ModSize=nullptr)
+static vptr LdrGetModuleByAddr(vptr ModAddr, size_t* ModSize=nullptr)
 {
- PPEB_LDR_DATA ldr = NtCurrentTeb()->ProcessEnvironmentBlock->Ldr;    // TODO: Loader lock
- for(LDR_DATA_TABLE_ENTRY_MO* me = ldr->InMemoryOrderModuleList.Flink;me != (LDR_DATA_TABLE_ENTRY_MO*)&ldr->InMemoryOrderModuleList;me = me->InMemoryOrderLinks.Flink)     // Or just use LdrFindEntryForAddress?
+ NT::PPEB_LDR_DATA ldr = NT::NtCurrentTeb()->ProcessEnvironmentBlock->Ldr;    // TODO: Loader lock
+ for(NT::LDR_DATA_TABLE_ENTRY_MO* me = ldr->InMemoryOrderModuleList.Flink;me != (NT::LDR_DATA_TABLE_ENTRY_MO*)&ldr->InMemoryOrderModuleList;me = me->InMemoryOrderLinks.Flink)     // Or just use LdrFindEntryForAddress?
   {
-   if(((PBYTE)ModAddr < (PBYTE)me->DllBase) || ((PBYTE)ModAddr >= ((PBYTE)me->DllBase + me->SizeOfImage)))continue;
+   if(((uint8*)ModAddr < (uint8*)me->DllBase) || ((uint8*)ModAddr >= ((uint8*)me->DllBase + me->SizeOfImage)))continue;
    if(ModSize)*ModSize = me->SizeOfImage;
    return me->DllBase;
   }
@@ -195,25 +195,25 @@ static PVOID LdrGetModuleByAddr(PVOID ModAddr, size_t* ModSize=nullptr)
 // Removes excess '\' duplicates
 // Excludes from the path directories that preceeded by '..\' up until root directory '\'
 // So the output path can only become shorter
-// 
+//
 template<typename T> static uint NormalizePathNt(T Src, T Dst=nullptr)
 {
  if(!Dst)Dst = Src;
  sint SrcOffs = 0;
- sint DstOffs = 0;
+ uint DstOffs = 0;
  sint LastSep = -1;
- sint LstSep0 = 0;
- sint LstSep1 = 0;
+ uint LstSep0 = 0;
+ uint LstSep1 = 0;
  for(sint DotCtr=0;;SrcOffs++)
   {
    uint32 val = Src[SrcOffs];
-   if(!val)break; 
+   if(!val)break;
    if(val == '/')val = '\\';
-   if(val == '\\')  
+   if(val == '\\')
     {
-     sint slen = ((SrcOffs-1) - LastSep); 
+     sint slen = ((SrcOffs-1) - LastSep);
      LastSep = SrcOffs;
-     if(!slen && SrcOffs)continue;    // Skip sequential '\\' 
+     if(!slen && SrcOffs)continue;    // Skip sequential '\\'
      if(DotCtr)
       {
        if((DotCtr <= 2) && (slen == DotCtr))  // Check that we have only dots between separators   // When we got a separator then we check if we have '.' or '..'
@@ -221,15 +221,15 @@ template<typename T> static uint NormalizePathNt(T Src, T Dst=nullptr)
          if(DotCtr == 1){DstOffs = LstSep0; LstSep0 = LstSep1;}   // Just remove '.\'
          else if(DotCtr == 2){DstOffs = LstSep1;}                 // Remove 'SomeDir\..\'
         }
-       DotCtr = 0;      
+       DotCtr = 0;
       }
      LstSep1 = LstSep0;
      LstSep0 = DstOffs;
     }
    else if(val == '.')DotCtr++;
-   Dst[DstOffs++] = val; 
+   Dst[DstOffs++] = (decltype(*Dst))val;
   }
- Dst[DstOffs] = 0; 
+ Dst[DstOffs] = 0;
  return DstOffs;
 }
 //------------------------------------------------------------------------------------
@@ -254,10 +254,10 @@ static _finline size_t CalcFilePathBufSize(const achar* Path, uint& plen, EPathT
  return (plen*4)+ExtraLen;
 }
 //------------------------------------------------------------------------------------
-static _finline void InitFileObjectAttributes(const achar* Path, uint plen, EPathType ptype, uint32 ObjAttributes, NT::UNICODE_STRING* buf_ustr, wchar* buf_path, NT::OBJECT_ATTRIBUTES* oattr)
+static _finline void InitFileObjectAttributes(const achar* Path, uint plen, EPathType ptype, uint32 ObjAttributes, NT::UNICODE_STRING* buf_ustr, wchar* buf_path, NT::OBJECT_ATTRIBUTES* oattr, NT::HANDLE RootDir=nullptr)
 {
  uint DstLen = NSTR::StrCopy(buf_path, L"\\GLOBAL??\\");     // Windows XP?
- NT::UNICODE_STRING* CurrDir = &NT::NtCurrentTeb()->ProcessEnvironmentBlock->ProcessParameters->CurrentDirectory.DosPath; 
+ NT::UNICODE_STRING* CurrDir = &NT::NtCurrentTeb()->ProcessEnvironmentBlock->ProcessParameters->CurrentDirectory.DosPath;
  if(ptype == NTX::ptSysRootRel)DstLen += NSTR::StrCopy(&buf_path[DstLen], (wchar*)&fwsinf.SysDrive);
  else if(ptype == NTX::ptCurrDirRel)DstLen += NSTR::StrCopy(&buf_path[DstLen], (wchar*)CurrDir->Buffer);
  DstLen += NUTF::Utf8To16(&buf_path[DstLen], Path, plen);
@@ -267,40 +267,40 @@ static _finline void InitFileObjectAttributes(const achar* Path, uint plen, EPat
  buf_ustr->Set(buf_path, DstLen);
 
  oattr->Length = sizeof(NT::OBJECT_ATTRIBUTES);
- oattr->RootDirectory = nullptr;
+ oattr->RootDirectory = RootDir;
  oattr->ObjectName = buf_ustr;
  oattr->Attributes = ObjAttributes;            // OBJ_CASE_INSENSITIVE;   //| OBJ_KERNEL_HANDLE;
  oattr->SecurityDescriptor = nullptr;          // TODO: Arg3: mode_t mode
  oattr->SecurityQualityOfService = nullptr;
 }
 //------------------------------------------------------------------------------------
-static NTSTATUS OpenFileObject(const achar* Path, ACCESS_MASK DesiredAccess, ULONG ObjAttributes, ULONG FileAttributes, ULONG ShareAccess, ULONG CreateDisposition, ULONG CreateOptions, PIO_STATUS_BLOCK IoStatusBlock, PHANDLE FileHandle)
+static NT::NTSTATUS OpenFileObject(NT::PHANDLE FileHandle, const achar* Path, NT::ACCESS_MASK DesiredAccess, NT::ULONG ObjAttributes, NT::ULONG FileAttributes, NT::ULONG ShareAccess, NT::ULONG CreateDisposition, NT::ULONG CreateOptions, NT::PIO_STATUS_BLOCK IoStatusBlock, NT::HANDLE RootDir=nullptr)
 {
  NT::OBJECT_ATTRIBUTES oattr = {};
  NT::UNICODE_STRING FilePathUS;
 
- uint plen; 
- NTX::EPathType ptype; 
- uint PathLen = CalcFilePathBufSize(Path, plen, ptype); 
+ uint plen;
+ NTX::EPathType ptype;
+ uint PathLen = CalcFilePathBufSize(Path, plen, ptype);
 
- wchar FullPath[PathLen];   
- InitFileObjectAttributes(Path, plen, ptype, ObjAttributes, &FilePathUS, FullPath, &oattr);
+ wchar FullPath[PathLen];
+ InitFileObjectAttributes(Path, plen, ptype, ObjAttributes, &FilePathUS, FullPath, &oattr, RootDir);
  return SAPI::NtCreateFile(FileHandle, DesiredAccess, &oattr, IoStatusBlock, nullptr, FileAttributes, ShareAccess, CreateDisposition, CreateOptions, nullptr, 0);
 }
 //------------------------------------------------------------------------------------
 /*
  https://stackoverflow.com/questions/46473507/delete-folder-for-which-every-api-call-fails-with-error-access-denied
 
-for delete file enough 2 things - we have FILE_DELETE_CHILD on parent folder. and file is not read only. 
-in this case call ZwDeleteFile (but not DeleteFile or RemoveDirectory - both this api will fail if file have empty DACL) is enough. 
-in case file have read-only attribute - ZwDeleteFile fail with code STATUS_CANNOT_DELETE. in this case we need first remove read only. 
+for delete file enough 2 things - we have FILE_DELETE_CHILD on parent folder. and file is not read only.
+in this case call ZwDeleteFile (but not DeleteFile or RemoveDirectory - both this api will fail if file have empty DACL) is enough.
+in case file have read-only attribute - ZwDeleteFile fail with code STATUS_CANNOT_DELETE. in this case we need first remove read only.
 for this need open file with FILE_WRITE_ATTRIBUTES access. we can do this if we have SE_RESTORE_PRIVILEGE and set FILE_OPEN_FOR_BACKUP_INTENT option in call to ZwOpenFile.
 
 A file in the file system is basically a link to an inode.
 A hard link, then, just creates another file with a link to the same underlying inode.
 When you delete a file, it removes one link to the underlying inode. The inode is only deleted (or deletable/over-writable) when all links to the inode have been deleted.
 
-Once a hard link has been made the link is to the inode. Deleting, renaming, or moving the original file will not affect the hard link as it links to the underlying inode. 
+Once a hard link has been made the link is to the inode. Deleting, renaming, or moving the original file will not affect the hard link as it links to the underlying inode.
 Any changes to the data on the inode is reflected in all files that refer to that inode.
 
 https://superuser.com/questions/343074/directory-junction-vs-directory-symbolic-link
@@ -318,18 +318,18 @@ ObpSymbolicLinkObjectType
 NtOpenSymbolicLinkObject
  NtDeleteFile is much simpler and faster but it is not used by DeleteFileW (Because it just follows a file obect`s name by any link?)
 */
-static NTSTATUS DeleteFileObject(const achar* Path, bool Force, int AsDir)     // NtDeleteFile
+static NT::NTSTATUS DeleteFileObject(const achar* Path, bool Force, int AsDir)     // NtDeleteFile
 {
  NT::OBJECT_ATTRIBUTES oattr = {};
  NT::UNICODE_STRING FilePathUS;
 
- uint plen; 
- NTX::EPathType ptype; 
- uint PathLen = CalcFilePathBufSize(Path, plen, ptype); 
+ uint plen;
+ NTX::EPathType ptype;
+ uint PathLen = CalcFilePathBufSize(Path, plen, ptype);
  uint32 ObjAttributes = NT::OBJ_DONT_REPARSE;  //  Symlinks are implemented as Reparse Points   // Only Hard Links to a file can be safely deleted without this
- wchar FullPath[PathLen];   
+ wchar FullPath[PathLen];
  InitFileObjectAttributes(Path, plen, ptype, ObjAttributes, &FilePathUS, FullPath, &oattr);
- NTSTATUS Status = SAPI::NtDeleteFile(&oattr);     // Deletes files and directories(empty)  // ObOpenObjectByNameEx as  
+ NT::NTSTATUS Status = SAPI::NtDeleteFile(&oattr);     // Deletes files and directories(empty)  // ObOpenObjectByNameEx as
  if(Status != NT::STATUS_REPARSE_POINT_ENCOUNTERED)return Status;   // Succeeded or failed
 
  // A Symlink encountered on the path
@@ -359,17 +359,18 @@ static NTSTATUS DeleteFileObject(const achar* Path, bool Force, int AsDir)     /
  return Status;
 }
 //------------------------------------------------------------------------------------
-static NTSTATUS DeleteSymbolicLinkObject(const achar* Path)
+static NT::NTSTATUS DeleteSymbolicLinkObject(const achar* Path)
 {
-if (NtOpenSymbolicLinkObject( &handle, DELETE, &objectAttributes) == STATUS_SUCCESS)
+/*if (NtOpenSymbolicLinkObject( &handle, DELETE, &objectAttributes) == STATUS_SUCCESS)
 {
     NtMakeTemporaryObject( handle);
     NtClose( handle);
-}
+} */
+ return 0;
 }
 //------------------------------------------------------------------------------------
-// On some hardware architectures (e.g., i386), PROT_WRITE implies PROT_READ.  
-// It is architecture dependent whether PROT_READ implies PROT_EXEC or not.  
+// On some hardware architectures (e.g., i386), PROT_WRITE implies PROT_READ.
+// It is architecture dependent whether PROT_READ implies PROT_EXEC or not.
 // Portable programs should always set PROT_EXEC if they intend to execute code in the new mapping.
 //
 // Works for memory allocation/protection and file mapping
@@ -377,15 +378,15 @@ if (NtOpenSymbolicLinkObject( &handle, DELETE, &objectAttributes) == STATUS_SUCC
 static uint32 MemProtPXtoNT(uint32 prot)
 {
  uint32 PageProt = 0;
- if(prot & PX::PROT_EXEC)     // Use EXEC group of flags 
+ if(prot & PX::PROT_EXEC)     // Use EXEC group of flags
   {
    if(prot & PX::PROT_WRITE)
     {
-     if(prot & PX::PROT_READ)PageProt |= NT::PAGE_EXECUTE_READWRITE; 
-       else PageProt |= NT::PAGE_EXECUTE_WRITECOPY;  
+     if(prot & PX::PROT_READ)PageProt |= NT::PAGE_EXECUTE_READWRITE;
+       else PageProt |= NT::PAGE_EXECUTE_WRITECOPY;
     }
-   else if(prot & PX::PROT_READ)PageProt |= NT::PAGE_EXECUTE_READ;   
-   else PageProt |= NT::PAGE_EXECUTE;                                
+   else if(prot & PX::PROT_READ)PageProt |= NT::PAGE_EXECUTE_READ;
+   else PageProt |= NT::PAGE_EXECUTE;
   }
  else   // Use ordinary R/W group of flags
   {
@@ -404,7 +405,7 @@ static uint32 MemProtPXtoNT(uint32 prot)
 }
 //------------------------------------------------------------------------------------
 // From MingW
-static uint NTStatusToLinuxErr(NTSTATUS err, uint Default=PX::EPERM)
+static uint NTStatusToLinuxErr(NT::NTSTATUS err, uint Default=PX::EPERM)
 {
  if(!err)return PX::NOERROR;
  switch((uint)err)
@@ -715,7 +716,7 @@ static uint NTStatusToLinuxErr(NTSTATUS err, uint Default=PX::EPERM)
   case NT::STATUS_TOO_MANY_LINKS:
     return PX::EMLINK;
   }
- if(err >= 0)return PX::NOERROR;    // Unknown Status, not an error
+ if(!(err & 0xC0000000))return PX::NOERROR;    // Unknown Status, not an error
  return Default;
 }
 //------------------------------------------------------------------------------------

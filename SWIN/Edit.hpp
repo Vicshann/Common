@@ -38,12 +38,12 @@ virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, L
 // The return value will never be less than 1
 UINT LineCount(void)
 {
- return SendMessageW(this->GetHandle(),EM_GETLINECOUNT,0,0);
+ return (UINT)SendMessageW(this->GetHandle(),EM_GETLINECOUNT,0,0);
 }
 //------------------------------------------------------------------------------------------------------------
 UINT GetTextLimit(void)  // 30000
 {
- return SendMessageW(this->GetHandle(),EM_GETLIMITTEXT,0,0);
+ return (UINT)SendMessageW(this->GetHandle(),EM_GETLIMITTEXT,0,0);
 }
 //------------------------------------------------------------------------------------------------------------
 template<typename T> int AddLine(T Str)

@@ -39,7 +39,19 @@ int Create(SWDim& Wdim, LPCWSTR WndName=L"", DWORD Style=0, DWORD ExStyle=0, HWN
    this->WndClass     = RegisterClassExW(&wcls);
    if(!this->WndClass)return -1;
   }
- return (this->CreateWnd((LPCWSTR)this->WndClass, WndName, Style, ExStyle, Wdim.PosX, Wdim.PosY, Wdim.Width, Wdim.Height, hParentWnd))?(0):(-2);
+ int WWidth  = Wdim.Width;
+ int WHeight = Wdim.Height;
+ RECT wr = {0, 0, WWidth, WHeight};    // set the size, but not the position
+ if(AdjustWindowRectEx(&wr, Style, FALSE, ExStyle)){WWidth = wr.right - wr.left; WHeight = wr.bottom - wr.top;}        // Menu?   // Useless if system does DPI  scaling
+ HWND hNewWnd = this->CreateWnd((LPCWSTR)this->WndClass, WndName, Style, ExStyle, Wdim.PosX, Wdim.PosY, WWidth, WHeight, hParentWnd);
+/* if(hNewWnd)   // If the app is not DPI aware, width and height of the form will differ too much from what you specified (Expecially if in PE header MajorOperationSystemVer and MajorSubsystemVer is above 5)
+  {
+   RECT cwr;
+   GetWindowRect(hNewWnd, &wr);   // Width and height returnad is same as was passed to CreateWnd
+   GetClientRect(hNewWnd, &cwr);  // This returns something else, not specified values from SWDim or adjusted ones
+   // What next?  
+  } */
+ return (hNewWnd)?(0):(-2);
 }
 //------------------------------------------------------------------------------------------------------------
 virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, LRESULT& lResult)

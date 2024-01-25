@@ -16,12 +16,13 @@ _NOMANGL void __cxa_pure_virtual(void)
 //void *__dso_handle = 0;
 _NOMANGL int __cxa_atexit(void (*destructor) (void *), void *arg, void *dso)
 {
+ UNUSED(destructor); UNUSED(arg); UNUSED(dso);
  return 0;
 }
 
 _NOMANGL void __cxa_finalize(void *f)
 {
-
+ UNUSED(f);
 }
 
 _NOMANGL void _ccall _purecall(void){}  // extern "C" ?  // Visual Studio

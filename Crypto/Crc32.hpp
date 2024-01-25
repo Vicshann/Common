@@ -52,6 +52,41 @@
   crc_table_empty = 0;
 }
 
+
+
+// https://github.com/Michaelangel007/crc32
+template<UINT32 Poly=0xEDB88320> struct SCrc32
+{
+ UINT32 Table[256];
+// The forward polynomial, 0x04C11DB7,
+// The reverse polynomial, 0xEDB88320, where the bits are reversed.
+//
+// Normal initialization checks the top bit and shifts left,
+// Reflected initialiation checks the bottom bit and shifts right.
+SCrc32(void)
+{
+  for (UINT i = 0; i < 256; ++i )
+  {
+    UINT32 v62 = (i >> 1) ^ Poly;
+    if ( (i & 1) == 0 )v62 = i >> 1;
+    UINT32 v63 = (v62 >> 1) ^ Poly;
+    if ( (v62 & 1) == 0 )v63 = v62 >> 1;
+    UINT32 v64 = (v63 >> 1) ^ Poly;
+    if ( (v63 & 1) == 0 )v64 = v63 >> 1;
+    UINT32 v65 = (v64 >> 1) ^ Poly;
+    if ( (v64 & 1) == 0 )v65 = v64 >> 1;
+    UINT32 v66 = (v65 >> 1) ^ Poly;
+    if ( (v65 & 1) == 0 )v66 = v65 >> 1;
+    UINT32 v67 = (v66 >> 1) ^ Poly;
+    if ( (v66 & 1) == 0 )v67 = v66 >> 1;
+    UINT32 v68 = (v67 >> 1) ^ Poly;
+    if ( (v67 & 1) == 0 )v68 = v67 >> 1;
+    UINT32 v69 = (v68 >> 1) ^ Poly;
+    if ( (v68 & 1) == 0 )v69 = v68 >> 1;
+    Table[i] = v69;
+  }
+}
+
 */
 //------------------------------------------------------------------------------
 struct CCRC32

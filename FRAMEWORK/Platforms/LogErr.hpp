@@ -151,7 +151,7 @@ _ninline static sint _fcall LogProc(const achar* Message, void** ArgList, uint32
   }
 
  achar* MPtr = nullptr;
- achar TmpBuf[1024*2];   // avoid chkstk
+ alignas(sizeof(void*)) achar TmpBuf[1024*2];   // avoid chkstk
 
  // Split flags:
  uint32 LogFlag = (MsgFlags & lfMask) | (Ctx->LogModes & lfMask);  // Add from LDSC (Usually 0 in LDSC)
@@ -209,7 +209,7 @@ _ninline static sint _fcall LogProc(const achar* Message, void** ArgList, uint32
      TmpBuf[MSize++] = 0x20;
     }
    // TODO: Use split buffer (writev) instead of formatting everything to some buffer and dealing with overflows and allocations
-   MSize += NFMT::FormatToBuffer((char*)Message, &TmpBuf[MSize], (sizeof(TmpBuf)-3)-MSize, ArgList);          //    FormatToBuffer(Message, &TmpBuf[MSize], (sizeof(TmpBuf)-3)-MSize, args);  // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+   MSize += (uint)NFMT::FormatToBuffer((char*)Message, &TmpBuf[MSize], (sizeof(TmpBuf)-3)-MSize, ArgList);      // May return negative error code?    //    FormatToBuffer(Message, &TmpBuf[MSize], (sizeof(TmpBuf)-3)-MSize, args);  // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<
    if(LogFlag & lfLineBreak)
     {
      TmpBuf[MSize++] = '\r';

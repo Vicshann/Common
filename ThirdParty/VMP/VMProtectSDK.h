@@ -1,13 +1,19 @@
 #pragma once
 
+#if defined(__APPLE__) || defined(__unix__)
+#define VMP_IMPORT 
+#define VMP_API
+#define VMP_WCHAR unsigned short
+#else
 #define VMP_IMPORT __declspec(dllimport)
 #define VMP_API __stdcall
 #define VMP_WCHAR wchar_t
 #ifdef _WIN64
-	#pragma comment(lib, "VMProtectSDK64.lib")      // "VMProtectDDK64.lib"
+	#pragma comment(lib, "VMProtectSDK64.lib")
 #else
-	#pragma comment(lib, "VMProtectSDK32.lib")      // "VMProtectDDK32.lib"
+	#pragma comment(lib, "VMProtectSDK32.lib")
 #endif // _WIN64
+#endif // __APPLE__ || __unix__
 
 #ifdef __cplusplus
 extern "C" {
@@ -23,13 +29,13 @@ VMP_IMPORT void VMP_API VMProtectBeginUltraLockByKey(const char *);
 VMP_IMPORT void VMP_API VMProtectEnd(void);
 
 // utils
-VMP_IMPORT unsigned char VMP_API VMProtectIsProtected();
-VMP_IMPORT unsigned char VMP_API VMProtectIsDebuggerPresent(unsigned char); // IRQL = PASSIVE_LEVEL
-VMP_IMPORT unsigned char VMP_API VMProtectIsVirtualMachinePresent(void); // IRQL = PASSIVE_LEVEL
-VMP_IMPORT unsigned char VMP_API VMProtectIsValidImageCRC(void);
+VMP_IMPORT bool VMP_API VMProtectIsProtected();
+VMP_IMPORT bool VMP_API VMProtectIsDebuggerPresent(bool);
+VMP_IMPORT bool VMP_API VMProtectIsVirtualMachinePresent(void);
+VMP_IMPORT bool VMP_API VMProtectIsValidImageCRC(void);
 VMP_IMPORT const char * VMP_API VMProtectDecryptStringA(const char *value);
 VMP_IMPORT const VMP_WCHAR * VMP_API VMProtectDecryptStringW(const VMP_WCHAR *value);
-VMP_IMPORT unsigned char VMP_API VMProtectFreeString(const void *value);
+VMP_IMPORT bool VMP_API VMProtectFreeString(const void *value);
 
 // licensing
 enum VMProtectSerialStateFlags
@@ -67,7 +73,7 @@ typedef struct
 
 VMP_IMPORT int VMP_API VMProtectSetSerialNumber(const char *serial);
 VMP_IMPORT int VMP_API VMProtectGetSerialNumberState();
-VMP_IMPORT unsigned char VMP_API VMProtectGetSerialNumberData(VMProtectSerialNumberData *data, int size);
+VMP_IMPORT bool VMP_API VMProtectGetSerialNumberData(VMProtectSerialNumberData *data, int size);
 VMP_IMPORT int VMP_API VMProtectGetCurrentHWID(char *hwid, int size);
 
 // activation

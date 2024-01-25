@@ -9,7 +9,7 @@ private:
 // NOTE: T should be void or 1,2,4,8 in size
 // C++STD: A pointer to void will have the same representation and memory alignment as a pointer to char.
 //------------------------------------------------------------------------------------------------------------
-_finline static int AlignOfPtr(const void* Ptr)
+_finline static size_t AlignOfPtr(const void* Ptr)
 {
  return 1 << ctz((size_t)Ptr);
 }
@@ -83,31 +83,31 @@ template<typename T, bool BE=false> constexpr _finline static void* StoreAsBytes
    else Val = (size_t)*Src;
  uint8* _RST Dst = (uint8*)pDst;
  if constexpr(BE)Val = SwapBytes(Val);   // Extra operation but should make shifts easier (as with LE)
- if constexpr(sizeof(T) > 0)*Dst = Val;  // uint8
+ if constexpr(sizeof(T) > 0)*Dst = (uint8)Val;  // uint8
  if constexpr(sizeof(T) > 1)    // uint16
   {
    Dst++; Val >>= 8;
-   *Dst = Val;
+   *Dst = (uint8)Val;
   }
  if constexpr(sizeof(T) > 2)   // uint32
   {
    Dst++; Val >>= 8;
-   *Dst = Val;
+   *Dst = (uint8)Val;
    Dst++; Val >>= 8;
-   *Dst = Val;
+   *Dst = (uint8)Val;
   }
  if constexpr(sizeof(T) > 4)   // uint64
   {
    if constexpr(IsArchX64)
     {
      Dst++; Val >>= 8;
-     *Dst = Val;
+     *Dst = (uint8)Val;
      Dst++; Val >>= 8;
-     *Dst = Val;
+     *Dst = (uint8)Val;
      Dst++; Val >>= 8;
-     *Dst = Val;
+     *Dst = (uint8)Val;
      Dst++; Val >>= 8;
-     *Dst = Val;
+     *Dst = (uint8)Val;
     }
      else Dst = (uint8*)StoreAsBytes(&((uint32*)Src)[1], Dst);   // Second half as uint32     (Src is 8b aligned)
   }
@@ -253,13 +253,13 @@ template<typename T, bool rev=false> constexpr _finline static size_t StoreAs(T 
 // Worst case scenarios:
 //   AlPtrA 1001 +1> 0010 +2> 0100 +4> 1000 +4> 1100 +4> 0000
 //   AlPtrB 0101 +1> 0110 +2> 1000 +4> 1100 +4> 0000 +4> 0100 : Will never sync above 4
-//   
-//   AlPtrA 1011 +1> 1100 +2> 1110  
+//
+//   AlPtrA 1011 +1> 1100 +2> 1110
 //   AlPtrB 0101 +1> 0110 +2> 1000 : Will never sync above 2
-//   
+//
 template<bool rev=false> constexpr static size_t MemCopySync(void* _RST* _RST Dst, void* _RST* _RST Src, size_t Size)
 {
- size_t Mask = ((size_t)*Dst|(size_t)*Src); 
+ size_t Mask = ((size_t)*Dst|(size_t)*Src);
  if(Mask & 0x01){Size=CopyAs<uint8,rev>(Dst, Src, Size); Mask = ((size_t)*Dst|(size_t)*Src);}  // u8
  if(Size >= sizeof(uint16))
   {
@@ -356,14 +356,14 @@ template<typename D, typename S, bool rev> constexpr static size_t SplitCopy(voi
      Src--;
      S val = *Src;
      if constexpr(NCFG::IsBigEnd)val = SwapBytes(val);  // Untested!
-     for(uint ctr=sizeof(S)/sizeof(D);ctr--;){Dst--; *Dst = val >> (ctr*(sizeof(D)*8));}    // Add attr to force it unrolled?
+     for(uint ctr=sizeof(S)/sizeof(D);ctr--;){Dst--; *Dst = D(val >> (ctr*(sizeof(D)*8)));}    // Add attr to force it unrolled?
     }
    else
     {
      S val = *Src;
      Src++;
      if constexpr(NCFG::IsBigEnd)val = SwapBytes(val);  // Untested!
-     for(uint ctr=sizeof(S)/sizeof(D);ctr;ctr--,val >>= (sizeof(D)*8)){*Dst = val; Dst++;}    // Add attr to force it unrolled?
+     for(uint ctr=sizeof(S)/sizeof(D);ctr;ctr--,val >>= (sizeof(D)*8)){*Dst = D(val); Dst++;}    // Add attr to force it unrolled?
     }
    Size -= sizeof(S);
   }
@@ -399,7 +399,7 @@ template<typename D, typename S, bool rev> constexpr static size_t SplitCopy(voi
 // Store from SRC to DST by splitting SRC value (Dst blk size is expected to be less than T) (Min size is SplAlign)
 // Parses second alignment
 // IFs should be faster than SWITCH because not accessing memory?
-template<typename T, bool rev=false> constexpr static size_t SplitCopy(void* _RST* _RST Dst, void* _RST* _RST Src, size_t Size, const int SplAlign)
+template<typename T, bool rev=false> constexpr static size_t SplitCopy(void* _RST* _RST Dst, void* _RST* _RST Src, size_t Size, const size_t SplAlign)
 {
  if constexpr (sizeof(T) <= sizeof(uint8))   // Should not happen assuming that SplAlign will be expected to be 0
   {
@@ -435,8 +435,8 @@ public:
 template<bool rev=false> constexpr static void* MemCopy(void* _RST Dst, void* _RST Src, size_t Size)
 {
  if(!Size)return Dst;
- int AlSrc = AlignOfPtr(Src);
- int AlDst = AlignOfPtr(Dst);
+ size_t AlSrc = AlignOfPtr(Src);
+ size_t AlDst = AlignOfPtr(Dst);
  if(AlSrc == AlDst)
   {
    Size  = MemCopySync<rev>(&Dst, &Src, Size);
@@ -444,8 +444,8 @@ template<bool rev=false> constexpr static void* MemCopy(void* _RST Dst, void* _R
    AlSrc = AlignOfPtr(Src);    // Should never be equal unless there are some bugs in MemCopySync
    AlDst = AlignOfPtr(Dst);
   }
- int AlMin, AlMax;
- if(AlSrc <  AlDst){AlMin = AlSrc; AlMax = AlDst;}
+ size_t AlMin, AlMax;
+ if(AlSrc < AlDst){AlMin = AlSrc; AlMax = AlDst;}
    else {AlMin = AlDst; AlMax = AlSrc;}
  if(AlMax & sizeof(uint16))Size=SplitCopy<uint16,rev>(&Dst, &Src, Size, AlMin);       // To u16
  else if(AlMax & sizeof(uint32))Size=SplitCopy<uint32,rev>(&Dst, &Src, Size, AlMin);  // To u32
@@ -514,15 +514,15 @@ _finline static void* MemZero(void* _RST Dst, size_t Size)
 //---------------------------------------------------------------------------
 constexpr static void* MemRotLeft(void* _RST Dst, size_t Size, size_t Bytes)
 {
- return 0;
+ return nullptr;
 }
 //---------------------------------------------------------------------------
 constexpr static void* MemRotRight(void* _RST Dst, size_t Size, size_t Bytes)
 {
- return 0;
+ return nullptr;
 }
 //---------------------------------------------------------------------------
-// Fill value size is same size as T (uint8 for void* and char)
+// Fill value size is same size as T (uint8 for void* and char)      // TODO: Recursive?
 template<typename T=uint8> constexpr static void* MemFill(void* _RST Dst, size_t Size, const T Val)  // TODO: Obj Type version to make alignment detection constexpr (MemFillObj)
 {
  if(!Val)return MemZero(Dst, Size);
@@ -623,7 +623,7 @@ void* memmove(void* Dst, const void* Src, size_t Size)   // Fixed but inefficien
 // Is there a way to inline and optimize it?
 void* memset(void* Dst, const unsigned int Val, size_t Size)      // TODO: Aligned, SSE by MACRO   _EXTERNC
 {
- return NMOPS::MemFill<uint8>(Dst,Size,Val);
+ return NMOPS::MemFill<uint8>(Dst,Size,(uint8)Val);
 }
 //---------------------------------------------------------------------------
 // TODO: Need a function which returns number of matched bytes, not just diff of a last unmatched byte

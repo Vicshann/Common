@@ -19,12 +19,24 @@ template<uint vLinux, uint BSD_MAC> struct DCV   // Can be used for Kernel too
 {
  static constexpr int
 #if defined(SYS_MACOS) || defined(SYS_BSD)
- V = BSD_MAC
+ V = (int)BSD_MAC
 #else       // Linux and Windows(emulation)
- V = vLinux
+ V = (int)vLinux
 #endif
 ;
 };
+
+template<uint vARM, uint vX86> struct ASV
+{
+ static constexpr int
+#  if defined(CPU_ARM)
+ V = (int)vARM
+#else
+ V = (int)vX86
+#endif
+;
+}; 
+
 
 
  using PVOID    = SPTR<void,   PHT>;    // All of this is to be able to call X64 syscalls from X32 code
@@ -41,7 +53,10 @@ template<uint vLinux, uint BSD_MAC> struct DCV   // Can be used for Kernel too
 //using PSIZE_T  = SIZE_T*;
 //using PULONG   = ULONG*;
 //using NTSTATUS = LONG;
+ using PSSIZE_T = SPTR<SSIZE_T, PHT>;
+ using PSIZE_T  = SPTR<SIZE_T, PHT>;
  using PUINT64  = SPTR<uint64, PHT>;
+ using PINT64   = SPTR<int32, PHT>;
  using PINT32   = SPTR<int32, PHT>;
  using mode_t   = int32;  //uint32;
  using fdsc_t   = int32;
@@ -238,9 +253,9 @@ enum ESignals
 
 // MacOS: xnu-2422.1.72\bsd\dev\dtrace\scripts\io.d
 
-// Extended/sys-unsupported (for the Framework) flags are put in the high byte 
+// Extended/sys-unsupported (for the Framework) flags are put in the high byte
 enum EOpnFlg    // For 'flags' field    // Platform/Arch dependant?
-{               //      LINUX           BSD/MacOS
+{               //      LINUX       BSD/MacOS
   O_ACCMODE   = 0x00000003,    // Mask to test one of access modes: if((mode & O_ACCMODE) == O_RDONLY)
   O_RDONLY    = 0x00000000,    // Open for reading only.
   O_WRONLY    = 0x00000001,    // Open for writing only.
@@ -259,10 +274,10 @@ enum EOpnFlg    // For 'flags' field    // Platform/Arch dependant?
   O_NONBLOCK  = DCV< 0x00000800, 0x00000004 >::V,    // If O_NONBLOCK is set, the open will return without waiting for the device to be ready or available. Subsequent behavior of the device is device-specific.
  // Additional:
   O_DSYNC     = DCV< 0x00001000, 0          >::V,
-  O_DIRECT    = DCV< 0x00004000, 0          >::V,    // direct disk access hint
-  O_LARGEFILE = DCV< 0x00008000, 0          >::V,
-  O_DIRECTORY = DCV< 0x00010000, 0x00100000 >::V,    // must be a directory
-  O_NOFOLLOW  = DCV< 0x00020000, 0x00000100 >::V,    // don't follow links: if the target file passed to open() is a symbolic link then the open() will fail
+  O_DIRECT    = DCV< ASV<0x00010000,0x00004000>::V, 0          >::V,    // direct disk access hint - currently ignored
+  O_LARGEFILE = DCV< ASV<0x00020000,0x00008000>::V, 0          >::V,
+  O_DIRECTORY = DCV< ASV<0x00004000,0x00010000>::V, 0x00100000 >::V,    // must be a directory  // This flag is unreliable: X86=0x00010000, ARM=0x00004000 (Probably)    // NOTE: Required to open directories on Windows
+  O_NOFOLLOW  = DCV< ASV<0x00008000,0x00020000>::V, 0x00000100 >::V,    // don't follow links: if the target file passed to open() is a symbolic link then the open() will fail
   O_NOATIME   = DCV< 0x00040000, 0          >::V,
   O_CLOEXEC   = DCV< 0x00080000, 0x01000000 >::V,    // set close_on_exec    // DARWIN LEVEL >= 200809
   O_PATH      = DCV< 0x00200000, 0          >::V,
@@ -356,12 +371,13 @@ enum ESeek
 };
 
 // Repositions the file offset of the open file description associated with the file descriptor fd to the argument offset according to the directive whence
-static SSIZE_T PXCALL lseek(fdsc_t fd, SSIZE_T offset, ESeek whence);   // This definition is not good for X32, use UINT64 and llseek wrapper on X32
+// Negative return values are error codes
+static SSIZE_T PXCALL lseek(fdsc_t fd, SSIZE_T offset, ESeek whence);   // This definition is not good for X32, use INT64 (lseekGD) declaration and llseek wrapper on X32
 
-static int64 PXCALL lseekGD(fdsc_t fd, int64 offset, ESeek whence);   // Generic definition, wraps llseek on x32
+static int64 PXCALL lseekGD(fdsc_t fd, int64 offset, ESeek whence);   // Generic definition, wraps lseek(on x64) and llseek(on x32)
 
 // x32 only(Not present on x64)!
-static int PXCALL llseek(fdsc_t fd, uint32 offset_high, uint32 offset_low, PUINT64 result, ESeek whence);
+static int PXCALL llseek(fdsc_t fd, uint32 offset_high, uint32 offset_low, PINT64 result, ESeek whence);
 
 // Attempts to create a directory named pathname.
 static int PXCALL mkdir(PCCHAR pathname, mode_t mode);
@@ -480,6 +496,8 @@ template<typename T> struct STSpec        // nanosleep, fstat (SFStat)
 {
  T sec;   // Seconds      // time_t ???
  T nsec;  // Nanoseconds  // valid values are [0, 999999999]   // long (long ong on some platforms?)
+
+inline STSpec<T>& operator= (const auto& tm){this->sec = (T)tm.sec; this->nsec = (T)tm.nsec; return *this;}
 };
 using timespec = STSpec<time_t>;
 
@@ -490,7 +508,7 @@ template<typename T> struct STVal      // gettimeofday
 };
 using timeval = STVal<time_t>;
 
-struct timezone 
+struct timezone
 {
  sint32 utcoffs;     // minutes west of Greenwich  // Seconds now (to avoid multiplication when modifying UTC time in seconds)
  sint32 dsttime;     // type of DST correction     // Unused
@@ -525,64 +543,160 @@ static int PXCALL poll(pollfd* fds, nfds_t nfds, int timeout);   // Volatile (Fl
 // https://stackoverflow.com/questions/29249736/what-is-the-precise-definition-of-the-structure-passed-to-the-stat-system-call
 // Since kernel 2.5.48, the stat structure supports nanosecond resolution for the three file timestamp fields.
 // Too volatile to use crossplatform?
-struct SFStat      // x64
+
+struct SFStat      // Generic     // This one is used in NAPI
 {
- uint64 st_dev;
- uint64 st_ino;
- uint64 st_nlink;
- uint32 st_mode;
- uint32 st_uid;
- uint32 st_gid;
+ uint64 dev;            // ID of device containing file
+ uint64 ino;            // inode number
+ uint32 nlink;          // number of hard links
+ uint32 mode;           // protection and type
+ uint32 uid;            // user ID of owner
+ uint32 gid;            // group ID of owner
+ uint64 rdev;           // device ID (if special file)
+ sint64 size;           // total size, in bytes
+ uint64 blksize;        // blocksize for file system I/O
+ uint64 blocks;         // Number 512-byte blocks allocated.
+ STSpec<uint64> atime;  // The field st_atime is changed by file accesses, for example, by execve(2), mknod(2), pipe(2), utime(2) and read(2) (of more than zero bytes)
+ STSpec<uint64> mtime;  // The field st_mtime is changed by file modifications, for example, by mknod(2), truncate(2), utime(2) and write(2) (of more than zero bytes)
+ STSpec<uint64> ctime;  // The field st_ctime is changed by writing or by setting inode information (i.e., owner, group, link count, mode, etc.)
+};
+
+struct SFStatX86x64      // On x86_64   
+{
+ uint64 dev;
+ uint64 ino;
+ uint64 nlink;
+ uint32 mode;
+ uint32 uid;
+ uint32 gid;
  uint32 __pad0;
- uint64 st_rdev;
- int64  st_size;
- int64  st_blksize;
- int64  st_blocks;  // Number 512-byte blocks allocated. 
- STSpec<uint64> st_atime;  // The field st_atime is changed by file accesses, for example, by execve(2), mknod(2), pipe(2), utime(2) and read(2) (of more than zero bytes)
- STSpec<uint64> st_mtime;  // The field st_mtime is changed by file modifications, for example, by mknod(2), truncate(2), utime(2) and write(2) (of more than zero bytes)
- STSpec<uint64> st_ctime;  // The field st_ctime is changed by writing or by setting inode information (i.e., owner, group, link count, mode, etc.)
+ uint64 rdev;
+ sint64 size;
+ uint64 blksize;
+ uint64 blocks;         
+ STSpec<uint64> atime;  
+ STSpec<uint64> mtime;  
+ STSpec<uint64> ctime;  
  int64  __unused[3];
 };
 
-struct SFStat64    // x32
+/*struct SFStatX86x32    
 {
- uint64  st_dev;         // ID of device containing file
- uint8   __pad0[4];
- uint32  __st_ino;       // inode number
- uint32  st_mode;        // protection
- uint32  st_nlink;       // number of hard links
- uint32  st_uid;         // user ID of owner
- uint32  st_gid;         // group ID of owner
- uint64  st_rdev;        // device ID (if special file)
- uint8   __pad3[4];
- int64   st_size;        // total size, in bytes
- uint32  st_blksize;     // blocksize for file system I/O
- uint64  st_blocks;      // Number 512-byte blocks allocated. 
- STSpec<uint32>  st_atime;       // time of last access
- STSpec<uint32>  st_mtime;       // time of last modification  
- STSpec<uint32>  st_ctime;       // time of last status change
- uint64  st_ino;         // inode number
+
+};*/
+
+struct SFStatArm64      // On raspberry pi ARMx64   
+{
+ uint64 dev;
+ uint64 ino;
+ uint32 mode;
+ uint32 nlink;             
+ uint64 uid;
+ uint64 gid;
+ uint64 rdev;
+ sint64 size;
+ uint64 blksize;
+ uint64 blocks;
+ STSpec<uint64> atime;  
+ STSpec<uint64> mtime;  
+ STSpec<uint64> ctime;  
+ int64  __unused[3];
 };
+
+/*struct SFStatArm32     // Do not use - 32bit sizes! (Use SFStat64 on x32 systems with xxx64 functions instead) 
+{
+ uint32 dev;
+ uint32 ino;
+ uint16 mode;
+ uint16 nlink;
+ uint16 uid;
+ uint16 gid;
+ uint32 rdev;
+ uint32 size;
+ uint32 blksize;
+ uint32 blocks;
+ STSpec<uint32> atime;     
+ STSpec<uint32> mtime;     
+ STSpec<uint32> ctime;     
+ uint32  unused[2]
+}; */
+
+struct SFStat64    // On ARMx32,...  For xxx64 functions (mode,nlink,uid,gid,size is compatible with SFStatArm64)
+{
+ uint64  dev;         
+ uint8   __pad0[4];
+ uint32  __ino;       // inode number
+ uint32  mode;        
+ uint32  nlink;      
+ uint32  uid;         
+ uint32  gid;         
+ uint64  rdev;        
+ uint8   __pad3[4];
+ sint64  size;       
+ uint32  blksize;     
+ uint64  blocks;      // Number 512-byte blocks allocated.
+ STSpec<uint32>  atime;       // time of last access
+ STSpec<uint32>  mtime;       // time of last modification
+ STSpec<uint32>  ctime;       // time of last status change
+ uint64  ino;         
+};
+
+static void ConvertToNormalFstat(SFStat* Dst, vptr Src)
+{
+ using TSrcType = typename TSW<IsArchX64, typename TSW<IsCpuARM, SFStatArm64, SFStatX86x64>::T, typename TSW<IsCpuARM, SFStat64, SFStat64>::T>::T;   // TODO: BSD, XNU    // Is SFStat64 same on ARM and X86?
+ TSrcType* SrcPtr = (TSrcType*)Src;
+ SFStat Tmp;   // Dst may be same as Src
+
+ Tmp.dev     = SrcPtr->dev;    
+ Tmp.ino     = SrcPtr->ino;    
+ Tmp.nlink   = SrcPtr->nlink;  
+ Tmp.mode    = SrcPtr->mode;   
+ Tmp.uid     = SrcPtr->uid;    
+ Tmp.gid     = SrcPtr->gid;    
+ Tmp.rdev    = SrcPtr->rdev;   
+ Tmp.size    = SrcPtr->size;   
+ Tmp.blksize = SrcPtr->blksize;
+ Tmp.blocks  = SrcPtr->blocks; 
+ Tmp.atime   = SrcPtr->atime;   // May be STSpec<uint32>  to  STSpec<uint64>
+ Tmp.mtime   = SrcPtr->mtime;  
+ Tmp.ctime   = SrcPtr->ctime;  
+
+ Dst->dev     = Tmp.dev;    
+ Dst->ino     = Tmp.ino;    
+ Dst->nlink   = Tmp.nlink;  
+ Dst->mode    = Tmp.mode;   
+ Dst->uid     = Tmp.uid;    
+ Dst->gid     = Tmp.gid;    
+ Dst->rdev    = Tmp.rdev;   
+ Dst->size    = Tmp.size;   
+ Dst->blksize = Tmp.blksize;
+ Dst->blocks  = Tmp.blocks; 
+ Dst->atime   = Tmp.atime;    
+ Dst->mtime   = Tmp.mtime;  
+ Dst->ctime   = Tmp.ctime;  
+}
+//------------------------------------------------------------------------------------------------------------
 
 // st_mode:
 // xxxx xxxx  xxxx xxxx  xxxx xxxOOOGGGTTT
-// O - Owner 
+// O - Owner
 // G - Group
 // T - Other
 //
 //
+// Flags: AT_SYMLINK_NOFOLLOW  AT_RESOLVE_BENEATH  AT_EMPTY_PATH
 
 using PFStat   = SPTR<SFStat, PHT>;
 using PFStat64 = SPTR<SFStat64, PHT>;
 
-static int PXCALL stat(PCCHAR path, PFStat buf);    
-static int PXCALL stat64(PCCHAR path, PFStat64 buf);    // stat64 for x32 only
+static int PXCALL stat(PCCHAR path, PFStat buf);         // Not on Arm64      // NOTE: Do not use, returns 32bit sizes!
+static int PXCALL stat64(PCCHAR path, PFStat64 buf);     // stat64 for x32 only
 
-static int PXCALL fstat(fdsc_t fildes, PFStat buf);   
-static int PXCALL fstat64(fdsc_t fildes, PFStat64 buf);    // fstat64 for x32 only
+static int PXCALL fstat(fdsc_t fildes, PFStat buf);      // On x32 and x64
+static int PXCALL fstat64(fdsc_t fildes, PFStat64 buf);  // fstat64 for x32 only
 
-static int PXCALL fstatat(fdsc_t dirfd, PCCHAR pathname, PFStat buf, int flags);  // newfstatat
-static int PXCALL fstatat64(fdsc_t dirfd, PCCHAR pathname, PFStat64 buf, int flags);  // stat64 for x32 only
+static int PXCALL fstatat(fdsc_t dirfd, PCCHAR pathname, PFStat buf, int flags);      // On x64 only (called newfstatat)
+static int PXCALL fstatat64(fdsc_t dirfd, PCCHAR pathname, PFStat64 buf, int flags);  // fstatat64 for x32 only
 
 enum EATExtra
 {
@@ -591,6 +705,93 @@ enum EATExtra
  AT_REMOVEDIR        = DCV< 0x200, 0x0080 >::V,  // Remove directory instead of unlinking file.
  AT_SYMLINK_FOLLOW   = DCV< 0x400, 0x0040 >::V,  // Follow symbolic links.
 };
+
+
+// The  d_type field is implemented since Linux 2.6.4.  It occupies a space that was previously a zero-filled padding byte in the linux_dirent structure.  Thus, on kernels up to and including 2.6.3, attempting to access this field always provides the value 0 (DT_UNKNOWN).
+// Currently, only some filesystems (among them: Btrfs, ext2, ext3, and ext4) have full support for returning the file type  in  d_type.   All applications must properly handle a return of DT_UNKNOWN.
+enum EDEntType
+{
+ DT_UNKNOWN = 0,   // The file type is unknown
+ DT_FIFO    = 1,   // This is a named pipe (FIFO)
+ DT_CHR     = 2,   // This is a character device
+ DT_DIR     = 4,   // This is a directory
+ DT_BLK     = 6,   // This is a block device
+ DT_REG     = 8,   // This is a regular file
+ DT_LNK     = 10,  // This is a symbolic link
+ DT_SOCK    = 12,  // This is a UNIX domain socket
+ DT_WHT     = 14   // BSD/Darwin
+
+// Framework extended:   // Bad idea - on Linux will have to loop through all records after getdents to change the flags and do 'stat' on links even if none of this will be useful afterwards
+/* DET_FIFO    = 0x01,   
+ DET_CHR     = 0x02,   
+ DET_DIR     = 0x04,   
+ DET_BLK     = 0x08,   
+ DET_REG     = 0x10,   
+ DET_LNK     = 0x20,   
+ DET_SOCK    = 0x40,   
+ DET_WHT     = 0x80 */   
+};
+
+struct darwin_dirent32   // when _DARWIN_FEATURE_64_BIT_INODE is NOT defined     // Untested!
+{ 
+ uint32 ino;             // file number of entry 
+ uint16 reclen;          // length of this record 
+ uint8  type;            // file type, see below 
+ uint8  namlen;          // length of string in d_name
+ achar  name[255 + 1];   // name must be no longer than this
+}; 
+
+struct darwin_dirent64   // when _DARWIN_FEATURE_64_BIT_INODE is defined         // Untested!
+{                        
+ uint64 fileno;          // file number of entry
+ uint64 seekoff;         // seek offset (optional, used by servers)
+ uint16 reclen;          // length of this record 
+ uint16 namlen;          // length of string in d_name 
+ uint8  type;            // file type, see below 
+ achar  name[1024];      // name must be no longer than this 
+};                       
+                         
+struct bsd_dirent32      // For syscall 196 (freebsd11)     _WANT_FREEBSD11_DIRENT
+{                        
+ uint32 fileno;          // file number of entry
+ uint16 reclen;          // length of this record
+ uint8  type;            // file type, see below
+ uint8  namlen;          // length of string in d_name 
+ achar  name[255 + 1];   // name must be no longer than this 
+};                       
+                         
+struct bsd_dirent64      // For syscall 554  // BSDSysVer >= 1200031
+{			             
+ uint64 fileno;		     // file number of entry 
+ sint64 off;		     // directory offset of next entry 
+ uint16 reclen;		     // length of this record 
+ uint8  type;		     // file type, see below 
+ uint8  pad0;            
+ uint16 namlen;		     // length of string in d_name 
+ uint16 pad1;            
+ achar  name[255 + 1];   // name must be no longer than this
+};
+
+
+struct SDirEnt     // linux_dirent64  // For getdents64
+{
+ uint64 ino;       // Inode number // BSD: ino_t   d_fileno
+ sint64 off;       // Offset to next linux_dirent   // BSD: ff_t d_off
+ uint16 reclen;    // Length of this linux_dirent 
+ uint8  type;      // File type (only since Linux 2.6.4;           
+ achar  name[1];   // Filename (null-terminated)    // length is actually (d_reclen - 2 - offsetof(struct linux_dirent, d_name)
+};
+
+//using PSDirEnt = SPTR<SDirEnt, PHT>;
+
+// Queries a directory atomically, advances the file position if the buffer too small to fit all entries
+static int PXCALL getdentsGD(fdsc_t fd, PVOID buf, SIZE_T bufsize);   // General definition
+static int PXCALL getdents32(fdsc_t fd, PVOID buf, SIZE_T bufsize);      // Unused
+static int PXCALL getdents64(fdsc_t fd, PVOID buf, SIZE_T bufsize);      // unsigned int count
+
+// If the basep pointer value is non-NULL, the getdirentries() system call writes the position of the block read into the location pointed to by basep.
+static int PXCALL getdirentries32(fdsc_t fd, PVOID buf, SIZE_T bufsize, PSSIZE_T basep);    // BSD: 196;  XNU: 196  [freebsd11] getdirentries   // Returns SSIZE_T?
+static int PXCALL getdirentries64(fdsc_t fd, PVOID buf, SIZE_T bufsize, PSSIZE_T basep);    // BSD: 554;  XNU: 344                              // Returns SSIZE_T?
 
 // New, For Arm64
 static int PXCALL openat(fdsc_t dirfd, PCCHAR pathname, int flags, mode_t mode);

@@ -7,8 +7,8 @@
 class CApplication   // Interface
 {
 public:
- sint Initialize(vptr ArgA=0, vptr ArgB=0, vptr ArgC=0){return 0;}   // Accepts some startup arguments
- sint Notify(vptr ArgA=0, vptr ArgB=0, vptr ArgC=0){return 0;}       // Used for some system callbacks
+ sint Initialize(vptr ArgA=nullptr, vptr ArgB=nullptr, vptr ArgC=nullptr){UNUSED(ArgA); UNUSED(ArgB); UNUSED(ArgC); return 0;}   // Accepts some startup arguments
+ sint Notify(vptr ArgA=nullptr, vptr ArgB=nullptr, vptr ArgC=nullptr){UNUSED(ArgA); UNUSED(ArgB); UNUSED(ArgC); return 0;}       // Used for some system callbacks
  sint Execute(void);   // Mandatory: Application`s entry point
  sint Finalize(void){return 0;}
 //------------------------------------------------------------------------------------------------------------

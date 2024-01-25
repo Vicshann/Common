@@ -17,13 +17,14 @@ using CHAR      = achar;
 using BYTE      = uint8;
 using WORD      = uint16;
 using LONG      = int32;
+using CCHAR     = uint8;   // Unsignned?
 using UCHAR     = uint8;
 using ULONG     = uint32;
 using DWORD     = uint32;
 using USHORT    = uint16;
 using WCHAR     = wchar;
 using BOOLEAN   = BYTE;
-using NTSTATUS  = LONG;
+using NTSTATUS  = ULONG;
 using ULONGLONG = uint64;
 using ULONG_PTR = SIZE_T;
 // All pointers must be aligned to PHT size to make a correct stack frame
@@ -68,7 +69,7 @@ enum EMFlags
  PAGE_EXECUTE_WRITECOPY = 0x00000080,   // Enables execute, read-only, or copy-on-write access to a mapped view of a file mapping object. An attempt to write to a committed copy-on-write page results in a private copy of the page being made for the process. The private page is marked as PAGE_EXECUTE_READWRITE, and the change is written to the new page.
  PAGE_GUARD             = 0x00000100,   // Pages in the region become guard pages. Any attempt to access a guard page causes the system to raise a STATUS_GUARD_PAGE_VIOLATION exception and turn off the guard page status.
  PAGE_NOCACHE           = 0x00000200,   // Sets all pages to be non-cachable. Applications should not use this attribute except when explicitly required for a device.
- PAGE_WRITECOMBINE      = 0x00000400,   // Sets all pages to be write-combined. Applications should not use this attribute except when explicitly required for a device. 
+ PAGE_WRITECOMBINE      = 0x00000400,   // Sets all pages to be write-combined. Applications should not use this attribute except when explicitly required for a device.
 
 // Memory type flags (AllocationType)
  MEM_COMMIT             = 0x00001000,   // Indicates committed pages for which physical storage has been allocated, either in memory or in the paging file on disk.
@@ -431,6 +432,100 @@ enum SECTION_INFORMATION_CLASS
  MaxSectionInfoClass
 };
 
+// FILE_DIRECTORY_INFORMATION definition from Windows DDK. Used by NtQueryDirectoryFile, supported since Windows NT 4.0 (probably).
+struct FILE_DIRECTORY_INFORMATION
+{
+ ULONG NextEntryOffset;
+ ULONG FileIndex;
+ LARGE_INTEGER CreationTime;
+ LARGE_INTEGER LastAccessTime;
+ LARGE_INTEGER LastWriteTime;
+ LARGE_INTEGER ChangeTime;
+ LARGE_INTEGER EndOfFile;
+ LARGE_INTEGER AllocationSize;
+ ULONG FileAttributes;
+ ULONG FileNameLength;
+ WCHAR FileName[1];
+};
+
+struct FILE_FULL_DIR_INFORMATION 
+{
+ ULONG NextEntryOffset;
+ ULONG FileIndex;
+ LARGE_INTEGER CreationTime;
+ LARGE_INTEGER LastAccessTime;
+ LARGE_INTEGER LastWriteTime;
+ LARGE_INTEGER ChangeTime;
+ LARGE_INTEGER EndOfFile;
+ LARGE_INTEGER AllocationSize;
+ ULONG FileAttributes;
+ ULONG FileNameLength;
+ ULONG EaSize;
+ WCHAR FileName[1];
+};
+
+struct FILE_ID_FULL_DIR_INFORMATION 
+{
+ ULONG NextEntryOffset;
+ ULONG FileIndex;
+ LARGE_INTEGER CreationTime;
+ LARGE_INTEGER LastAccessTime;
+ LARGE_INTEGER LastWriteTime;
+ LARGE_INTEGER ChangeTime;
+ LARGE_INTEGER EndOfFile;
+ LARGE_INTEGER AllocationSize;
+ ULONG FileAttributes;
+ ULONG FileNameLength;
+ ULONG EaSize;
+ LARGE_INTEGER FileId;
+ WCHAR FileName[1];
+};
+
+struct FILE_BOTH_DIR_INFORMATION 
+{
+ ULONG NextEntryOffset;
+ ULONG FileIndex;
+ LARGE_INTEGER CreationTime;
+ LARGE_INTEGER LastAccessTime;
+ LARGE_INTEGER LastWriteTime;
+ LARGE_INTEGER ChangeTime;
+ LARGE_INTEGER EndOfFile;
+ LARGE_INTEGER AllocationSize;
+ ULONG FileAttributes;
+ ULONG FileNameLength;
+ ULONG EaSize;
+ CCHAR ShortNameLength;
+ WCHAR ShortName[12];
+ WCHAR FileName[1];
+};
+
+struct FILE_ID_BOTH_DIR_INFORMATION 
+{
+ ULONG NextEntryOffset;
+ ULONG FileIndex;
+ LARGE_INTEGER CreationTime;
+ LARGE_INTEGER LastAccessTime;
+ LARGE_INTEGER LastWriteTime;
+ LARGE_INTEGER ChangeTime;
+ LARGE_INTEGER EndOfFile;
+ LARGE_INTEGER AllocationSize;
+ ULONG FileAttributes;
+ ULONG FileNameLength;
+ ULONG EaSize;
+ CCHAR ShortNameLength;
+ WCHAR ShortName[12];
+ LARGE_INTEGER FileId;
+ WCHAR FileName[1];
+};
+
+struct FILE_NAMES_INFORMATION 
+{
+ ULONG NextEntryOffset;
+ ULONG FileIndex;
+ ULONG FileNameLength;
+ WCHAR FileName[1];
+};
+
 enum SECTION_INHERIT
 {
  ViewShare = 1,
@@ -486,15 +581,15 @@ struct UNICODE_STRING
   {
    this->Buffer = str;
    if(!len)while(*str)len++;
-   this->Length = len * sizeof(wchar);
-   this->MaximumLength = len + sizeof(wchar);
+   this->Length = USHORT(len * sizeof(wchar));
+   this->MaximumLength = USHORT(len + sizeof(wchar));
   }
  void Set(const wchar* str, wchar* buf, uint offs=0)
   {
    this->Buffer = buf;
    for(;*str;str++)buf[offs++] = *str;
-   this->Length = offs * sizeof(wchar);
-   this->MaximumLength = offs + sizeof(wchar);
+   this->Length = USHORT(offs * sizeof(wchar));
+   this->MaximumLength = USHORT(offs + sizeof(wchar));
   }
 };
 using PUNICODE_STRING = SPTR<UNICODE_STRING, PHT>;
@@ -549,54 +644,54 @@ struct FILE_POSITION_INFORMATION
 };
 using PFILE_POSITION_INFORMATION = SPTR<FILE_POSITION_INFORMATION, PHT>;
 
-struct FILE_INTERNAL_INFORMATION 
+struct FILE_INTERNAL_INFORMATION
 {
  LARGE_INTEGER IndexNumber;
 };
 
-struct FILE_EA_INFORMATION 
+struct FILE_EA_INFORMATION
 {
  ULONG EaSize;
 };
 
-struct FILE_ACCESS_INFORMATION 
+struct FILE_ACCESS_INFORMATION
 {
  ACCESS_MASK AccessFlags;
 };
 
-struct FILE_MODE_INFORMATION 
+struct FILE_MODE_INFORMATION
 {
  ULONG Mode;
 };
 
-struct FILE_ALIGNMENT_INFORMATION 
+struct FILE_ALIGNMENT_INFORMATION
 {
  ULONG AlignmentRequirement;
 };
 
-struct FILE_NAME_INFORMATION 
+struct FILE_NAME_INFORMATION
 {
  ULONG FileNameLength;
  WCHAR FileName[1];
 };
 
-struct FILE_ATTRIBUTE_TAG_INFORMATION 
+struct FILE_ATTRIBUTE_TAG_INFORMATION
 {
  ULONG FileAttributes;
  ULONG ReparseTag;
 };
 
-struct FILE_DISPOSITION_INFORMATION 
+struct FILE_DISPOSITION_INFORMATION
 {
  BOOLEAN DeleteFile;
 };
 
-struct FILE_END_OF_FILE_INFORMATION 
+struct FILE_END_OF_FILE_INFORMATION
 {
  LARGE_INTEGER EndOfFile;
 };
 
-struct FILE_VALID_DATA_LENGTH_INFORMATION 
+struct FILE_VALID_DATA_LENGTH_INFORMATION
 {
  LARGE_INTEGER ValidDataLength;
 };
@@ -610,7 +705,7 @@ struct FILE_VALID_DATA_LENGTH_INFORMATION
 */
 
 // ntfs.h
-struct FILE_ALL_INFORMATION 
+struct FILE_ALL_INFORMATION
 {
   FILE_BASIC_INFORMATION     BasicInformation;
   FILE_STANDARD_INFORMATION  StandardInformation;
@@ -652,6 +747,8 @@ static NTSTATUS _scall NtClose(HANDLE Handle);
 static NTSTATUS _scall NtQueryAttributesFile(POBJECT_ATTRIBUTES ObjectAttributes, PFILE_BASIC_INFORMATION FileInformation);
 
 static NTSTATUS _scall NtQueryInformationFile(HANDLE FileHandle, PIO_STATUS_BLOCK IoStatusBlock, PVOID FileInformation, ULONG Length, FILE_INFORMATION_CLASS FileInformationClass);
+
+static NTSTATUS _scall NtQueryDirectoryFile(HANDLE FileHandle, HANDLE Event, PIO_APC_ROUTINE ApcRoutine, PVOID ApcContext, PIO_STATUS_BLOCK IoStatusBlock, PVOID FileInformation, ULONG Length, FILE_INFORMATION_CLASS FileInformationClass, BOOLEAN ReturnSingleEntry, PUNICODE_STRING FileName, BOOLEAN RestartScan);
 
 static NTSTATUS _scall NtSetInformationFile(HANDLE FileHandle, PIO_STATUS_BLOCK IoStatusBlock, PVOID FileInformation, ULONG Length, FILE_INFORMATION_CLASS FileInformationClass);
 
@@ -1518,9 +1615,9 @@ static _finline TEB* NtCurrentTeb(void)
 #  ifdef CPU_ARM
  return (PTEB)__getReg(18);  // ARM64
 #  else
- return (TEB*)__readgsqword((uint)&((NNTDLL<uint64>::TEB*)0)->NtTib.Self);  // Reads QWORD from TEB (TIB.self)    / !!! not 60!
+ return (TEB*)__readgsqword((uint)&((NNTDLL<uint64>::TEB*)nullptr)->NtTib.Self);  // Reads QWORD from TEB (TIB.self)    / !!! not 60!
 #  endif
-#else
+#else  // x32
 #  ifdef CPU_ARM
  return (PTEB)nullptr; //(ULONG_PTR)_MoveFromCoprocessor(CP15_TPIDRURW);  // ARM32
 #  else

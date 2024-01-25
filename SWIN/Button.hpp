@@ -27,7 +27,7 @@ virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, L
    case WM_LBUTTONUP:
    case WM_RBUTTONUP:
    case WM_MBUTTONUP:
-    if(this->OnMouseBtnUp)(this->GetOwnerWnd()->*OnMouseBtnUp)(this, Msg, wParam, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+    if(this->OnMouseBtnUp)(this->GetOwnerWnd()->*OnMouseBtnUp)(this, Msg, (WORD)wParam, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
     break;
   } 
 // if(NoOrig)return Result;        
@@ -36,7 +36,7 @@ virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, L
 //------------------------------------------------------------------------------------------------------------
 int GetChecked(void)
 {
- int res = SendMessageW(this->GetHandle(),BM_GETCHECK,0,0);
+ int res = (int)SendMessageW(this->GetHandle(),BM_GETCHECK,0,0);
  if(res == BST_CHECKED)return 1;
  if(res == BST_UNCHECKED)return 0;
  return -1;
@@ -44,7 +44,7 @@ int GetChecked(void)
 //------------------------------------------------------------------------------------------------------------
 int GetState(void)
 {
- return SendMessageW(this->GetHandle(),BM_GETSTATE,0,0);
+ return (int)SendMessageW(this->GetHandle(),BM_GETSTATE,0,0);
 }
 //------------------------------------------------------------------------------------------------------------
 void SetChecked(int Chk)

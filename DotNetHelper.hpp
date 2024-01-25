@@ -32,7 +32,10 @@ namespace NDotNetHlp
 
 EXTERN_GUID(IID_AppDomain, 0X05F696DC, 0X2B29, 0X3663,   0XAD, 0X8B, 0XC4, 0X38, 0X9C, 0XF2, 0XA7, 0X13);    // __uuidof(_AppDomain);
 
-
+struct ICorJitCompiler
+{
+ void* pVFT;
+};
 
 
 //using namespace mscorlib;
@@ -453,15 +456,56 @@ static int    _stdcall CorJit_CompileMethod(struct CILJit* This, struct ICorJitI
 const char*   _stdcall GetMethodName(ICorJitInfo* This, CORINFO_METHOD_HANDLE ftn, const char **moduleName);    // _stdcall or thiscall?    // TODO: Fix definition of ICorJitInfo interface in 'corinfo.h' because index of GetMethodName is wrong (.NET 4)
 static void** _stdcall GetJit(void);
 //---------------------------------------------------------------------------
-static void** GetCompileMethodRef(void)
+static void** GetCompileMethodRef(HMODULE hModJit=NULL, PVOID pGetJit=NULL, bool ForceFind=false)
 {
- HMODULE hModJit = GetModuleHandleA("clrjit.dll");
- if(!hModJit)hModJit = GetModuleHandleA("mscorjit.dll");
- if(!hModJit)return nullptr;  
- PVOID pGetJit = GetProcAddress(hModJit, "getJit");
- if(!pGetJit)return nullptr;  
- void** Ptr = ((decltype(GetJit)*)pGetJit)();        //It is OK to call it multiple times
- if(!Ptr)return nullptr; 
+ if(!hModJit && !pGetJit)
+  {
+   hModJit = GetModuleHandleA("clrjit.dll");
+   if(!hModJit)hModJit = GetModuleHandleA("mscorjit.dll");
+   if(!hModJit)return nullptr; 
+  }
+ if(!pGetJit)
+  {
+   pGetJit = GetProcAddress(hModJit, "getJit");  
+   if(!pGetJit)return nullptr; 
+  }
+ void** Ptr = ((decltype(GetJit)*)pGetJit)();    // Will return NULL if called before jitStartup    // It is OK to call it multiple times      // First VFT entry is 'compileMethod'
+ if(!Ptr)
+  {
+   if(ForceFind)
+    {
+     UINT RawSize = 0; 
+     UINT VirSize = 0;
+     NPEFMT::GetModuleSizes((PBYTE)hModJit, &RawSize, &VirSize);
+     PBYTE ModBeg = (PBYTE)hModJit;  
+     PBYTE ModEnd = ModBeg + VirSize;
+     PBYTE CurPtr = (PBYTE)pGetJit;
+     PBYTE EndPtr = CurPtr + 32;
+     for(;CurPtr < EndPtr;CurPtr++)
+      {
+#ifdef _AMD64_
+       INT32 Offs = *(UINT32*)CurPtr;    // Relative addressing is used 
+       PBYTE Addr = (CurPtr + sizeof(INT32)) + Offs;   // This offset is last in the instruction
+       if((Addr > ModBeg) && (Addr < ModEnd))   // LEA target is in the module
+        {
+         PBYTE Val = *(PBYTE*)Addr;     // If Addr is g_CILJit then Val will be VFT, otherwise it will be compileMethod  // Note: compileMethod is in '.text'; VFT is in '.rdata'; g_CILJit is in '.data'
+         if((Val > ModBeg) && (Val < ModEnd)) 
+          {
+           PBYTE Unk = *(PBYTE*)Val;  //Ptr = (void**)Addr;
+           if((Unk < ModBeg) || (Unk >= ModEnd)){Val=Addr; Addr=nullptr;}
+           DBGMSG("Found: g_CILJit=%p, CILJitVFT=%p", Addr, Val);
+           Ptr = (void**)Val;           
+           break;
+          }
+        }
+#else
+      // TODO
+#endif
+      }
+    }
+   if(!Ptr){DBGMSG("pGetJit returned NULL"); return nullptr;} 
+  } 
+   else Ptr = (void**)*Ptr;  // Get VFT pointer
 /* 
  NPEFMT::SECTION_HEADER* ResSec = nullptr;   
  if(!NPEFMT::GetModuleSection(hModJit, ".text", &ResSec))return nullptr;   
@@ -478,11 +522,56 @@ static void** GetCompileMethodRef(void)
    PBYTE AVal = 
 
   }  */
- return &((void**)*Ptr)[0]; // Stored address of CILJit::compileMethod                              
+ DBGMSG("LibAddr=%p, getJit=%p, CILJitVFT=%p, compileMethod=%p", hModJit, pGetJit, Ptr, Ptr[0]);
+// DBGMSG("VFT0=%p, VFT1=%p, VFT2=%p, VFT3=%p, VFT4=%p",((void**)*Ptr)[0],((void**)*Ptr)[1],((void**)*Ptr)[2],((void**)*Ptr)[3],((void**)*Ptr)[4]);
+ return &Ptr[0]; // Stored address of CILJit::compileMethod                              
 }
 //---------------------------------------------------------------------------
+/*
+ 8A ?? 06                                   mov     al, [???+6]
+ 24 07                                      and     al, 7
+ 3C 07                                      cmp     al, 7
+ 75 ??                                      jnz     ???
+ B8 00 00 00 06                             mov     eax, 6000000h
+*/
+static int FindIdxOfGetMethodName(ICorJitInfo* pJitInfo)
+{
+ PVOID* Vft = *(PVOID**)pJitInfo;
+ int CurIdx = 100;  // Should be enough  // 113 - 116
+ int MaxIdx = CurIdx + 30;
+ for(;CurIdx < MaxIdx;CurIdx++)
+  {
+   PBYTE NxtPtr = (PBYTE)Vft[CurIdx+1];
+   PBYTE CurPtr = (PBYTE)Vft[CurIdx];
+   PBYTE EndPtr = CurPtr + 32;
+   if((CurPtr < NxtPtr)&&(EndPtr > NxtPtr))EndPtr = NxtPtr;  // Do not scan into next proc
+   UINT InsFlg = 0;
+   DBGMSG("Scanning from %p to %p",CurPtr,EndPtr); 
+   for(;CurPtr < EndPtr;CurPtr++)    // Find CEEInfo::getMethodDefFromMethod;  Next in VFT should be getMethodName
+    {
+     if(*(UINT16*)CurPtr == 0x0724)InsFlg |= 0x01;              // and     al, 7
+     else if(*(UINT16*)CurPtr == 0x073C)InsFlg |= 0x02;         // cmp     al, 7
+     else if((*CurPtr == 0xB8) && (*(UINT32*)&CurPtr[1] == 0x06000000))InsFlg |= 0x04;   // mov     eax, 6000000h
+     if(InsFlg == 7){DBGMSG("Found getMethodDefFromMethod at %p index is %u and getMethodName is %p with index %u", Vft[CurIdx], CurIdx, NxtPtr, CurIdx+1); return CurIdx+1;}
+    }
+//   DBGMSG("InsFlg=%u",InsFlg);
+  }
+ DBGMSG("Failed to find getMethodName!"); 
+ return -1;
+}
 
+/*
+CORINFO_METHOD_STRUCT_ *ftn = ((CORINFO_METHOD_INFO *)methodInfo)->ftn;
+
+*/
 
 
 //---------------------------------------------------------------------------
 }
+
+
+/*
+
+"ECall methods must be packaged into a system module" is happens only when method`s RVA is 0. RVA required to be 0 for InternalCall but not for PInvoke:)
+
+*/

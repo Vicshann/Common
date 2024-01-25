@@ -9,20 +9,31 @@ template<typename PHT=PTRCURRENT> struct NUFELF: public NFMTELF<PHT>    // NUFmt
 // NOTE: ArgC may be 0
 // NOTE: This is not 100% reliable but should help with finding the startup info even if the process started by an loader
 // TEST: Test it with 0 ArgC
+// 
+// Detect:
+//   ArgC
+//   ArgPtrs...
+//   Null
+//   EVarPtrs...
+//   Null
+// 
+// 
 //
 static vptr FindStartupInfo(vptr AddrOnStack)
 {
  constexpr const size_t MaxArgC  = 0x1000;   // Max is 4k of arguments
- constexpr const size_t StkAlign = 0x1000;   // Max is 4k forward   // NOTE: Bottom of the stack is unknown
+ constexpr const size_t StkAlgn  = 0x1000;   // Max is 4k forward   // NOTE: Bottom of the stack is unknown
  size_t* CurPtr = (size_t*)AddrOnStack;
- size_t* EndPtr = (size_t*)AlignP2Frwd((size_t)AddrOnStack, StkAlign);
- enum EState {stArgC,stArgs,stEnvs,stAuxV,stDone};
- EState state = stArgC;
- if(((uint8*)EndPtr - (uint8*)CurPtr) < 0x100)EndPtr += StkAlign;  // Too small, another page must exist
+ size_t* EndPtr = (size_t*)AlignP2Frwd((size_t)AddrOnStack, StkAlgn);
+ enum EState {stZero,stArgC,stArgs,stEnvs,stAuxV,stDone};
+ EState state = stZero;
+ if(((uint8*)EndPtr - (uint8*)CurPtr) < 0x100)EndPtr += StkAlgn;  // Too small, another page must exist
  size_t* TblEndPtr = nullptr;
  size_t* InfoPtr = nullptr;
  size_t ArgC  = 0;    // Counts everything
+ size_t ZeroC = 0;
 // DBGDBG("Scanning range: %p - %p",CurPtr,EndPtr);
+ 
  for(;;)
   {
    if(CurPtr >= EndPtr)
@@ -34,9 +45,21 @@ static vptr FindStartupInfo(vptr AddrOnStack)
          state  = stArgC;
          CurPtr = InfoPtr;
         }
-         else {EndPtr += StkAlign; continue;} // Another page is expected   // DBGDBG("PageAdded: EndPtr=%p",EndPtr);
+         else {EndPtr += StkAlgn; continue;} // Another page is expected   // DBGDBG("PageAdded: EndPtr=%p",EndPtr);
       }
        else break;
+    }
+   else if(state == stZero)     // There may be only zeroes pushed on stack, they should not be assumed as zero args and evars
+    {
+     size_t val = *CurPtr;
+     if(val)
+      {
+//       DBGDBG("Nonzero at: %p - %p",CurPtr, (vptr)val);
+       if((val > MaxArgC) && (ZeroC >= 2))CurPtr -= 2;    // In case of actually zero ArgC     // Empty ArgV is unlikely        
+       state = stArgC;
+       continue;      // Avoid CurPtr++
+      }
+       else ZeroC++;
     }
    else if(state == stArgC)
     {
@@ -82,22 +105,22 @@ static vptr FindStartupInfo(vptr AddrOnStack)
 }
 //------------------------------------------------------------------------------------------------------------
 // Reads a string from a null-terminated string array such as Args or EVars
-static sint GetStrFromArr(sint* AIndex, const achar** Array, achar* DstBuf, uint BufLen=-1)
+static sint GetStrFromArr(sint* AIndex, const achar** Array, achar* DstBuf, uint BufLen=uint(-1))
 {
  if(DstBuf)*DstBuf = 0;
  if(*AIndex < 0)return -3;     // Already finished
  if(!Array[*AIndex])return -2;    // No such arg   // (AOffs >= (sint)GetArgC())
  const achar* CurStr = Array[(*AIndex)++];  //  GetArgV()[AOffs++];
- uint  ArgLen = 0;
+ uint ArgLen = 0;
  if(!DstBuf)
   {
    while(CurStr[ArgLen])ArgLen++;
-   return ArgLen+1;   // +Space for terminating 0
+   return sint(ArgLen+1);   // +Space for terminating 0
   }
  for(;CurStr[ArgLen] && (ArgLen < BufLen);ArgLen++)DstBuf[ArgLen] = CurStr[ArgLen];
  DstBuf[ArgLen] = 0;
  if(!Array[*AIndex])*AIndex = -1;    // (AOffs >= (sint)GetArgC())
- return ArgLen;
+ return sint(ArgLen);
 }
 //------------------------------------------------------------------------------------------------------------
 

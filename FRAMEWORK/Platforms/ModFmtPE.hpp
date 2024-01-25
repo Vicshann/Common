@@ -603,7 +603,7 @@ static char* GetExpModuleName(void* Base, bool Raw)  // Only if an Export sectio
 //------------------------------------------------------------------------------------------------------------
 static void* ModuleAddressToBase(void* Addr)   // NOTE: Will find a PE header or crash trying:)    // Not all module sections may be present in memory (discarded)
 {
- uint8* Base = (uint8*)(((size_t)Addr) & ~0xFFFF);   // All modules are 64k aligned by loader
+ uint8* Base = (uint8*)(((size_t)Addr) & (size_t)~0xFFFF);   // All modules are 64k aligned by loader
  while(!IsValidHeaderPE(Base))Base -= 0x10000;  // !MmIsAddressValid(Base) ? IsBadReadPtr(Base,sizeof(DOS_HEADER)) // Why not all pages of ntoskrnl.exe are available on x64?
  //DBGMSG("Found a module base: %p", Base);
  return Base;

@@ -17,7 +17,7 @@ static LRESULT CALLBACK WndProxyProc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM 
  if(!This && ((Msg == WM_NCCREATE)||(Msg == WM_CREATE)))     // WM_NCCREATE then WM_CREATE or only one of them
   {
    This = (CWndBase*)((CREATESTRUCT*)lParam)->lpCreateParams;
-   UINT  ClsExLen = GetClassLongPtrW(hWnd, GCL_CBCLSEXTRA); 
+   UINT  ClsExLen = (UINT)GetClassLongPtrW(hWnd, GCL_CBCLSEXTRA); 
    PVOID OProc    = (PVOID)GetClassLongPtrW(hWnd, ClsExLen-sizeof(PVOID));   
    if(!OProc)SetClassLongPtrW(hWnd,ClsExLen-sizeof(PVOID),(ULONG_PTR)This->OrigWndProc);   // Assign original WndProc to the class
      else This->OrigWndProc = (WNDPROC)OProc;             
@@ -192,7 +192,7 @@ virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, L
     break;
 
    case WM_SIZE:       // WM_SIZING later
-    if(this->OnResize)(this->*OnResize)(this, wParam, lParam & 0xFFFF, lParam >> 16);
+    if(this->OnResize)(this->*OnResize)(this, (UINT)wParam, WORD(lParam & 0xFFFF), WORD(lParam >> 16));
     break;
 
    case WM_PAINT:         // Never received for main windows! Only for controls?
@@ -201,21 +201,21 @@ virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, L
     break;
 
    case WM_XBUTTONDOWN:
-    if(this->OnMouseBtnDn)(this->*OnMouseBtnDn)(this, ((wParam >> 16) & XBUTTON1)?(MK_XBUTTON1):(MK_XBUTTON2), wParam & 0xFFFF, lParam & 0xFFFF, lParam >> 16);
+    if(this->OnMouseBtnDn)(this->*OnMouseBtnDn)(this, ((wParam >> 16) & XBUTTON1)?(MK_XBUTTON1):(MK_XBUTTON2), wParam & 0xFFFF, int(lParam & 0xFFFF), int(lParam >> 16));
     break;
    case WM_MBUTTONDOWN:
-    if(this->OnMouseBtnDn)(this->*OnMouseBtnDn)(this, MK_MBUTTON, wParam & 0xFFFF, lParam & 0xFFFF, lParam >> 16);
+    if(this->OnMouseBtnDn)(this->*OnMouseBtnDn)(this, MK_MBUTTON, wParam & 0xFFFF, int(lParam & 0xFFFF), int(lParam >> 16));
     break;
    case WM_RBUTTONDOWN:
-    if(this->OnMouseBtnDn)(this->*OnMouseBtnDn)(this, MK_RBUTTON, wParam & 0xFFFF, lParam & 0xFFFF, lParam >> 16);
+    if(this->OnMouseBtnDn)(this->*OnMouseBtnDn)(this, MK_RBUTTON, wParam & 0xFFFF, int(lParam & 0xFFFF), int(lParam >> 16));
     break;
    case WM_LBUTTONDOWN:
-    if(this->OnMouseBtnDn)(this->*OnMouseBtnDn)(this, MK_LBUTTON, wParam & 0xFFFF, lParam & 0xFFFF, lParam >> 16);
+    if(this->OnMouseBtnDn)(this->*OnMouseBtnDn)(this, MK_LBUTTON, wParam & 0xFFFF, int(lParam & 0xFFFF), int(lParam >> 16));
     break;
 
    case WM_KEYDOWN:
    case WM_SYSKEYDOWN:   // For F10
-    if(this->OnKeyDn)(this->*OnKeyDn)(this, wParam, lParam & 0xFFFF, (lParam >> 16) & 0xFF, lParam & (1 << 24), lParam & (1 << 30));
+    if(this->OnKeyDn)(this->*OnKeyDn)(this, (WORD)wParam, lParam & 0xFFFF, (lParam >> 16) & 0xFF, lParam & (1 << 24), lParam & (1 << 30));
     break;
   }
  return true;
@@ -235,7 +235,7 @@ virtual bool Show(bool Show=true){return ShowWindow(this->hWindow, (Show)?(SW_SH
 //------------------------------------------------------------------------------------------------------------
 UINT GetTextLen(void)
 {       
- return SendMessageW(this->GetHandle(),WM_GETTEXTLENGTH,0,0);
+ return (UINT)SendMessageW(this->GetHandle(),WM_GETTEXTLENGTH,0,0);
 }
 //------------------------------------------------------------------------------------------------------------
 template<typename T> int SetText(T Str)
@@ -249,7 +249,7 @@ template<typename T> int GetText(T Buffer, UINT Size)              // Size is in
 {
  LRESULT len = this->GetTextLen();
  if(len <= 0){*Buffer=0; return 0;}
- if(len > Size)len = len;
+ if((UINT)len > Size)len = len;
  if(sizeof(*Buffer) == sizeof(wchar_t))return SendMessageW(this->GetHandle(),WM_GETTEXT,len+1,(LPARAM)Buffer);    // No need for specialization because it will still fail if you pass a wrong buffer type 
   else if(sizeof(*Buffer) == sizeof(char))return SendMessageA(this->GetHandle(),WM_GETTEXT,len+1,(LPARAM)Buffer);
  return -1;

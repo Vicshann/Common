@@ -260,6 +260,10 @@ DWORD _stdcall ApplyPatchLocal(PVOID PatchAddr, PVOID PatchData, DWORD PatchSize
 ULONG _stdcall SetProcessUntrusted(HANDLE hProcess);
 NTSTATUS _stdcall CreateUntrustedFolder(PHANDLE phObject, PWSTR ObjectName);
 NTSTATUS _stdcall CreateUntrustedNtObjDir(PHANDLE phObject, PWSTR ObjectName);
+int _stdcall SaveMemToFile(PVOID FileName, PVOID Addr, SIZE_T Size);
+
+
+UINT64 FileTimeToUnixTime(FILETIME &ft);
 //---------------------------------------------------------------------------
 inline int _cdecl PrintFToBuf(char* format, char* buffer, UINT maxlen, ...)
 {
@@ -1279,6 +1283,7 @@ public:
  //CArr<T>& operator += (const wchar_t* str){this->Append((void*)str, lstrlenW(str)); return *this;}
 //----------------------
  CArr<T>& operator += (const CArr<T>& arr){this->Append(arr.AData, arr.Size()); return *this;}
+ CArr<T>& operator = (const CArr<T>& arr){this->Assign(arr.AData, arr.Size()); return *this;}
 //----------------------------------------------------------
  bool Resize(UINT Cnt)   // In Elements
  {

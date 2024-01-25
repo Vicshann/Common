@@ -16,7 +16,7 @@ static sint _finline getc(bool lock=false, NPTM::PX::fdsc_t fd=NPTM::GetStdIn())
  achar buf = 0;
  int lr = 0;
  if(lock)lr = NPTM::NAPI::flock(fd, NPTM::PX::LOCK_EX);   // LOCK_NB ?
- sint res = NPTM::NAPI::read(fd, &buf, 1);
+ sint res = NPTM::NAPI::read(fd, &buf, 1u);
  if(lock && (lr >= 0))NPTM::NAPI::flock(fd, NPTM::PX::LOCK_UN);
  return (res > 0)?((sint)buf):res;
 }
@@ -26,7 +26,7 @@ static sint _finline putc(achar val, bool lock=false, NPTM::PX::fdsc_t fd=NPTM::
 {
  int lr = 0;
  if(lock)lr = NPTM::NAPI::flock(fd, NPTM::PX::LOCK_EX);   // LOCK_NB ?
- sint res = NPTM::NAPI::write(fd, &val, 1);
+ sint res = NPTM::NAPI::write(fd, &val, 1u);
  if(lock && (lr >= 0))NPTM::NAPI::flock(fd, NPTM::PX::LOCK_UN);
  return res;
 }
@@ -45,18 +45,17 @@ static sint puts(const achar* buf, size_t len=(size_t)-1, bool lock=false, NPTM:
 static sint gets(achar* buf, size_t len, bool lock=false, NPTM::PX::fdsc_t fd=NPTM::GetStdIn())
 {
  if(len < 1)return 0;
- int lr = 0;
  achar val = 0;
- uint idx = 0;
+ size_t idx = 0;
  for(len--;idx < len;)
   {
-   sint res = NPTM::NAPI::read(fd, &val, 1);  // Have to read chars one by one, unfortunately. (no pipe peeking on NIX)
+   sint res = NPTM::NAPI::read(fd, &val, 1u);  // Have to read chars one by one, unfortunately. (no pipe peeking on NIX)
    if(res <= 0)break;     // Error or end-of-file (closed pipe)
    buf[idx++] = val;
    if(val == 0x0A)break;  // EOL
   }
  buf[idx] = 0;  // Write terminating 0
- return idx;    // Return number of actually read chars
+ return (sint)idx;    // Return number of actually read chars
 }
 //------------------------------------------------------------------------------------------------------------
 

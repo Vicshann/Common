@@ -149,18 +149,31 @@ class CWndBase;
 #include "TrayIcon.hpp"
 #include "Timer.hpp"
 //==========================================================================================================================
-
+//------------------------------------------------------------------------
+static inline bool Initialize(bool DpiAware)
+{
+ INITCOMMONCONTROLSEX icex;                   // Move to Gen section?
+ icex.dwSize = sizeof(INITCOMMONCONTROLSEX);
+ icex.dwICC  = ICC_STANDARD_CLASSES|ICC_DATE_CLASSES;
+ if(DpiAware)     // Win7+   // Makes everything too small in 4K
+  {
+   decltype(SetProcessDPIAware)* pSetProcessDPIAware = (decltype(SetProcessDPIAware)*)GetProcAddress(GetModuleHandle("User32.dll"), "SetProcessDPIAware"); 
+   if(pSetProcessDPIAware)pSetProcessDPIAware();   // I create a window 400 x 250 and get 230 x 144. Why? How to work with this?
+  }
+ return InitCommonControlsEx(&icex); 
+}
+//------------------------------------------------------------------------
 }; // NSIMWIN
 
 //==========================================================================================================================
 
 
-namespace NSWIN
+namespace NSWIN     // Just a name container, expect to be included and leak into some other namespace
 {
- using EWNotify = SWIN::EWNotify;
- using SWDim    = SWIN::SWDim;
+ using EWNotify     = SWIN::EWNotify;
+ using SWDim        = SWIN::SWDim;
 
- using CWndForm = SWIN::CWndForm;
+ using CWndForm     = SWIN::CWndForm;
  using CSWEdit      = SWIN::CSWEdit;
  using CSWButton    = SWIN::CSWButton;
  using CSWStatic    = SWIN::CSWStatic;
@@ -170,7 +183,6 @@ namespace NSWIN
  using CSWTrayIcon  = SWIN::CSWTrayIcon;
  using CSWTimer  = SWIN::CSWTimer;    
 }
-
 //==========================================================================================================================
 
 /*

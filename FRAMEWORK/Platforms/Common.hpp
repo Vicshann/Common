@@ -160,7 +160,7 @@ static constexpr bool IsDbgBuild = false;
 #define _naked __declspec(naked)
 #define _used
 //#pragma code_seg(".xtext")
-#pragma section(".xtxt",execute,read)       // 'execute' will be ignored for a data declared with _codesec if section name is '.text', another '.text' section will be created, not executable
+#pragma section(".xtxt",execute,read)       // 'execute' will be ignored for a data declared with _codesec if the section name is '.text', another '.text' section will be created, not executable
 #define _codesec _declspec(allocate(".xtxt"))
 #define _codesecn(n) _declspec(allocate(".xtxt"))
 #pragma comment(linker,"/MERGE:.xtxt=.text")     // Without this SAPI struct won`t go into executable '.text' section
@@ -169,7 +169,7 @@ static constexpr bool IsDbgBuild = false;
 // https://gcc.gnu.org/onlinedocs/gcc/Return-Address.html
 // NOTE: __builtin_frame_address does not return the frame address as it was at a function entry. It points at the current function`s frame, including all its local variables
 #define GETSTKFRAME() __builtin_frame_address(0)  // NOTE: MINGW implements _AddressOfReturnAddress() with it  // Anything except 0 will use a stack frame register according to specified ABI // TODO: Rework! // On ARM there is no RetAddr on stack  // Should not include address of some previous stack frame (from 'push rbp' at proc addr)
-#define GETRETADDR() __builtin_extract_return_addr(__builtin_return_address (0))
+#define GETRETADDR() __builtin_extract_return_addr(__builtin_return_address(0))
 //#define SETRETADDR(addr) (*(void**)__builtin_frame_address(0) = __builtin_frob_return_addr((void*)(addr)))  // ARM?
 
 #define _fcompact __attribute__((flatten))         // Inlines everything inside the marked function
@@ -180,9 +180,13 @@ static constexpr bool IsDbgBuild = false;
 #ifdef SYS_MACOS
 #define _codesec __attribute__ ((section ("__TEXT,__text")))
 #define _codesecn(n) __attribute__ ((section ("__TEXT,__text" #n )))
-#else
-#define _codesec __attribute__ ((section (".text")))     // NOTE: For PE exe sections any static inline member will go into a separate data section named as '.text'
-#define _codesecn(n) __attribute__ ((section (".text." #n )))   // ELF section format: 'secname.index' goes to secname
+#elifdef SYS_WINDOWS   // WINDOWS with GCC driver
+#define _codesec __attribute__ ((section (".xtxt")))     // NOTE: For PE exe sections any static inline MEMBER(not a global data) will go into a separate data section named as '.text'  // Either merge sections by linker or put such data outside of any struct/class
+#define _codesecn(n) __attribute__ ((section (".xtxt." #n )))   // ELF section format: 'secname.index' goes to secname
+#pragma comment(linker,"/MERGE:.xtxt=.text")      // This will work with '-fms-extensions' otherwise a linker script will be needed to merge these two sections
+#else  // LINUX-ELF
+#define _codesec __attribute__ ((section (".text")))
+#define _codesecn(n) __attribute__ ((section (".text." #n )))
 #endif
 #endif
 
@@ -277,6 +281,7 @@ static constexpr bool IsDbgBuild = false;
 #define NO_UNIQUE_ADDR [[no_unique_address]]
 #endif
 
+#define UNUSED(expr) do { (void)(expr); } while (0)
 
 // This helps to create a function wrapper without copying its declared signature (If signatures is changed frequently during redesign it is a big hassle to keep the interfaces in sync)
 // Setting SAPI here as default helps to get rid of lambdas which generate too much assignment code:
@@ -290,6 +295,8 @@ static constexpr bool IsDbgBuild = false;
 #define CALL_IFEXISTRN(fchk,falt,anams,farg,faarg) if constexpr(requires { Y::fchk; })return Y::fchk farg; else return anams::falt faarg;
 #define CALL_IFEXISTRP(fchk,falt,farg,faarg,apar) if constexpr(requires { Y::fchk; })return Y::fchk farg; else return [] apar _finline {return Y::falt faarg;} farg;
 #define CALL_IFEXISTRPC(fchk,falt,cond,farg,faarg,apar) if constexpr((cond))return Y::fchk farg; else return [] apar _finline {return Y::falt faarg;} farg;
+
+#define CALL_RIFEXISTR(fchk,falt,farg,faarg) if constexpr(requires { Y::fchk; })res = Y::fchk farg; else res = Y::falt faarg;
 
 class CEmptyType {};
 using ETYPE = CEmptyType[0];    // This works plain and simple with ICC, GCC, CLANG (You can get a completely empty struct with such members and no annoying padding rules) but MSVC reports an error 'error C2229: struct has an illegal zero-sized array'
@@ -385,6 +392,7 @@ pointer	    64	    64	    64	    32	    32
  using uint    = decltype(sizeof(void*));   // These 'int' are always platform-friendly (same size as pointer type, replace size_t) // "The result of sizeof and sizeof... is a constant of type std::size_t"
  using sint    = decltype(ChangeTypeSign(sizeof(void*)));
  using vptr    = void*;
+ using cvptr   = const void*;
 
  using time_t    = int64; // Modern time_t is 64-bit
  using size_t    = uint;  // To write a familiar type convs
@@ -433,6 +441,7 @@ template<typename T> struct SameTypes<T, T> {static constexpr bool V = true;};
 
 template<typename A, typename B> constexpr _finline static bool IsSameTypes(A ValA, B ValB)
 {
+ UNUSED(ValA); UNUSED(ValB);
  return SameTypes<A, B>::V;
 }
 
@@ -472,6 +481,17 @@ template <typename Ref> struct ARef       // Universal ref wrapper
 // EXAMPLE: XRef<T> res
 template<typename T> using XRef = ARef<typename RemoveRef<typename TyIdent<T>::T>::T>;    // Template Alias
 
+//--------------
+template<typename Ty> struct RemovePtr { using T = Ty; };
+template<typename Ty> struct RemovePtr<Ty*> { using T = Ty; };
+template<typename Ty> struct RemovePtr<Ty* const> { using T = Ty; };
+template<typename Ty> struct RemovePtr<Ty* volatile> { using T = Ty; };
+template<typename Ty> struct RemovePtr<Ty* const volatile> { using T = Ty; };
+
+//template< typename Ty > using remove_pointer_t = typename remove_pointer<Ty>::T;
+
+//--------------
+
 template <int Size> struct TypeForSizeU
 {
  using T = typename TSW<(Size < 8), typename TSW<Size < 4, typename TSW<Size < 2, uint8, uint16>::T, uint32>::T, uint64>::T;    // without 'typename' the compiler refuses to look for TSW type
@@ -492,7 +512,7 @@ template <unsigned int MinVal=sizeof(void*), typename ... Ts> constexpr _finline
  return ( (ret = (sizeof(Ts) > ret ? sizeof(Ts) : ret)), ... );
 }
 
-template<int at, int idx=0> static constexpr _finline const auto GetParFromPk(const auto first, const auto... rest)    // NOTE: With auto& it generates more complicated code (Even when inlined there are a lot of taking refs into local vars)
+template<int at, int idx=0> static constexpr _finline auto GetParFromPk(const auto first, const auto... rest)    // NOTE: With auto& it generates more complicated code (Even when inlined there are a lot of taking refs into local vars)
 {
  if constexpr(idx == at)return first;
   else return GetParFromPk<at,idx+1>(rest...);
@@ -529,11 +549,11 @@ template <typename Ty> static consteval bool IsPointer(const Ty&){return IsPtrTy
 template<typename T> constexpr _finline static int32 AddrToRelAddr(T CmdAddr, unsigned int CmdLen, T TgtAddr){return -((CmdAddr + CmdLen) - TgtAddr);}         // x86 only?
 template<typename T> constexpr _finline static T     RelAddrToAddr(T CmdAddr, unsigned int CmdLen, int32 TgtOffset){return ((CmdAddr + CmdLen) + TgtOffset);}  // x86 only?
 
-template <typename T> constexpr _finline static T RotL(T Value, unsigned int Shift){constexpr unsigned int MaxBits = sizeof(T) * 8U; return (Value << Shift) | (Value >> ((MaxBits - Shift)&(MaxBits-1)));}
-template <typename T> constexpr _finline static T RotR(T Value, unsigned int Shift){constexpr unsigned int MaxBits = sizeof(T) * 8U; return (Value >> Shift) | (Value << ((MaxBits - Shift)&(MaxBits-1)));}
+template <typename T> constexpr _finline static T RotL(T Value, unsigned int Shift){constexpr unsigned int MaxBits = sizeof(T) * 8U; return T((Value << Shift) | (Value >> ((MaxBits - Shift)&(MaxBits-1))));}
+template <typename T> constexpr _finline static T RotR(T Value, unsigned int Shift){constexpr unsigned int MaxBits = sizeof(T) * 8U; return T((Value >> Shift) | (Value << ((MaxBits - Shift)&(MaxBits-1))));}
 
-template<typename N, typename M> constexpr _finline static M NumToPerc(N Num, M MaxVal){return (((Num)*100)/(MaxVal));}               // NOTE: Can overflow!
-template<typename P, typename M> constexpr _finline static M PercToNum(P Per, M MaxVal){return (((Per)*(MaxVal))/100);}               // NOTE: Can overflow!
+template<typename N, typename M> constexpr _finline static M NumToPerc(N Num, M MaxVal){return M(((Num)*100)/(MaxVal));}               // NOTE: Can overflow!
+template<typename P, typename M> constexpr _finline static M PercToNum(P Per, M MaxVal){return M(((Per)*(MaxVal))/100);}               // NOTE: Can overflow!
 
 template<typename N> constexpr _finline static N AlignFrwd(N Value, N Alignment){return ((Value/Alignment)+(bool(Value%Alignment)))*Alignment;}    // NOTE: Slow but works with any Alignment value
 template<typename N> constexpr _finline static N AlignBkwd(N Value, N Alignment){return (Value/Alignment)*Alignment;}                              // NOTE: Slow but works with any Alignment value
@@ -541,7 +561,7 @@ template<typename N> constexpr _finline static N AlignBkwd(N Value, N Alignment)
 // 2,4,8,16,...
 template<typename N> constexpr _finline static bool IsPowerOf2(N Value){return Value && !(Value & (Value - 1));}
 // TODO: Cast pointer types to size_t
-template<typename N> constexpr _finline static N AlignP2Frwd(N Value, unsigned int Alignment){return (Value+((N)Alignment-1)) & ~((N)Alignment-1);}    // NOTE: Result is incorrect if Alignment is not power of 2
+template<typename N> constexpr _finline static N AlignP2Frwd(N Value, unsigned int Alignment){return (Value+((N)Alignment-1)) & ~((N)Alignment-1);}    // NOTE: Result is incorrect if Alignment is not power of 2   
 template<typename N> constexpr _finline static N AlignP2Bkwd(N Value, unsigned int Alignment){return Value & ~((N)Alignment-1);}                       // NOTE: Result is incorrect if Alignment is not power of 2
 //------------------------------------------------------------------------------------------------------------
 
@@ -567,7 +587,7 @@ auto _finline UnbindPtr(auto* ptr)
  return (decltype(ptr))tmp;
 }
 
-#include "Intrinsic.hpp"
+//#include "Intrinsic.hpp"   // <<<< Should it be included here?
 //---------------------------------------------------------------------------
 // No way to return an array from a 'consteval' directly?
 //
@@ -597,7 +617,7 @@ _finline constexpr pchar(charb* v){this->val.bv = v;}
 _finline constexpr pchar(const achar* v){this->val.cav = v;}
 _finline constexpr pchar(const charb* v){this->val.cbv = v;}
 
-_finline uint8 operator* () const {return *this->val.cav;}    // *Ptr ?
+_finline uint8 operator* () const {return (uint8)*this->val.cav;}    // *Ptr ?
 
 _finline operator achar* (void) const {return this->val.av;}
 _finline operator charb* (void) const {return this->val.bv;}
@@ -642,6 +662,13 @@ template<typename T, typename H=uint> struct alignas(H) SPTR
 //using SPTR32 = SPTR<uint32>;
 //using SPTR64 = SPTR<uint64>;
 //------------------------------------------------------------------------------------------------------------
-
-//---------------------------------------------------------------------------
+// Error returning:
+// 0 is always a success code
+// If a sint is the return type, it is a POSIX error code
+// 
+// 
+//
+//------------------------------------------------------------------------------------------------------------
+ 
+//------------------------------------------------------------------------------------------------------------
 

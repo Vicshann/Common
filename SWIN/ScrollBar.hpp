@@ -79,12 +79,12 @@ virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, L
         case SB_PAGEUP:
 //        case SB_PAGELEFT:
          if(this->AUpd)this->SetPos(sci.nPos-sci.nPage);
-         if(this->OnScroll)(this->GetOwnerWnd()->*OnScroll)(this, stPage, -sci.nPage);
+         if(this->OnScroll)(this->GetOwnerWnd()->*OnScroll)(this, stPage, -(int)sci.nPage);
          break;
         case SB_PAGEDOWN:
 //        case SB_PAGERIGHT:
          if(this->AUpd)this->SetPos(sci.nPos+sci.nPage);
-         if(this->OnScroll)(this->GetOwnerWnd()->*OnScroll)(this, stPage, sci.nPage);
+         if(this->OnScroll)(this->GetOwnerWnd()->*OnScroll)(this, stPage, (int)sci.nPage);
          break;
        }
      }

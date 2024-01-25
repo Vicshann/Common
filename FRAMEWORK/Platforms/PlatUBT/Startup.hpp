@@ -68,6 +68,7 @@ template<typename T> struct SExecCmdLineFinder_Base
 
 uint8* Update(uint8* Addr, uint32 val)
 {
+ if((uint)Addr & (T::Step-1))return nullptr;
 // uint32 val = *(uint32*)Addr;
  if(!((val ^ T::Tgt1) & T::Msk1))Ptr1 = Addr;
  if(!((val ^ T::Tgt2) & T::Msk2))Ptr2 = Addr;
@@ -96,6 +97,7 @@ struct SExecCmdLineFinder_ARM32a: public SExecCmdLineFinder_Base<SExecCmdLineFin
  static constexpr uint32 Msk2 = ~0x00F000u;
  static constexpr uint32 Msk3 = ~0x00F000u;
  static constexpr uint32 Dist = 8;  // Should consider possible instruction reordering
+ static constexpr uint32 Step = 4;
 
 };
 
@@ -112,6 +114,27 @@ struct SExecCmdLineFinder_ARM32b: public SExecCmdLineFinder_Base<SExecCmdLineFin
  static constexpr uint32 Msk2 = 0xFF000000;    // Mask out call target
  static constexpr uint32 Msk3 = 0;             // Unused, always accept
  static constexpr uint32 Dist = 4;
+ static constexpr uint32 Step = 4;
+
+};
+
+struct SExecCmdLineFinder_ARM32c: public SExecCmdLineFinder_Base<SExecCmdLineFinder_ARM32c>   // THUMB
+{
+/*
+  2D E9 F0 41   PUSH.W          {R4-R8,LR}
+  0F 46         MOV             R7, R1
+  86 B0         SUB             SP, SP, #0x18
+  05 46         MOV             R5, R0
+  00 28         CMP             R0, #0
+*/
+ static constexpr uint32 Tgt1 = 0xE3A01003;    // MOV  R1, #3
+ static constexpr uint32 Tgt2 = 0xEAFFF7E0;    // B EP_ExecCmd
+ static constexpr uint32 Tgt3 = 0;             // Unused
+ static constexpr uint32 Msk1 = -1;            // Exact match
+ static constexpr uint32 Msk2 = -1;            // Exact match
+ static constexpr uint32 Msk3 = -1;            // Exact match
+ static constexpr uint32 Dist = 4;
+ static constexpr uint32 Step = 2;
 
 };
 
@@ -132,23 +155,31 @@ struct SExecCmdLineFinder_ARM64a: public SExecCmdLineFinder_Base<SExecCmdLineFin
  static constexpr uint32 Msk2 = ~0x001Fu;
  static constexpr uint32 Msk3 = ~0x001Fu;
  static constexpr uint32 Dist = 8;
+ static constexpr uint32 Step = 4;
 
 };
 //-----------------------------------------------------------------------------------------
 static vptr FindExecCmdLine(vptr BaseAddr, size_t Size)
 {
-// UBTMSG("FindExecCmdLine: %p, %08X",BaseAddr,Size);
+ UBTMSG("FindExecCmdLine: %p, %08X",BaseAddr,Size);
 #if defined(CPU_ARM)
+  #if defined(ARCH_X64)
  static constexpr uint32 Step = 4;
-#if defined(ARCH_X64)
  SExecCmdLineFinder_ARM64a fnd1;
-#else
-#ifdef FWK_OLD_UBOOT
-SExecCmdLineFinder_ARM32b fnd1;
-#else
-SExecCmdLineFinder_ARM32a fnd1;
-#endif
-#endif
+ SExecCmdLineFinder_ARM32c fnd2;   // Unused
+ static constexpr uint32 PCnt = 1;
+  #else
+    #ifdef FWK_OLD_UBOOT
+ SExecCmdLineFinder_ARM32b fnd1;
+ SExecCmdLineFinder_ARM32c fnd2;   // Unused
+ static constexpr uint32 PCnt = 1;
+    #else
+ SExecCmdLineFinder_ARM32a fnd1;
+ SExecCmdLineFinder_ARM32c fnd2;
+ static constexpr uint32 PCnt = 2;
+    #endif
+ static constexpr uint32 Step = 2;  // Read by 2 in case of THUMB
+  #endif
 #elif defined(CPU_X86)
  static constexpr uint32 Step = 1;
  // Not implemented yet
@@ -163,13 +194,14 @@ SExecCmdLineFinder_ARM32a fnd1;
  uint8* Ptr = nullptr;
  for(;CurPtr < EndPtr;CurPtr += Step)
   {
-   uint32 val = *(uint32*)CurPtr;
+   uint32 val = ((uint16*)CurPtr)[0] | (((uint16*)CurPtr)[1] << 16);  // Read 4 bytes by 2 // NOTE: Inefficient with step 2
    if(Ptr=fnd1.Update(CurPtr, val))break;
+   if constexpr (PCnt > 1){if(Ptr=fnd2.Update(CurPtr, val))break;}
 //   if(Ptr=fnd2.Update(CurPtr, val))break;
 //   if(Ptr=fnd3.Update(CurPtr, val))break;
   }
-// if(Ptr){UBTMSG("FindExecCmdLine: Found at %p", Ptr);}
-//   else {UBTMSG("FindExecCmdLine: Nothing found!");}
+ if(Ptr){UBTMSG("FindExecCmdLine: Found at %p", Ptr);}
+   else {UBTMSG("FindExecCmdLine: Nothing found!");}
  return Ptr;
 }
 //-----------------------------------------------------------------------------------------

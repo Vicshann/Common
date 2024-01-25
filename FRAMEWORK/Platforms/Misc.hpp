@@ -14,12 +14,12 @@ static _finline int GetMMapErrFromPtr(void* ptr)   // POSIX or linux specific???
 static int MakeDirPath(const achar* Path, uint mode=PX::S_IRWXO|PX::S_IRWXG|PX::S_IRWXU) // Must end with '/', may contain a filename at the end
 {
  if(!Path || !*Path)return -1001;
- ssize_t plen = NSTR::StrLen(Path);
+ ssize_t plen = (ssize_t)NSTR::StrLen(Path);
  if(!plen)return -1002;  // Empty path
  if(!IsFilePathDelim(Path[plen-1]) && !NPTM::NAPI::access(Path, PX::F_OK))return 0;   // The path is fully accessible already   // 'my/path' or 'my/path/file.txt'
 
  achar FullPath[plen+4];
- plen = (ssize_t)NSTR::StrCopy(FullPath, Path, plen);
+ plen = (ssize_t)NSTR::StrCopy(FullPath, Path, (uint)plen);
  plen = NPTM::TrimFilePath(FullPath);    // Remove a file name if have any
  if(!plen)return -1003;  // Empty path
  ssize_t PathLen = plen;   // Without a possible file name

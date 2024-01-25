@@ -72,7 +72,7 @@ static bool NotifyRelatedTrayIcon(CWndBase* Parent, UINT& Msg, WPARAM& wParam, L
     {
      ti = (CSWTrayIcon*)Parent->GetObj((UINT)wParam / RangeUID);
      if(!ti)return false;
-     Msg = lParam;
+     Msg = (UINT)lParam;
      POINT cp = {};
      GetCursorPos(&cp);   // Cursor is positioned at the center of the tray icon
      lParam = cp.y;
@@ -114,7 +114,7 @@ void StoreIconFrameInfo(UINT SlotIdx, HICON hIco)    // IconId will be SlotIdx+1
    if(SlotIdx == this->HIcoCtr)this->HIcoLst = (DWORD*)HeapReAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, this->HIcoLst, (++this->HIcoCtr * sizeof(DWORD)));   // Enlarge to +1
   }
    else { this->HIcoLst = (DWORD*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(DWORD)); this->HIcoCtr = 1; }   // First child 
- this->HIcoLst[SlotIdx] = (DWORD)hIco;  
+ this->HIcoLst[SlotIdx] = DWORD((SIZE_T)hIco);  
 }
 //------------------------------------------------------------------------------------------------------------
 // Original Shell_NotifyIcon searches for "Shell_TrayWnd" window on every call and does bunch of checks on HICON after WinXP
@@ -137,7 +137,7 @@ int CtrlNotifyIcon(DWORD Msg, SNIDataW* pData)         // return Shell_NotifyIco
  cd.dwData = 1;
  cd.cbData = sizeof(SNIDataW);   // The size should not be less than 'sizeof(SNOTIFYICONDATAW32) + 8 + 0x200 + 8 = 0x05CC'
  cd.lpData = pData;
- if(SendMessageTimeoutW(this->hTaskBar, WM_COPYDATA, (WPARAM)pData->Data.hWnd, (LPARAM)&cd, SMTO_BLOCK|SMTO_ABORTIFHUNG|SMTO_NOTIMEOUTIFNOTHUNG, 7000, &dwResult))return dwResult;
+ if(SendMessageTimeoutW(this->hTaskBar, WM_COPYDATA, (WPARAM)pData->Data.hWnd, (LPARAM)&cd, SMTO_BLOCK|SMTO_ABORTIFHUNG|SMTO_NOTIMEOUTIFNOTHUNG, 7000, &dwResult))return (int)dwResult;
  return -2;
 }        
 //------------------------------------------------------------------------------------------------------------
@@ -186,57 +186,57 @@ virtual bool WindowProc(HWND& hWnd, UINT& Msg, WPARAM& wParam, LPARAM& lParam, L
  switch(Msg)
   {
    case WM_MOUSEMOVE:
-    if(this->OnMouseMove)(this->GetOwnerWnd()->*OnMouseMove)(this, wParam, lParam);
+    if(this->OnMouseMove)(this->GetOwnerWnd()->*OnMouseMove)(this, (int)wParam, (int)lParam);
     break;
    case WM_LBUTTONDOWN:
-    if(this->OnMouseBtnDn)(this->GetOwnerWnd()->*OnMouseBtnDn)(this, MK_LBUTTON, MK_LBUTTON, wParam, lParam);
+    if(this->OnMouseBtnDn)(this->GetOwnerWnd()->*OnMouseBtnDn)(this, MK_LBUTTON, MK_LBUTTON, (int)wParam, (int)lParam);
     break;
    case WM_LBUTTONUP:
-    if(this->OnMouseBtnUp)(this->GetOwnerWnd()->*OnMouseBtnUp)(this, MK_LBUTTON, 0, wParam, lParam);
+    if(this->OnMouseBtnUp)(this->GetOwnerWnd()->*OnMouseBtnUp)(this, MK_LBUTTON, 0, (int)wParam, (int)lParam);
     break;       
    case WM_LBUTTONDBLCLK:
-    if(this->OnMouseBtnClk)(this->GetOwnerWnd()->*OnMouseBtnClk)(this, MK_LBUTTON, wParam, lParam);
+    if(this->OnMouseBtnClk)(this->GetOwnerWnd()->*OnMouseBtnClk)(this, MK_LBUTTON, (int)wParam, (int)lParam);
     break;
    case WM_RBUTTONDOWN:
-    if(this->OnMouseBtnDn)(this->GetOwnerWnd()->*OnMouseBtnDn)(this, MK_RBUTTON, MK_RBUTTON, wParam, lParam);
+    if(this->OnMouseBtnDn)(this->GetOwnerWnd()->*OnMouseBtnDn)(this, MK_RBUTTON, MK_RBUTTON, (int)wParam, (int)lParam);
     break;
    case WM_RBUTTONUP:
-    if(this->OnMouseBtnUp)(this->GetOwnerWnd()->*OnMouseBtnUp)(this, MK_RBUTTON, 0, wParam, lParam);
+    if(this->OnMouseBtnUp)(this->GetOwnerWnd()->*OnMouseBtnUp)(this, MK_RBUTTON, 0, (int)wParam, (int)lParam);
     break;
    case WM_RBUTTONDBLCLK:
-    if(this->OnMouseBtnClk)(this->GetOwnerWnd()->*OnMouseBtnClk)(this, MK_RBUTTON, wParam, lParam);
+    if(this->OnMouseBtnClk)(this->GetOwnerWnd()->*OnMouseBtnClk)(this, MK_RBUTTON, (int)wParam, (int)lParam);
     break;
    case WM_MBUTTONDOWN:
-    if(this->OnMouseBtnDn)(this->GetOwnerWnd()->*OnMouseBtnDn)(this, MK_MBUTTON, MK_MBUTTON, wParam, lParam);
+    if(this->OnMouseBtnDn)(this->GetOwnerWnd()->*OnMouseBtnDn)(this, MK_MBUTTON, MK_MBUTTON, (int)wParam, (int)lParam);
     break;
    case WM_MBUTTONUP:
-    if(this->OnMouseBtnUp)(this->GetOwnerWnd()->*OnMouseBtnUp)(this, MK_MBUTTON, 0, wParam, lParam);
+    if(this->OnMouseBtnUp)(this->GetOwnerWnd()->*OnMouseBtnUp)(this, MK_MBUTTON, 0, (int)wParam, (int)lParam);
     break;
    case WM_MBUTTONDBLCLK:
-    if(this->OnMouseBtnClk)(this->GetOwnerWnd()->*OnMouseBtnClk)(this, MK_MBUTTON, wParam, lParam);
+    if(this->OnMouseBtnClk)(this->GetOwnerWnd()->*OnMouseBtnClk)(this, MK_MBUTTON, (int)wParam, (int)lParam);
     break;
 //   case WM_MOUSEWHEEL:      // Not received
 //    Sleep(1);
 //   break;
    case WM_XBUTTONDOWN:    // Only VK_XBUTTON1 is reported
-    if(this->OnMouseBtnDn)(this->GetOwnerWnd()->*OnMouseBtnDn)(this, MK_XBUTTON1, MK_XBUTTON1, wParam, lParam);
+    if(this->OnMouseBtnDn)(this->GetOwnerWnd()->*OnMouseBtnDn)(this, MK_XBUTTON1, MK_XBUTTON1, (int)wParam, (int)lParam);
     break;
    case WM_XBUTTONUP:      // Only VK_XBUTTON1 is reported
-    if(this->OnMouseBtnUp)(this->GetOwnerWnd()->*OnMouseBtnUp)(this, MK_XBUTTON1, 0, wParam, lParam);
+    if(this->OnMouseBtnUp)(this->GetOwnerWnd()->*OnMouseBtnUp)(this, MK_XBUTTON1, 0, (int)wParam, (int)lParam);
     break;
    case WM_XBUTTONDBLCLK:  // Only VK_XBUTTON1 is reported
-    if(this->OnMouseBtnClk)(this->GetOwnerWnd()->*OnMouseBtnClk)(this, MK_XBUTTON1, wParam, lParam);
+    if(this->OnMouseBtnClk)(this->GetOwnerWnd()->*OnMouseBtnClk)(this, MK_XBUTTON1, (int)wParam, (int)lParam);
     break;
 //   case WM_MOUSEHWHEEL:    // Not received
 //    Sleep(1);
 //   break;
    case WM_CONTEXTMENU:      // RBTN 
-    if(this->OnContextMenu)(this->GetOwnerWnd()->*OnContextMenu)(this, wParam, lParam);
+    if(this->OnContextMenu)(this->GetOwnerWnd()->*OnContextMenu)(this, (int)wParam, (int)lParam);
     break;
 
    case NIN_SELECT:          // WM_USER  // LBTN  (Why?)
    case NIN_KEYSELECT:
-    if(this->OnUserLAction)(this->GetOwnerWnd()->*OnUserLAction)(this, wParam, lParam);         
+    if(this->OnUserLAction)(this->GetOwnerWnd()->*OnUserLAction)(this, (int)wParam, (int)lParam);         
     break;
 
    case NIN_BALLOONSHOW:     
@@ -276,13 +276,13 @@ int CreateIcon(HICON hIcon, LPCWSTR Hint=nullptr, bool Visible=false)
  tid.Data.cbSize = sizeof(SNOTIFYICONDATAW32);
  tid.Data.uVersion = NOTIFYICON_VERSION + 1;     // new format (NTDDI_VERSION >= NTDDI_VISTA)   // 4 will fail on WinXpSP2
 
- tid.Data.hWnd    = (DWORD)this->GetOwnerHandle();
+ tid.Data.hWnd    = DWORD((SIZE_T)this->GetOwnerHandle());
  tid.Data.uID     = this->GetBaseId();
  tid.Data.uFlags  = NIF_MESSAGE;
  tid.Data.uCallbackMessage = TrayIconMsgBase;
  tid.Data.dwState = NIS_HIDDEN;       // Requires NIF_STATE
  tid.Data.dwStateMask = tid.Data.dwState; 
- tid.Data.hIcon   = (DWORD)hIcon;
+ tid.Data.hIcon   = DWORD((SIZE_T)hIcon);
  if(hIcon)tid.Data.uFlags |= NIF_ICON;
  if(!Visible)tid.Data.uFlags |= NIF_STATE;
  if(Hint)
@@ -308,13 +308,13 @@ int UpdateIcon(HICON hIcon, LPCWSTR Hint=nullptr, bool ForceShow=false)
 
  SNIDataW tid = {};
  tid.Data.cbSize  = sizeof(SNOTIFYICONDATAW32); 
- tid.Data.hWnd    = (DWORD)this->GetOwnerHandle();
+ tid.Data.hWnd    = DWORD((SIZE_T)this->GetOwnerHandle());
  tid.Data.uID     = this->GetBaseId();    // We address our base icon
  tid.Data.uFlags  = NIF_SHOWTIP;
  if(hIcon)
   {
    tid.Data.uFlags |= NIF_ICON;
-   tid.Data.hIcon   = (DWORD)hIcon;  
+   tid.Data.hIcon   = DWORD((SIZE_T)hIcon);  
   }
  if(Hint)
   {
@@ -339,10 +339,10 @@ int PreloadIconFrame(HICON hIcon)
  SNIDataW tid = {};
  UINT SlotIdx = this->FindFreeIconFrameSlot();
  tid.Data.cbSize  = sizeof(SNOTIFYICONDATAW32);
- tid.Data.hWnd    = (DWORD)this->GetOwnerHandle();
+ tid.Data.hWnd    = DWORD((SIZE_T)this->GetOwnerHandle());
  tid.Data.uID     = this->GetBaseId() + SlotIdx + 1;    // Must be unique or CtrlNotifyIcon will fail
  tid.Data.uFlags  = NIF_ICON|NIF_STATE;
- tid.Data.hIcon   = (DWORD)hIcon;      // hIcon is used as ICON ID
+ tid.Data.hIcon   = DWORD((SIZE_T)hIcon);      // hIcon is used as ICON ID
  tid.Data.dwState = NIS_HIDDEN;       
  tid.Data.dwStateMask = tid.Data.dwState;
  if(!this->CtrlNotifyIcon(NIM_ADD, &tid))return -4;
@@ -359,10 +359,10 @@ int UpdateIconFrame(UINT Idx, HICON hIcon)
 
  SNIDataW tid = {};
  tid.Data.cbSize  = sizeof(SNOTIFYICONDATAW32);
- tid.Data.hWnd    = (DWORD)this->GetOwnerHandle();
+ tid.Data.hWnd    = DWORD((SIZE_T)this->GetOwnerHandle());
  tid.Data.uID     = this->GetBaseId() + Idx + 1;    // Must be unique or CtrlNotifyIcon will fail
  tid.Data.uFlags  = NIF_ICON;
- tid.Data.hIcon   = (DWORD)hIcon;     
+ tid.Data.hIcon   = DWORD((SIZE_T)hIcon);     
  if(!this->HIcoLst[Idx])
   {
    tid.Data.uFlags |= NIF_STATE;
@@ -388,7 +388,7 @@ int RemoveIconFrame(UINT Idx, HICON hIcon)
 
  SNIDataW tid = {};
  tid.Data.cbSize = sizeof(SNOTIFYICONDATAW32); 
- tid.Data.hWnd   = (DWORD)this->GetOwnerHandle();
+ tid.Data.hWnd   = DWORD((SIZE_T)this->GetOwnerHandle());
  tid.Data.uID    = this->GetBaseId() + Idx + 1;
  if(!this->CtrlNotifyIcon(NIM_DELETE, &tid))return -5;
  this->HIcoLst[Idx] = 0;
@@ -404,7 +404,7 @@ int SelectIconFrame(UINT Idx, bool ForceShow=false)
 
  SNIDataW tid = {};
  tid.Data.cbSize  = sizeof(SNOTIFYICONDATAW32); 
- tid.Data.hWnd    = (DWORD)this->GetOwnerHandle();
+ tid.Data.hWnd    = DWORD((SIZE_T)this->GetOwnerHandle());
  tid.Data.uID     = this->GetBaseId();    // We address our base icon
  tid.Data.uFlags  = NIF_ICON|NIF_STATE|NIF_SHOWTIP;
  tid.Data.hIcon   = this->HIcoLst[Idx];   // It is used as ID, doesn`t matter if this HICON is invalid already
@@ -422,7 +422,7 @@ int RemoveIcon(void)
  SNIDataW tid = {};
  UINT Total = 0;
  tid.Data.cbSize = sizeof(SNOTIFYICONDATAW32); 
- tid.Data.hWnd   = (DWORD)this->GetOwnerHandle();
+ tid.Data.hWnd   = DWORD((SIZE_T)this->GetOwnerHandle());
  for(UINT Idx=0;Idx < this->HIcoCtr;Idx++)     // Delete preloaded frames
   {
    if(!this->HIcoLst[Idx])continue;
@@ -447,7 +447,7 @@ int ShowBalloonMsg(LPCWSTR Msg, LPCWSTR Title, DWORD Flags, HICON hIcon=nullptr,
 {
  SNIDataW tid = {};
  tid.Data.cbSize = sizeof(SNOTIFYICONDATAW32); 
- tid.Data.hWnd   = (DWORD)this->GetOwnerHandle();
+ tid.Data.hWnd   = DWORD((SIZE_T)this->GetOwnerHandle());
  tid.Data.uID    = this->GetBaseId();
  tid.Data.uFlags = NIF_INFO|NIF_SHOWTIP;      // NIF_SHOWTIP must be always specified for base icon or its tip will become invisible
  tid.Data.dwInfoFlags = Flags;
@@ -458,7 +458,7 @@ int ShowBalloonMsg(LPCWSTR Msg, LPCWSTR Title, DWORD Flags, HICON hIcon=nullptr,
   } 
  if(Msg)lstrcpynW(tid.Data.szInfo, Msg, sizeof(tid.Data.szInfo) / sizeof(WCHAR));
  if(Title)lstrcpynW(tid.Data.szInfoTitle, Title, sizeof(tid.Data.szInfoTitle) / sizeof(WCHAR));
- if(hIcon)tid.Data.hBalloonIcon = tid.Data.hIcon = (DWORD)hIcon;
+ if(hIcon)tid.Data.hBalloonIcon = tid.Data.hIcon = DWORD((SIZE_T)hIcon);
  if(!this->CtrlNotifyIcon(NIM_MODIFY, &tid))return -1;
  return 0;
 }
@@ -467,7 +467,7 @@ virtual bool Show(bool Show=true)
 { 
  SNIDataW tid = {};
  tid.Data.cbSize  = sizeof(SNOTIFYICONDATAW32); 
- tid.Data.hWnd    = (DWORD)this->GetOwnerHandle();
+ tid.Data.hWnd    = DWORD((SIZE_T)this->GetOwnerHandle());
  tid.Data.uID     = this->GetBaseId();
  tid.Data.uFlags  = NIF_STATE|NIF_SHOWTIP;      // NIF_SHOWTIP must be always specified for base icon or its tip will become invisible
  tid.Data.dwState = (!Show)?NIS_HIDDEN:0;       // Requires NIF_STATE

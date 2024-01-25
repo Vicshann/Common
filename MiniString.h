@@ -56,7 +56,7 @@ UINT GetAllocIdx(void) const
 __declspec(noinline) void SetAllocVal(UINT Len)	 // Find pow2 tofit required size
 {
  UINT Idx = 0;
- while((2 << (Idx << 2)) < Len)Idx++;	  // Optimize?
+ while(UINT(2 << (Idx << 2)) < Len)Idx++;	  // Optimize?
  this->SLength = (this->SLength & SizeMsk) | (Idx << IdxShift);
 }
 //----------------------
@@ -499,6 +499,27 @@ int Count(BYTE chr, int from=0)
    this->ResizeFor(len);
    return *this;
   }
+//----------------------
+UINT Replace(char* What, char* With, UINT WhLen=0, UINT WiLen=0)
+{
+ if(!WhLen)WhLen = lstrlen(What);
+ if(!WiLen)WiLen = lstrlen(With);
+ UINT MatchCtr = 0;
+ for(int offs=0;;MatchCtr++)
+  {
+   int ipos = this->Pos(What,offs,WhLen);
+   if(ipos < 0)break;
+   if(WhLen > WiLen) 	// No reallocations
+    {
+	 UINT Len = this->Length();
+	 memcpy(&this->c_data()[ipos+WiLen], &this->c_data()[ipos+WhLen], Len - (ipos+WhLen));
+	 this->SetSizeVal(Len - (WhLen - WiLen));	
+	}
+   else	if(WhLen < WiLen)this->cInsert(nullptr, ipos, WiLen - WhLen);  // Optimize: Gather all matches, reallocate full size, replace
+   memcpy(&this->c_data()[ipos], With, WiLen);	
+  }
+ return MatchCtr;
+}
 //----------------------
  bool ToWide(void)
   {

@@ -136,7 +136,7 @@ template<typename T> constexpr _finline static T RevByteOrder(T Value) // Can be
 static const uint64 ctEncKey = ((uint64)NCRYPT::CRC32(__TIME__ __DATE__) << 32) | NCRYPT::CRC32(__DATE__ __TIME__);  //((~((unsigned int)(__DATE__[4]) * (unsigned int)(__DATE__[5])) & 0xFF) | ((~((unsigned int)(__TIME__[0]) * (unsigned int)(__TIME__[1])) & 0xFF) << 8) | ((~((unsigned int)(__TIME__[3]) * (unsigned int)(__TIME__[4])) & 0xFF) << 16) | ((~((unsigned int)(__TIME__[6]) * (unsigned int)(__TIME__[7])) & 0xFF) << 24));   // DWORD
 static const uint64 ExEncKey = 0xA1B2C3D41A2B3C4D;   // TODO: Must be same as a hardware calculated key  // TODO: Move to config
 
-static uint64 MakeExKeyPart(void) // Updates ExEncKeyRT // TODO: Hardware counter based  // TODO: Export from PLATFORM somehow
+static inline uint64 MakeExKeyPart(void) // Updates ExEncKeyRT // TODO: Hardware counter based  // TODO: Export from PLATFORM somehow
 {
  volatile uint64 val = 0;     // Should be like this until an hardware value is used. Otherwise the decryption will be too optimized and IDA will be able to decrypt all strings
  return ExEncKey ^ val;     // ExEncKeyRT;  (Extern)
@@ -197,7 +197,7 @@ template<typename T, uint N> struct alignas(8) CPStr
 };
 
 // ps is embedded packed string or EncryptedString using C++20 (Fast, no index sequences required)
-template<CPStr str> consteval static const auto operator"" _ps() { return str; }  // 'const auto' or 'auto&&' ???  // must be in a namespace or global scope  // C++20, no inlining required if consteval and MSVC bug is finally fixed   // Examples: auto st = "Hello World!"_ps;  MyProc("Hello World!"_ps);
+template<CPStr str> consteval static auto operator"" _ps() { return str; }  // 'const auto' or 'auto&&' ???  // must be in a namespace or global scope  // C++20, no inlining required if consteval and MSVC bug is finally fixed   // Examples: auto st = "Hello World!"_ps;  MyProc("Hello World!"_ps);
 
 // Examples: MyProc(_PS("Hello World!"));
 // I give up and use the ugly macro(At least it accesses 'str' only once). In C++ we cannot pass constexprness as a function argument and cannot pass 'const char*' as a template argument without complications
@@ -248,7 +248,7 @@ _finline  const T* Decrypt(void) const
  constexpr _finline const T* Ptr()  const { return (T*)this->Array; }
 };
 
-template<CEStr str> consteval static const auto operator"" _es() { return str; }
+template<CEStr str> consteval static auto operator"" _es() { return str; }
 
 #define _ES(str) NFWK::NCTM::CEStr<decltype(NFWK::NCTM::CTTypeChr(str)), NFWK::NCTM::CTStrLen(str)>(str,1)
 

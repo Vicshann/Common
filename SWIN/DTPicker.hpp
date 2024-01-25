@@ -42,7 +42,7 @@ int Create(SWDim& Wdim, LPCWSTR Text=L"", DWORD Style=0, DWORD ExStyle=0)  // Se
 //------------------------------------------------------------------------------------------------------------
 int GetSysTime(SYSTEMTIME* stime)
 {
- int res = SendMessageA(this->GetHandle(),DTM_GETSYSTEMTIME,0,(LPARAM)stime);
+ int res = (int)SendMessageA(this->GetHandle(),DTM_GETSYSTEMTIME,0,(LPARAM)stime);
  if(GDT_VALID == res)return 1;
  if(GDT_NONE == res)return 0;
  return -1;

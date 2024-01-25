@@ -41,14 +41,14 @@ _finline static void DecryptBlock(uint32* _RST Data, const uint32* _RST Key, con
 _finline static void Encrypt(void* Data, const void* Key, const size_t DataSize, const uint32 Dlt=Delta)
 {
  const uint64* Pointer = (uint64*)Data;    // 64bit block
- const uint64* EndPtr  = (uint64*)((uint8*)Data + (DataSize & ~7));   // Skip unaligned bytes at the end (Aligned to 8)
+ const uint64* EndPtr  = (uint64*)((uint8*)Data + (DataSize & (size_t)~7));   // Skip unaligned bytes at the end (Aligned to 8)
  for(;Pointer < EndPtr;Pointer++)EncryptBlock((uint32*)Pointer, (uint32*)Key, Dlt);
 }
 //------------------------------------------------------------------------------------------------------------
 _finline static void Decrypt(void* Data, const void* Key, const size_t DataSize, const uint32 Dlt=Delta)
 {
  const uint64* Pointer = (uint64*)Data;    // 64bit block
- const uint64* EndPtr  = (uint64*)((uint8*)Data + (DataSize & ~7));   // Skip unaligned bytes at the end (Aligned to 8)
+ const uint64* EndPtr  = (uint64*)((uint8*)Data + (DataSize & (size_t)~7));   // Skip unaligned bytes at the end (Aligned to 8)
  for(;Pointer < EndPtr;Pointer++)DecryptBlock((uint32*)Pointer, (uint32*)Key, Dlt);
 }
 //------------------------------------------------------------------------------------------------------------
