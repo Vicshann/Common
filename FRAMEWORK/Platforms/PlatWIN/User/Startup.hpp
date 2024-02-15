@@ -181,7 +181,7 @@ static sint InitSyscalls(void)
  auto sinf = CalcSyscallStubInfo(BaseOfNtdll, HashArr, ProcArr);
 // After all DLLs resolved
  ExtractSyscallNumbers(sinf.StubFB,sinf.SCNOffs, sinf.StubSize, TotalRecs, ProcArr, SyscArr);
- auto pNtProtectVirtualMemory = SAPI::NtProtectVirtualMemory.GetPtr<uint32 (_scall*)(vptr, vptr*, size_t*, uint32, uint32*, uint32)>();
+ auto pNtProtectVirtualMemory = SAPI::NtProtectVirtualMemory.GetPtr<uint32 (_scall*)(size_t, vptr*, size_t*, uint32, uint32*, uint32)>();
 
  vptr Addr    = SBlkPtrBeg;
  size_t Size  = StubsLen;

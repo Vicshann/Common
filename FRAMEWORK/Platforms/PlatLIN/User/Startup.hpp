@@ -15,8 +15,10 @@ struct SSINF
  void*  TheModBase;
  size_t TheModSize;
  achar  SysDrive[8];
- sint32 UTCOffs;   // In seconds
+ sint32 UTCOffs;      // In seconds
  sint32 HaveLoader;   // TODO: Flags
+ NTHD::SThCtx MainTh;    // Main(Init/Entry) thread // A thread from which the framework is initialized at main entry point for a module/app (For modules this is NOT the app`s process main thread)
+ NTHD::SThInf* ThreadInfo;  // For additional threads (Null if only entry thread is used)
 
 // Exe path (Even if this module is a DLL)
 // Current directory(at startup)   // Required?
@@ -45,7 +47,7 @@ static _finline PX::fdsc_t GetStdIn(void)  {return PX::STDIN; }  // 0
 static _finline PX::fdsc_t GetStdOut(void) {return PX::STDOUT;}  // 1
 static _finline PX::fdsc_t GetStdErr(void) {return PX::STDERR;}  // 2
 //------------------------------------------------------------------------------------------------------------
-static _finline sint32 GetTZOffsUTC(void)  {return fwsinf.UTCOffs;}   // In seconds
+static _finline sint32 GetTZOffsUTC(void)  {return fwsinf.UTCOffs;}   // In seconds   // TODO: Reread optionally?
 static _finline bool   IsLoadedByLdr(void) {return fwsinf.HaveLoader;}    // OnWindows, Any DLL that loaded by loader
 static _finline bool   IsDynamicLib(void)  {return false;}
 //------------------------------------------------------------------------------------------------------------
@@ -80,7 +82,7 @@ static _ninline sint GetEnvVar(const achar* Name, achar* DstBuf, uint DstCCnt=ui
   {
    sint spos = NSTR::ChrOffset(evar, '=');
    if(spos < 0)continue;  // No separator!
-   if((!spos && Unnamed) || NSTR::IsStrEqualSC(Name, evar, (uint)spos))return (sint)NSTR::StrCopy(DstBuf, &evar[spos+1], DstCCnt);
+   if((!spos && Unnamed) || NSTR::IsStrEqualCS(Name, evar, (uint)spos))return (sint)NSTR::StrCopy(DstBuf, &evar[spos+1], DstCCnt);
   }
  return -1;
 }
@@ -113,7 +115,7 @@ static const syschar* GetEnvVar(const achar* Name, uint* Size=nullptr)          
   {
    sint spos = NSTR::ChrOffset(evar, '=');
    if(spos < 0)continue;  // No separator!
-   if((!spos && Unnamed) || NSTR::IsStrEqualSC(Name, evar, (uint)spos))
+   if((!spos && Unnamed) || NSTR::IsStrEqualCS(Name, evar, (uint)spos))
     {
      if(Size)*Size = NSTR::StrLen(&evar[spos+1]);
      return &evar[spos+1];
@@ -123,19 +125,18 @@ static const syschar* GetEnvVar(const achar* Name, uint* Size=nullptr)          
 }
 //------------------------------------------------------------------------------------------------------------
 // AppleInfo on MacOS
-static sint GetSysInfo(uint InfoID, void* DstBuf, size_t BufSize)
+static sint GetAuxInfo(uint InfoID, vptr DstBuf, size_t BufSize)
 {
  //GetAuxVRec(size_t Type)
  return -1;
 }
 //------------------------------------------------------------------------------------------------------------
 //
-static _finline void* GetModuleBase(void)
+static _finline vptr GetModuleBase(void)
 {
  return fwsinf.TheModBase;
 }
 //------------------------------------------------------------------------------------------------------------
-//
 static _finline size_t GetModuleSize(void)
 {
  return fwsinf.TheModSize;
@@ -148,7 +149,35 @@ static sint _finline GetModulePath(achar* DstBuf, size_t BufSize=uint(-1))
  return GetCLArg(aoffs, DstBuf, BufSize);       // Will work for now
 }
 //------------------------------------------------------------------------------------------------------------
-static sint InitStartupInfo(void* StkFrame=nullptr, void* ArgA=nullptr, void* ArgB=nullptr, void* ArgC=nullptr)
+static NTHD::SThCtx* GetThreadSelf(void)     // Probably can find it faster by scanning stack pages forward and testing for SThCtx at beginning
+{
+ return GetThreadByAddr(GETSTKFRAME());
+}
+//------------------------------------------------------------------------------------------------------------
+static NTHD::SThCtx* GetThreadByID(uint id)
+{
+ if((id == (uint)-1)||(id == fwsinf.MainTh.ThreadID))return &fwsinf.MainTh;
+ if(!fwsinf.ThreadInfo)return nullptr; // No more threads
+ NTHD::SThCtx** ptr = fwsinf.ThreadInfo->FindThByTID(id);
+ if(!ptr)return nullptr;
+ return NTHD::ReadRecPtr(ptr);
+}
+//------------------------------------------------------------------------------------------------------------
+static NTHD::SThCtx* GetThreadByAddr(vptr addr)   // By an address on stack
+{
+ if(((uint8*)addr >= (uint8*)fwsinf.MainTh.StkBase)&&((uint8*)addr < ((uint8*)fwsinf.MainTh.StkBase + fwsinf.MainTh.StkSize)))return &fwsinf.MainTh;
+ if(!fwsinf.ThreadInfo)return nullptr; // No more threads
+ NTHD::SThCtx** ptr = fwsinf.ThreadInfo->FindThByStack(addr);
+ if(!ptr)return nullptr;
+ return NTHD::ReadRecPtr(ptr);
+}
+//------------------------------------------------------------------------------------------------------------
+/*static NTHD::SThCtx* GetNextThread(NTHD::SThCtx* th) // Get thread by index?   // Start from NULL    // Need to think
+{
+ return nullptr;
+}*/
+//------------------------------------------------------------------------------------------------------------
+static sint InitStartupInfo(void* StkFrame=nullptr, void* ArgA=nullptr, void* ArgB=nullptr, void* ArgC=nullptr)  // Probably should be private but...
 {
  DBGDBG("StkFrame=%p, ArgA=%p, ArgB=%p, ArgC=%p",StkFrame,ArgA,ArgB,ArgC);
  IFDBG{ DBGDBG("Stk[0]=%p, Stk[1]=%p, Stk[2]=%p, Stk[3]=%p, Stk[4]=%p", ((void**)StkFrame)[0], ((void**)StkFrame)[1], ((void**)StkFrame)[2], ((void**)StkFrame)[3], ((void**)StkFrame)[4]); }
@@ -216,7 +245,7 @@ static sint InitStartupInfo(void* StkFrame=nullptr, void* ArgA=nullptr, void* Ar
 //============================================================================================================
 static void DbgLogStartupInfo(void)
 {
-      return;
+    //  return;
  if(!fwsinf.STInfo)return;
  // Log command line arguments
  if(fwsinf.CLArgs)

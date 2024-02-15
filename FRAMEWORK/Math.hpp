@@ -7,7 +7,7 @@ struct NMATH
 
 //======================================================================================================================
 // https://forum.arduino.cc/t/divmod10-a-fast-replacement-for-10-and-10-unsigned
-// NOTE: Generic UDiv10, much slower than Mult with magic constant
+// NOTE: Generic UDiv10, much slower than Mult with a magic constant
 // Checking X at runtime will make it slower?  ( X may take less bytes and rest of 'q = (q>>8) + x' will be redundant )
 // Best solution on ARM?
 //
@@ -36,14 +36,14 @@ template<typename T> constexpr _finline static T Div10U(T in) requires (IsUnsign
  return q >> 3;     // We need to lose 3 low bits
 }
 //----------------------------------------------------------------------------------------------------------------------
-template<typename T> constexpr _finline static T DivMod10U(T in, XRef<T> mod) requires (IsUnsigned<T>::V)
+template<typename T> constexpr _finline static T DivMod10U(T in, auto&& mod) requires (IsUnsigned<T>::V)
 {
  T d = Div10U(in);
  mod = in - ((d << 3) + (d << 1));
  return d;
 }
 //----------------------------------------------------------------------------------------------------------------------
-template<typename T> constexpr _finline static T ModDiv10U(T in, XRef<T> div) requires (IsUnsigned<T>::V)
+template<typename T> constexpr _finline static T ModDiv10U(T in, auto&& div) requires (IsUnsigned<T>::V)
 {
  T d = div = Div10U(in);
  return in - ((d << 3) + (d << 1));
@@ -57,7 +57,7 @@ template<typename T> constexpr _finline static T Mod10U(T in) requires (IsUnsign
 //======================================================================================================================
 // https://github.com/OP-TEE/optee_os/blob/master/lib/libutils/isoc/arch/arm/
 // Software DIV
-template<typename T> constexpr _ninline static T DivModU(T num, T den, XRef<T> mod) requires (IsUnsigned<T>::V)  // Returns quotient. remainder is in 'mod'
+template<typename T> constexpr _ninline static T DivModU(T num, T den, auto&& mod) requires (IsUnsigned<T>::V)  // Returns quotient. remainder is in 'mod'
 {
  T i = 1, q = 0;
  if(!den){mod=0; return 0;}  // What to return?             //{this->r = (T)-1;	return;} // division by 0
@@ -83,14 +83,14 @@ template<typename T> constexpr _ninline static T DivModU(T num, T den, XRef<T> m
  return q;
 }
 //----------------------------------------------------------------------------------------------------------------------
-template<typename T> constexpr _finline static T ModDivU(T num, T den, XRef<T> div) requires (IsUnsigned<T>::V)   // Returns remainder. quotient is in 'div'
+template<typename T> constexpr _finline static T ModDivU(T num, T den, auto&& div) requires (IsUnsigned<T>::V)   // Returns remainder. quotient is in 'div'
 {
  T rem;
  div = UDivMod(num, den, rem);
  return rem;
 }
 //----------------------------------------------------------------------------------------------------------------------
-template<typename T> constexpr _ninline static T DivModS(T num, T den, XRef<T> mod) requires (!IsUnsigned<T>::V)
+template<typename T> constexpr _ninline static T DivModS(T num, T den, auto&& mod) requires (!IsUnsigned<T>::V)
 {
  using M = decltype(TypeToUnsigned<T>());
  bool qs = 0, rs = 0;
@@ -105,7 +105,7 @@ template<typename T> constexpr _ninline static T DivModS(T num, T den, XRef<T> m
  return q;
 }
 //----------------------------------------------------------------------------------------------------------------------
-template<typename T> constexpr _finline static T ModDivS(T num, T den, XRef<T> div) requires (!IsUnsigned<T>::V)   // Returns remainder. quotient is in 'div'
+template<typename T> constexpr _finline static T ModDivS(T num, T den, auto&& div) requires (!IsUnsigned<T>::V)   // Returns remainder. quotient is in 'div'
 {
  T rem;
  div = DivModS(num, den, rem);

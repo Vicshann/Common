@@ -2,7 +2,7 @@
 #pragma once
 
 //------------------------------------------------------------------------------------------------------------
-#ifdef _APPENTRYPT    // Defined in AppMain.cpp if AppMain.hpp is present
+#ifdef _APPENTRYPT    // Defined in AppMain.cpp if AppMain.hpp is present in a project that uses the Framework 
 	
 // For application`s main executables (Class entry point)
 //  __attribute__ ((section ("entry")))         // TODO: by cfg

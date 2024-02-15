@@ -109,13 +109,13 @@ FUNC_WRAPPERNI(PX::mmapGD,     mmap       )
 {
  const vptr   addr     = (vptr)GetParFromPk<0>(args...);
  const size_t length   = GetParFromPk<1>(args...);
- const uint   prot     = GetParFromPk<2>(args...);
+ const uint32 prot     = GetParFromPk<2>(args...);
  const uint   flags    = GetParFromPk<3>(args...);
- const NT::HANDLE  fd  = (NT::HANDLE)GetParFromPk<4>(args...);    // TODO: File mappings
+ const NT::HANDLE  fd  = GetParFromPk<4>(args...);    // TODO: File mappings
  const uint64 pgoffset = GetParFromPk<5>(args...);
 
- if(!(flags & (PX::MAP_PRIVATE|PX::MAP_SHARED)))return -PX::EINVAL;   // One of MAP_SHARED or MAP_PRIVATE must be specified.
- if((flags & (PX::MAP_PRIVATE|PX::MAP_SHARED)) == (PX::MAP_PRIVATE|PX::MAP_SHARED))return -PX::EINVAL;  // ???
+ if(!(flags & (PX::MAP_PRIVATE|PX::MAP_SHARED)))return vptr(-PX::EINVAL);   // One of MAP_SHARED or MAP_PRIVATE must be specified.
+ if((flags & (PX::MAP_PRIVATE|PX::MAP_SHARED)) == (PX::MAP_PRIVATE|PX::MAP_SHARED))return vptr(-PX::EINVAL);  // ???
 
  vptr   RegionBase  = addr;         // Rounded <<<
  size_t RegionSize  = AlignP2Frwd(length, MEMGRANSIZE);       // Rounded >>>
@@ -180,7 +180,7 @@ FUNC_WRAPPERNI(PX::munmap,     munmap     )                // ZwUnmapViewOfSecti
  RegionSize = length;
  res = SAPI::NtFreeVirtualMemory(NT::NtCurrentProcess, &RegionBase, &RegionSize, NT::MEM_DECOMMIT);   // Addr is not region base addr, try at least to decommit some pages (Don`t even try to base your memory manager on this behaviour!)
  if(!res)return PX::NOERROR;
- return -NTX::NTStatusToLinuxErr(res);
+ return -(sint)NTX::NTStatusToLinuxErr(res);
 }
 
 FUNC_WRAPPERNI(PX::mremap,     mremap     ) {return 0;}    // LINUX specific
@@ -208,7 +208,7 @@ FUNC_WRAPPERFI(PX::read,       read       )
  const NT::HANDLE hnd = (NT::HANDLE)GetParFromPk<0>(args...);
  const vptr   buf = (vptr)GetParFromPk<1>(args...);
  const size_t len = GetParFromPk<2>(args...);
- NT::NTSTATUS res = SAPI::NtReadFile(hnd, nullptr, nullptr, nullptr, &iosb, buf, (uint32)len, nullptr, nullptr);  // Relative to current file position
+ NT::NTSTATUS res = SAPI::NtReadFile(hnd, 0, nullptr, nullptr, &iosb, buf, (uint32)len, nullptr, nullptr);  // Relative to current file position
  if(!res)return (ssize_t)iosb.Information;    // Number of bytes read
  return -(sint)NTX::NTStatusToLinuxErr(res);
 }
@@ -219,7 +219,7 @@ FUNC_WRAPPERFI(PX::write,      write      )
  const NT::HANDLE hnd = (NT::HANDLE)GetParFromPk<0>(args...);
  const vptr   buf = (vptr)GetParFromPk<1>(args...);
  const size_t len = GetParFromPk<2>(args...);
- NT::NTSTATUS res = SAPI::NtWriteFile(hnd, nullptr, nullptr, nullptr, &iosb, buf, (uint32)len, nullptr, nullptr);  // Relative to current file position
+ NT::NTSTATUS res = SAPI::NtWriteFile(hnd, 0, nullptr, nullptr, &iosb, buf, (uint32)len, nullptr, nullptr);  // Relative to current file position
  if(!res)return (ssize_t)iosb.Information;    // Number of bytes written
  return -(sint)NTX::NTStatusToLinuxErr(res);
 }
@@ -267,7 +267,7 @@ FUNC_WRAPPERNI(PX::mkfifo,     mkfifo     ) {return 0;}
 FUNC_WRAPPERNI(PX::mkdir,      mkdir      )
 {
  NT::IO_STATUS_BLOCK iosb = {};
- NT::HANDLE FileHandle = nullptr;
+ NT::HANDLE FileHandle = 0;
  const achar* path = (achar*)GetParFromPk<0>(args...);
 // int mode = GetParFromPk<1>(args...);   // TODO: Mode support
 
@@ -314,7 +314,7 @@ FUNC_WRAPPERNI(PX::readlink,   readlink   )
  wchar FullPath[PathLen];
  NTX::InitFileObjectAttributes(path, plen, ptype, ObjAttributes, &FilePathUS, FullPath, &oattr);
 
- NT::HANDLE LinkHandle = nullptr;
+ NT::HANDLE LinkHandle = 0;
  NT::NTSTATUS res = SAPI::NtOpenSymbolicLinkObject(&LinkHandle, NT::GENERIC_READ, &oattr);
  if(res)return -NTX::NTStatusToLinuxErr(res);
 */
@@ -326,7 +326,7 @@ FUNC_WRAPPERNI(PX::readlink,   readlink   )
 FUNC_WRAPPERNI(PX::access,     access     )
 {
  NT::IO_STATUS_BLOCK iosb = {};
- NT::HANDLE FileHandle = nullptr;
+ NT::HANDLE FileHandle = 0;
  const achar* path = (achar*)GetParFromPk<0>(args...);
  int mode = GetParFromPk<1>(args...);
 
@@ -346,7 +346,7 @@ FUNC_WRAPPERNI(PX::access,     access     )
 // The buffer cannot be larger than 64k, because up to Windows 8.1, NtQueryDirectoryFile and GetFileInformationByHandleEx fail with ERROR_INVALID_PARAMETER when trying to retrieve the filenames from a network share
 // Can the directory offset be accessed with NtQueryInformationFile and NtSetInformationFile ?
 // Is '.' and '..' directories always come first on Windows? // On Linux they come first OR last
-// Opened directory happened to be locked from file deletion : NPTM::NAPI::open("", PX::O_DIRECTORY|PX::O_RDONLY, 0666); 
+// Opened directory happened to be locked from file deletion : NPTM::NAPI::open("", PX::O_DIRECTORY|PX::O_RDONLY, 0666);
 // On Linux DT_LNK type is set for both file and directory links (Looks like FS itself is not aware to what the links points to when reads its object)  // It is inconvenient but have to be implemented for Windows in similair way (Will have to call 'stat' on any DT_LNK)
 //
 FUNC_WRAPPERNI(PX::getdentsGD,     getdents     )
@@ -356,13 +356,13 @@ FUNC_WRAPPERNI(PX::getdentsGD,     getdents     )
  const vptr   buf = (vptr)GetParFromPk<1>(args...);
  size_t len = GetParFromPk<2>(args...);
  bool  NoLinks = false;     // Retrieve real info about links (file/dor)
- if((ssize_t)len < 0){len = -(ssize_t)len; NoLinks = true;}    // FRMWK extension
- NT::NTSTATUS res = SAPI::NtQueryDirectoryFile(hnd, nullptr, nullptr, nullptr, &iosb, buf, len, NT::FileDirectoryInformation, 0, nullptr, 0);
+ if((ssize_t)len < 0){len = size_t(-(ssize_t)len); NoLinks = true;}    // FRMWK extension
+ NT::NTSTATUS res = SAPI::NtQueryDirectoryFile(hnd, 0, nullptr, nullptr, &iosb, buf, (uint32)len, NT::FileDirectoryInformation, 0, nullptr, 0);
  if(res)
   {
    if(res == NT::STATUS_NO_MORE_FILES)return 0;
    else if(res == NT::STATUS_BUFFER_OVERFLOW)return PX::EINVAL;     // Only first call could return this  // Only if fixed portion of FILE_XXX_INFORMATION doesn`t fit in the buffer
-   else return -(int32)NTX::NTStatusToLinuxErr(res);   
+   else return -(int32)NTX::NTStatusToLinuxErr(res);
   }
  uint TotalBytes = iosb.Information;
  if(!TotalBytes)return PX::EINVAL;  // The buffer is too small
@@ -371,7 +371,7 @@ FUNC_WRAPPERNI(PX::getdentsGD,     getdents     )
  for(;;)   // All converted records are expected to fit because they are smaller
   {
    PX::SDirEnt* outrec = (PX::SDirEnt*)((uint8*)buf + OutOffs);
-   NT::FILE_DIRECTORY_INFORMATION* inrec = (NT::FILE_DIRECTORY_INFORMATION*)((uint8*)buf + InOffs);  
+   NT::FILE_DIRECTORY_INFORMATION* inrec = (NT::FILE_DIRECTORY_INFORMATION*)((uint8*)buf + InOffs);
    uint NxtOffs = inrec->NextEntryOffset;
    uint32 Attrs = inrec->FileAttributes;
    outrec->ino  = inrec->FileIndex;  // Looks like it is always 0   // Actual inode is probably in FILE_ID_FULL_DIR_INFORMATION::FileId
@@ -381,18 +381,18 @@ FUNC_WRAPPERNI(PX::getdentsGD,     getdents     )
    outrec->name[nlen] = 0;
    outrec->reclen = (uint16)offs;
    OutOffs += offs;
-    
+
    if(NoLinks)
     {
-   if(Attrs & NT::FILE_ATTRIBUTE_DIRECTORY)outrec->type = PX::DT_DIR;            // Put first in case it somehow happen to be together with FILE_ATTRIBUTE_NORMAL   
+   if(Attrs & NT::FILE_ATTRIBUTE_DIRECTORY)outrec->type = PX::DT_DIR;            // Put first in case it somehow happen to be together with FILE_ATTRIBUTE_NORMAL
    else if(Attrs & (NT::FILE_ATTRIBUTE_NORMAL|NT::FILE_ATTRIBUTE_ARCHIVE))outrec->type = PX::DT_REG;  // FILE_ATTRIBUTE_NORMAL means no other attributes  // For files FILE_ATTRIBUTE_ARCHIVE is valid too and replaces FILE_ATTRIBUTE_NORMAL
-   else if(Attrs & NT::FILE_ATTRIBUTE_REPARSE_POINT)outrec->type = PX::DT_LNK;   // Overrides anything else on Linux        // Directory and file symlinks (mklink /D (not mklink /H)) will have FILE_ATTRIBUTE_REPARSE_POINT                           
+   else if(Attrs & NT::FILE_ATTRIBUTE_REPARSE_POINT)outrec->type = PX::DT_LNK;   // Overrides anything else on Linux        // Directory and file symlinks (mklink /D (not mklink /H)) will have FILE_ATTRIBUTE_REPARSE_POINT
    else if(Attrs & NT::FILE_ATTRIBUTE_DEVICE)outrec->type = PX::DT_CHR;          // DT_CHR is more likely than a DT_BLK     // Reserved for system use anyway
    else outrec->type = PX::DT_UNKNOWN;
     }
     else
      {
-   if(Attrs & NT::FILE_ATTRIBUTE_REPARSE_POINT)outrec->type = PX::DT_LNK;        // Overrides anything else on Linux        // Directory and file symlinks (mklink /D (not mklink /H)) will have FILE_ATTRIBUTE_REPARSE_POINT                           
+   if(Attrs & NT::FILE_ATTRIBUTE_REPARSE_POINT)outrec->type = PX::DT_LNK;        // Overrides anything else on Linux        // Directory and file symlinks (mklink /D (not mklink /H)) will have FILE_ATTRIBUTE_REPARSE_POINT
    else if(Attrs & NT::FILE_ATTRIBUTE_DIRECTORY)outrec->type = PX::DT_DIR;       // Put first in case it somehow happen to be together with FILE_ATTRIBUTE_NORMAL
    else if(Attrs & (NT::FILE_ATTRIBUTE_NORMAL|NT::FILE_ATTRIBUTE_ARCHIVE))outrec->type = PX::DT_REG;  // FILE_ATTRIBUTE_NORMAL means no other attributes  // For files FILE_ATTRIBUTE_ARCHIVE is valid too and replaces FILE_ATTRIBUTE_NORMAL
    else if(Attrs & NT::FILE_ATTRIBUTE_DEVICE)outrec->type = PX::DT_CHR;          // DT_CHR is more likely than a DT_BLK     // Reserved for system use anyway
@@ -424,8 +424,8 @@ Linux: No permissions are required on the file itself, but-in the case of stat()
 FUNC_WRAPPERNI(PX::fstatat,       fstatat       )       // TODO: AT_SYMLINK_FOLLOW ?      // Flags are ignored for now
 {
  NT::IO_STATUS_BLOCK iosb = {};
- NT::HANDLE DirHandle = nullptr;
- NT::HANDLE FileHandle = nullptr;
+ NT::HANDLE DirHandle = 0;
+ NT::HANDLE FileHandle = 0;
  PX::fdsc_t dirfd  = GetParFromPk<0>(args...);     // How to process AT_FDCWD?   // Add the CWD to the name if it is relative or open the CWD and use its handle? // Is it by default on Windows?  // If pathname is absolute, then dirfd is ignored
  const achar* path = (achar*)GetParFromPk<1>(args...);
  PX::SFStat* sti = (PX::SFStat*)GetParFromPk<2>(args...);
@@ -439,7 +439,7 @@ FUNC_WRAPPERNI(PX::fstatat,       fstatat       )       // TODO: AT_SYMLINK_FOLL
 
 FUNC_WRAPPERNI(PX::stat,       stat       )
 {
- return NAPI::fstatat(PX::AT_FDCWD, args..., 0);   
+ return NAPI::fstatat(PX::AT_FDCWD, args..., 0);
 }
 
 FUNC_WRAPPERNI(PX::fstat,      fstat      )
@@ -460,7 +460,7 @@ FUNC_WRAPPERNI(PX::fstat,      fstat      )
  sti->rdev    = 0;  // ???
  sti->size    = inf.StandardInformation.EndOfFile;
  sti->blksize = 0;  // TODO: From AlignmentInformation.AlignmentRequirement somehow
- sti->blocks  = inf.StandardInformation.AllocationSize / 512;  // AlignP2Frwd(sti->size,512) / 512;   // Number 512-byte blocks allocated.
+ sti->blocks  = uint64(inf.StandardInformation.AllocationSize / 512);  // AlignP2Frwd(sti->size,512) / 512;   // Number 512-byte blocks allocated.
 
  if(inf.StandardInformation.Directory)sti->mode |= PX::S_IFDIR;
    else sti->mode |= PX::S_IFREG;   // Anything else?    // How to get rwe flags of a file?
@@ -530,7 +530,7 @@ FILE_OPEN_REPARSE_POINT is probably needed together with FILE_DIRECTORY_FILE|FIL
 FUNC_WRAPPERNI(PX::open,       open       )
 {
  NT::IO_STATUS_BLOCK iosb = {};
- NT::HANDLE FileHandle = nullptr;
+ NT::HANDLE FileHandle = 0;
  NT::ULONG ShareAccess = 0;
  NT::ULONG ObjAttributes = 0;
  NT::ULONG CreateOptions = NT::FILE_SYNCHRONOUS_IO_NONALERT;   // This adds file position support
@@ -573,7 +573,7 @@ FUNC_WRAPPERNI(PX::open,       open       )
  if(flags & PX::O_DIRECT   )CreateOptions |= NT::FILE_NO_INTERMEDIATE_BUFFERING;
  if(flags & PX::O_DIRECTORY)
   {
-   CreateOptions |= NT::FILE_DIRECTORY_FILE;     // Directory object     // ??? FILE_OPEN_REPARSE_POINT|FILE_OPEN_FOR_BACKUP_INTENT    // Virtual directories/junctions can be mounted as reparse points 
+   CreateOptions |= NT::FILE_DIRECTORY_FILE;     // Directory object     // ??? FILE_OPEN_REPARSE_POINT|FILE_OPEN_FOR_BACKUP_INTENT    // Virtual directories/junctions can be mounted as reparse points
    ShareAccess   |= NT::FILE_SHARE_READ|NT::FILE_SHARE_WRITE|NT::FILE_SHARE_DELETE;    // To avoid locking the directory from modification by anyone else while its descriptor is open (Most likely for 'getdents')
   }
   else CreateOptions |= NT::FILE_NON_DIRECTORY_FILE;    // File object: a data file, a logical, virtual, or physical device, or a volume
@@ -629,7 +629,7 @@ FUNC_WRAPPERNI(PX::settimeofday,  settimeofday  ) {return 0;}
 #include "Startup.hpp"
 
 //============================================================================================================
-struct SFWCTX
+struct SFWCTX      // NOTE: Such alignment may waste some memory on main thread      // struct alignas(MEMPAGESIZE) SFWCTX - No need for now to store main thread ctx on the stack
 {
  // Some thread context data here (to be stored on stack)
 

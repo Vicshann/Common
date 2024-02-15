@@ -88,7 +88,7 @@ using PX   = NPTM::PX;
 using PX64 = NPTM::PX64;
 
 // Now we have access to SAPI+NAPI
-
+                  // TODO: CStr which can be initialized from a pointer and contains string utilities
 
 
 
@@ -108,6 +108,12 @@ namespace NCRYPT     // https://github.com/abbbaf/Compile-time-hash-functions
 #include "Crypto/Rijndael.hpp"
 };
 
+//--- Extra
+#include "StrLocalizer.hpp"
+#include "StrIntern.hpp"    // StrStorage.hpp ???
+#include "Tokenizer.hpp"
+//---
+
 #include "AppDef.hpp"
 
 };
@@ -119,3 +125,14 @@ using NFWK::NCTM::operator""_es;
 
 #endif
 
+/*
+ https://aras-p.info/blog/2019/01/12/Investigating-compile-times-and-Clang-ftime-report/
+ MSVC: /clang:-ftime-trace=C:/ctrace.jsn
+ chrome://tracing
+
+ ftime-report
+
+ -ast-dump <filename.c>
+
+ -Xclang -ast-print -fsyntax-only
+*/

@@ -16,6 +16,9 @@ using namespace NFWK;   // TODO: Configurable
 #elif __has_include ("../../AppMain.hpp")
 #define _APPENTRYPT
 #include "../../AppMain.hpp"   // Your app implementation (When fs link is to /COMMON)
+#elif __has_include ("../../../AppMain.hpp")
+#define _APPENTRYPT
+#include "../../../AppMain.hpp"   // Your app implementation (When fs link is to /COMMON)
 #else
 #pragma message(">>> No AppMain.hpp is found - expecting ModuleMain as entry point!")
 #endif

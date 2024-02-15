@@ -246,20 +246,36 @@ template<uint32 poly> constexpr _finline static uint32 ByteCrc32(uint32 val, uin
 }
 //------------------------------------------------------------------------------------------------------------
 // Crc32 for 'achar' string literal. Terminating 0 is skipped
-template<uint32 poly = DefRevPolyCrc32, sint N, sint i = 0> constexpr _finline static uint32 CRC32(const achar (&str)[N], uint32 crc=InitialCrc32)
+/*template<uint32 poly = DefRevPolyCrc32, sint N, sint i = 0> constexpr _finline static uint32 CRC32(const achar (&str)[N], uint32 crc=InitialCrc32)  // For C++17   // Pollutes with instantiations
 {
  if constexpr (i < (N-1))return CRC32<poly, N, i + 1>(str, ~ByteCrc32<poly>((uint8)str[i], ~crc));
  else return crc;
-}
+} */
+
+template<uint32 poly = DefRevPolyCrc32, sint N> constexpr _finline static uint32 CRC32(const achar (&str)[N], uint32 crc=InitialCrc32)   // C++20 - loop is OK
+{
+ crc = ~crc;
+ for(sint i=0;i < (N-1);i++)crc = ByteCrc32(str[i],crc,poly);
+ return ~crc;
+}  
 //------------------------------------------------------------------------------------------------------------
 // For const strings
-template<uint32 poly = DefRevPolyCrc32> constexpr _finline static uint32 CRC32(const volatile achar* str, uint32 crc=InitialCrc32)   // 'volatile' solves ambiguity with 'const achar (&str)[N]' above
+template<uint32 poly = DefRevPolyCrc32, typename T> constexpr _finline static uint32 CRC32(T str, uint32 crc=InitialCrc32) requires (SameTypes<T, const achar*>::V || SameTypes<T, achar*>::V) // How the constraints affect compilation speed?  // 'volatile' solves ambiguity with 'const achar (&str)[N]' above (but does not work in consteval)
 {
  uint32 Val;
  crc = ~crc;
  for(uint i=0;(Val=uint32(str[i]));i++)crc = ByteCrc32(Val,crc,poly);
  return ~crc;
 }
+/*
+// For const strings
+template<uint32 poly = DefRevPolyCrc32> constexpr _finline static uint32 CRC32S(const achar* str, uint32 crc=InitialCrc32)   // 'volatile' solves ambiguity with 'const achar (&str)[N]' above
+{
+ uint32 Val;
+ crc = ~crc;
+ for(uint i=0;(Val=uint32(str[i]));i++)crc = ByteCrc32(Val,crc,poly);
+ return ~crc;
+}   */
 //------------------------------------------------------------------------------------------------------------
 // For counted const strings
 template<uint32 poly = DefRevPolyCrc32> constexpr _finline static uint32 Crc32(const achar* str, uint len, uint32 crc=InitialCrc32)

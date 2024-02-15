@@ -254,7 +254,7 @@ static _finline size_t CalcFilePathBufSize(const achar* Path, uint& plen, EPathT
  return (plen*4)+ExtraLen;
 }
 //------------------------------------------------------------------------------------
-static _finline void InitFileObjectAttributes(const achar* Path, uint plen, EPathType ptype, uint32 ObjAttributes, NT::UNICODE_STRING* buf_ustr, wchar* buf_path, NT::OBJECT_ATTRIBUTES* oattr, NT::HANDLE RootDir=nullptr)
+static _finline void InitFileObjectAttributes(const achar* Path, uint plen, EPathType ptype, uint32 ObjAttributes, NT::UNICODE_STRING* buf_ustr, wchar* buf_path, NT::OBJECT_ATTRIBUTES* oattr, NT::HANDLE RootDir=0)
 {
  uint DstLen = NSTR::StrCopy(buf_path, L"\\GLOBAL??\\");     // Windows XP?
  NT::UNICODE_STRING* CurrDir = &NT::NtCurrentTeb()->ProcessEnvironmentBlock->ProcessParameters->CurrentDirectory.DosPath;
@@ -274,7 +274,7 @@ static _finline void InitFileObjectAttributes(const achar* Path, uint plen, EPat
  oattr->SecurityQualityOfService = nullptr;
 }
 //------------------------------------------------------------------------------------
-static NT::NTSTATUS OpenFileObject(NT::PHANDLE FileHandle, const achar* Path, NT::ACCESS_MASK DesiredAccess, NT::ULONG ObjAttributes, NT::ULONG FileAttributes, NT::ULONG ShareAccess, NT::ULONG CreateDisposition, NT::ULONG CreateOptions, NT::PIO_STATUS_BLOCK IoStatusBlock, NT::HANDLE RootDir=nullptr)
+static NT::NTSTATUS OpenFileObject(NT::PHANDLE FileHandle, const achar* Path, NT::ACCESS_MASK DesiredAccess, NT::ULONG ObjAttributes, NT::ULONG FileAttributes, NT::ULONG ShareAccess, NT::ULONG CreateDisposition, NT::ULONG CreateOptions, NT::PIO_STATUS_BLOCK IoStatusBlock, NT::HANDLE RootDir=0)
 {
  NT::OBJECT_ATTRIBUTES oattr = {};
  NT::UNICODE_STRING FilePathUS;

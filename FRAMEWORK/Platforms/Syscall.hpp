@@ -6,7 +6,7 @@ class SCalcStubSize
 {
  friend struct NSYSC;
 protected:
-constexpr static int CalcStubSize(void)
+consteval static int CalcStubSize(void)
 {
  if constexpr(IsArchX32)
   {
@@ -20,7 +20,7 @@ constexpr static int CalcStubSize(void)
      return 28;   // For max 7 args (Extra R4,R5,R6)
 #endif
     }
-     else return 16;
+     else return 28;     // X86-X32 is complicated
   }
  else
   {
@@ -137,7 +137,9 @@ enum class ESysCNum: int { //                       x86_32  x86_64  arm_32  arm_
                            getpgid =          DSC<  132,    121,    132,    155,    -2        >::V,
                            setpgid =          DSC<  57,     109,    57,     154,    -2        >::V,
                            wait4 =            DSC< 114,      61,    114,    260,    -2        >::V,
-//waitid                                     
+                           futex =            DSC< 240,     202,    240,    98,     -2        >::V,
+//                           waitid =           DSC< 284,     247,    280,    95,     -2        >::V,    // libc uses wait4 
+//                           waitpid =          DSC< 7,       -1,     -1,     -1,     -2        >::V,    // libc uses wait4                             
 //                getgid32      getgid         ?????? =       DSC< -1,      -1,     -1,     -1,     -1        >::V,     // User gropu to check if Root?
 //                getegid32     getegid         ?????? =       DSC< -1,      -1,     -1,     -1,     -1        >::V,
 //                   --- MEMORY              
@@ -318,6 +320,7 @@ static constexpr inline uint SYSCALLMASK = 0;
 #elif defined(PLT_LIN_USR)
 /* https://stackoverflow.com/questions/2535989/what-are-the-calling-conventions-for-unix-linux-system-calls-and-user-space-f?noredirect=1&lq=1
 https://stackoverflow.com/questions/46087730/what-happens-if-you-use-the-32-bit-int-0x80-linux-abi-in-64-bit-code
+https://man7.org/linux/man-pages/man2/syscall.2.html
 
 In x86-32 parameters for Linux system call are passed using registers. %eax for syscall_number.
 %ebx, %ecx, %edx, %esi, %edi, %ebp are used for passing 6 parameters to system calls.
@@ -327,8 +330,16 @@ If there are more than six arguments, %ebx must contain the memory location wher
 but don't worry about this because it's unlikely that you'll use a syscall with more than six arguments.
 */
 
+/*  X86-X32:           (Syscall: [eax], ebx, ecx, edx, esi, edi, ebp)     // sysenter uses ebp as stack pointer for arg6 and more
+                       (Functio: On stack)      // ebx,esi,edi,ebp must be preserved (Not simple with 'clone' when creating a thread)
+*/
+
+/*  X86-X64:           (Syscall: [eax], rdi   rsi   rdx   r10   r8    r9) 
+                       (Functio:        rdi   rsi   rdx   rcx   r8    r9)     // rcx must be moved to r10
+*/
+
 /*  ARM32:
-r0-r3 are the argument and scratch registers; r0-r1 are also the result registers
+r0-r3 are the argument and scratch registers; r0-r1 are also the result registers    (Syscall: r0    r1    r2    r3    r4    r5    r6)
 r4-r8 are callee-save registers
 r9 might be a callee-save register or not (on some variants of AAPCS it is a special register)
 r10-r11 are callee-save registers
@@ -336,12 +347,22 @@ r12-r15 are special registers
 */
 
 /* ARM64
-r0-r7 are parameter/result registers
+r0-r7 are parameter/result registers              (Syscall: x0    x1    x2    x3    x4    x5)
 r9-r15 are temporary registers
 r19-r28 are callee-saved registers.
 All others (r8, r16-r18, r29, r30, SP) have special meaning and some might be treated as temporary registers.
 */
 
+/*
+syscall  - is the default way of entering kernel mode on x86-64. This instruction is not available in 32 bit modes of operation on Intel processors.
+sysenter - is an instruction most frequently used to invoke system calls in 32 bit modes of operation. It is similar to syscall, a bit more difficult to use though, but that is the kernel's concern.
+int 0x80 - is a legacy way to invoke a system call and should be avoided.
+
+Since SYSENTER was never meant as a direct replacement of the int 0x80 API, 
+it's never directly executed by userland applications - instead, when an application needs to access some kernel code, 
+it calls the virtually mapped routine in the VDSO (that's what the call *%gs:0x10 in your code is for), 
+which contains all the code supporting the SYSENTER instruction. There's quite a lot of it because of how the instruction actually works.
+*/
 
 // WARNING: This template may happen to be right in tme middle of stubs block! (Even if all stubs are in one struct now ?????)
 //_codesec
@@ -351,14 +372,14 @@ static constexpr inline uint8 syscall_tmpl[MaxStubSize] = {  // Used as a templa
 // x0 to x7: Argument values passed to and results returned from a subroutine.
    (uint8)((uint8)ESysCNum::mprotect << 5)|0x08,(uint8)((uint)ESysCNum::mprotect >> 3),0x80,0xD2,   // MOV X8, #0    // D2 80 XX X?
    0x01,0x00,0x00,0xD4,   // SVC 0
-   0xC0,0x03,0x5F,0xD6,   // RET
+   0xC0,0x03,0x5F,0xD6,   // RET     // Uses X30 to return (mov pc, x30)
    0xC0,0x03,0x5F,0xD6    // RET
 };   // Arm64
 static constexpr inline uint SYSCALLOFFS = 0;  // Offset of uint32 in bytes
 static constexpr inline uint SYSCALLSFTL = 5;  // Offset of value in bits (Left shift)
 static constexpr inline uint SYSCALLMASK = 0xFFE0001F;  // SOOOOOOO OHH????? ???????? ???RRRRR
 #    else       // Arm32
-// r0 to r3: Argument values passed to a subroutine and results returned from a subroutine.
+// r0 to r3: Argument values passed to a subroutine and results returned from a subroutine.    // !!! How it works? Args 4,5,6 should be on stack, according to ABI
 #ifdef FWK_OLD_ARM
    0x80,0x40,0x2D,0xE9,                       // PUSH {R7,LR}  // May be needed to save R4,R5,R6 too     // 0xE92D4080 | 0x10 | 0x20 | 0x40
    0x04,0x70,0x9F,0xE5,                       // LDR  R7, +12  // R0-R6 for args
@@ -394,9 +415,49 @@ static constexpr inline uint SYSCALLOFFS = 1;
 static constexpr inline uint SYSCALLSFTL = 0;
 static constexpr inline uint SYSCALLMASK = 0;
      #else   // X86-32
-   1,2,3,4
+// EAX, EBX, ECX, EDX, ESI, EDI, EBP    // Used 'int 80' for compatibility (Runs on x64 compatibility) or use VDSO somehow (How to find if loaded as lib ?)
+// The kernel saves/restores all the registers (except EAX) so we can use them as input-only operands to the inline asm
+// On i386, clone() should not be called through vsyscall, but directly through int $0x80.
+// Only ESP is not used!
+   0xB8,(uint8)ESysCNum::mprotect,0,0,0,  // mov eax, mprotect
+   0x60,                                  // pushad
+   0x83,0xC4,0x24,                        // add esp,24
+   0x5B,0x59,0x5A,0x5E,0x5F,0x5D,         // pop ebx, pop ecx, pop edx, pop esi, pop edi, pop ebp    // Get arguments
+   0x83,0xEC,0x3C,                        // sub esp,3C
+   0xCD,0x80,                             // int 80  
+   0x89,0x44,0x24,0x1C,                   // mov dword ptr [esp+1C],eax   
+   0x61,                                  // popad         // Will not work straightforward with 'clone'!!!
+   0xC3,                                  // ret
+   0x90,0x90       // NOPs to align to 4 (0x28)
 };  // x86_32
-static constexpr inline uint SYSCALLOFFS = 0;
+/* libc-2.35.so
+ 8B 5C 24 30          mov     ebx, [esp+30h] ; fd
+ B8 06 00 00 00       mov     eax, 6
+ CD 80                int     80h             ; LINUX - sys_close
+ 3D 00 F0 FF FF       cmp     eax, 0FFFFF000h
+ 77 46                ja      short loc_1136F8
+---
+ 89 DA                mov     edx, ebx
+ 8B 4C 24 08          mov     ecx, [esp+8]    ; mode
+ 8B 5C 24 04          mov     ebx, [esp+4]    ; path
+ B8 27 00 00 00       mov     eax, 27h ; '''
+ CD 80                int     80h             ; LINUX - sys_mkdir
+ 89 D3                mov     ebx, edx
+ 3D 01 F0 FF FF       cmp     eax, 0FFFFF001h
+ 0F 83 E2 F1 F0 FF    jnb     __syscall_error
+ C3                   retn
+---
+ 53                   push    ebx
+ 8B 54 24 10          mov     edx, [esp+10h]
+ 8B 4C 24 0C          mov     ecx, [esp+0Ch]
+ 8B 5C 24 08          mov     ebx, [esp+8]
+ B8 28 01 00 00       mov     eax, 128h
+ CD 80                int     80h             ; LINUX -
+ 5B                   pop     ebx
+ 3D 01 F0 FF FF       cmp     eax, 0FFFFF001h
+ 0F 83 C0 F1 F0 FF    jnb     __syscall_error
+*/
+static constexpr inline uint SYSCALLOFFS = 1;
 static constexpr inline uint SYSCALLSFTL = 0;
 static constexpr inline uint SYSCALLMASK = 0;
      #endif

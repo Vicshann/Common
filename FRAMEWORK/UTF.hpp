@@ -33,6 +33,16 @@ static const inline uint8  UTF8_BYTES[] = {
     2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2, 3,3,3,3,3,3,3,3,4,4,4,4,5,5,5,5};
 // TODO: Make the table shorter by replacing values with their correspoindig counts: {192, 32, 16, 8, 4, 4}  for 0, 1, 2, 3, 4, 5
 //---------------------------------------------------------------------------
+static uint CharLenUtf8(achar LeadChr)     // Same as 'return UTF8_BYTES[LeadChr]'
+{
+ if((LeadChr & 0xFE) == 0xFC)return 6;
+ if((LeadChr & 0xFC) == 0xF8)return 5;
+ if((LeadChr & 0xF8) == 0xF0)return 4;
+ else if ((LeadChr & 0xF0) == 0xE0)return 3;
+ else if ((LeadChr & 0xE0) == 0xC0)return 2;
+ return 1;
+}
+//---------------------------------------------------------------------------
 // Convert UTF-32 character to UTF-16
 // Input:  1 UTF-32 char
 // Output: 1 - 2 UTF-16 chars

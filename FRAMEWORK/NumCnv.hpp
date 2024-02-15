@@ -50,7 +50,7 @@ static const inline uint64 uExp10[MaxDigit] =
 //
 template<typename T=char> static T* ftoa_simple(double num, size_t afterpoint, T* buf, size_t len, size_t* size)    // TODO: Move to a converter class
 {
- static_assert(sizeof(uint64) == sizeof(double), "Sizes mismatch!");
+ static_assert(sizeof(uint64) == sizeof(double), "Number size mismatch!");
  static const uint64 SpecialMsk = (1ULL << 63);  // 0x8000000000000000
  int  Zeroes;
  bool negative;
@@ -162,14 +162,23 @@ template<typename T, typename S> static S DecNumToStrS(T Val, S buf, uint* Len=n
 {
  if(Val == 0){if(Len)*Len = 1; *buf = '0'; buf[1] = 0; return buf;}
  bool isNeg = (Val < 0);
- if(isNeg) Val = -Val;       // warning C4146: unary minus operator applied to unsigned type, result still unsigned
+ auto Value = (isNeg)?(decltype(TypeToUnsigned<T>())(-Val)):(Val);   // Work on unsigned representation
+// if(isNeg) Val = -Val;       // warning C4146: unary minus operator applied to unsigned type, result still unsigned
  buf  = &buf[20];
  *buf = 0;
  S end = buf;
- for(buf--;Val;buf--)
+ for(buf--;Value;buf--)
   {
-   *buf  = (Val % 10) + '0';
-   Val  /= 10;
+   if constexpr(IsArchX32)
+    {
+     T rem = 0;
+     Value = NMATH::DivMod10U(Value, rem);
+     *buf  = rem + '0';
+    }
+     else {
+     *buf   = (Value % 10) + '0';
+     Value /= 10;
+    }
   }
  if(isNeg)*buf = '-';
    else buf++;
@@ -182,13 +191,22 @@ template<typename T, typename S> static S DecNumToStrS(T Val, S buf, uint* Len=n
 template<typename T, typename O> static O DecNumToStrU(T Val, O buf, uint* Len=nullptr)     // A/W char string and Signed/Unsigned output by constexpr
 {
  if(Val == 0){if(Len)*Len = 1; *buf = '0'; buf[1] = 0; return buf;}
+ auto Value = (Val < 0)?(decltype(TypeToUnsigned<T>())(-Val)):(Val);   // Work on unsigned representation
  buf  = &buf[20];
  *buf = 0;
  O end = buf;
- for(buf--;Val;buf--)
+ for(buf--;Value;buf--)
   {
-   *buf  = (Val % 10) + '0';  // NOTE: Ensure that this is optimized to a single DIV operation with remainder preservation
-   Val  /= 10;
+   if constexpr(IsArchX32)
+    {
+     T rem = 0;
+     Value = NMATH::DivMod10U(Value, rem);
+     *buf  = rem + '0';
+    }
+     else {
+     *buf   = (Value % 10) + '0';  // NOTE: Ensure that this is optimized to a single DIV operation with remainder preservation
+     Value /= 10;
+    }
   }
  buf++;
  if(Len)*Len = end-buf;
@@ -239,8 +257,8 @@ template<typename T> static uint ByteArrayToHexStr(vptr Buffer, T DstStr, uint B
  for(uint ctr=0;(ctr < ByteCnt);ctr++)
   {
    uint16 chr    = ByteToHexChar(((uint8*)Buffer)[ctr], UpCase);
-   DstStr[len++] = chr;   
-   DstStr[len++] = chr >> 8; 
+   DstStr[len++] = achar(chr);
+   DstStr[len++] = achar(chr >> 8);
   }
  return len;
 }

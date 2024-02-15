@@ -6,7 +6,7 @@ namespace NCTM
 namespace nhidden  // Private stuff
 {
 //============================================================================================================
-//                               Compile time counter implementation
+//                               Compile time counter implementation     
 // https://stackoverflow.com/a/63578752
 //----  --------------------------------------------------------------------------------------------------------
 #ifdef COMP_AGCC
@@ -142,6 +142,18 @@ static inline uint64 MakeExKeyPart(void) // Updates ExEncKeyRT // TODO: Hardware
  return ExEncKey ^ val;     // ExEncKeyRT;  (Extern)
 }
 //============================================================================================================
+        // forces compiler to use registers instead of stuffing constants in rdata
+/* _finline uint64 load_from_reg(uint64 value) noexcept     // TODO: Tests!!!!
+        {
+#if defined(__clang__) || defined(__GNUC__)
+            asm("" : "=r"(value) : "0"(value) :);
+            return value;
+#else
+            volatile std::uint64_t reg = value;
+            return reg;
+#endif
+        } */
+//------------------------------------------------------------------------------------------------------------
 // Packs bytes so that their in-memory representation will be same on the current platform
 template<typename T, typename V> constexpr static T RePackElements(V Arr, unsigned int BLeft)
 {
@@ -175,7 +187,7 @@ template<typename T> consteval auto CTStrLen(T* str)
 // With manual packing, CLANG with -O2 will also puts the string into data section which makes them perfectly readable there. CLANG does not allow to set optimization modes selectively
 // MSVC, CLANG: -O0, -O1 only; GCC -O0, -O1, -O2; Or disable SSE: GCC, CLANG (-mno-sse2); MSVC (???)
 //
-template<typename T, uint N> struct alignas(8) CPStr
+template<typename T, uint N> struct alignas(8) CPStr    // !!! Cannot be used as a function argument: argument deduction not allowed in function prototype
 {
  static const uint BytesLen = sizeof(T) * N;
  static const uint ArrSize  = ((BytesLen+(sizeof(uint)-1)) & ~(sizeof(uint)-1)) / sizeof(uint);   //(BytesLen / sizeof(uint)) + (bool)(BytesLen & (sizeof(uint) - 1));      //  AlignP2Frwd(BytesLen, sizeof(uint)); //
@@ -391,6 +403,70 @@ constexpr _finline void* Decrypt(void* Buf=nullptr, uint Size=0) const   // Has 
 //------------------------------------------------------------------------------------------------------------
 
 };
+//============================================================================================================
+// C++20 has allowed usage of lambdas in unevaluated contexts
+// Lambdas always produce an unique typeid
+// Friend classes, class templates, functions, or function templates can be declared within a class template. 
+//   When a template is instantiated, its friend declarations are found by name lookup as if the specialization had been explicitly declared at its point of instantiation
+// NOTE: Unique for owner`s scopeonly
+// warning: stack nearly exhausted; compilation time may suffer, and crashes due to stack overflow are likely [-Wstack-exhausted]
+// Friend types are injected into owner`s namespace
+// http://en.wikipedia.org/wiki/Barton-Nackman
+//
+namespace hidden
+{
+template<typename UTag, auto Nm, int idx=0> struct counter       // Internal // Global, pollutes the namespace for each index!  // counter<0> ... counter<N>
+{
+ using tag = counter;
+
+ struct generator {friend consteval auto is_defined(tag) { return true; } };
+ friend consteval auto is_defined(tag);
+
+ template<typename Tag = tag, auto = is_defined(Tag{})> static consteval auto exists(auto) { return true; }
+ static consteval auto exists(...) { return generator(), false; }
+};
+}
+
+template<typename Tag, auto From = int{}, auto Step = int{1}, auto U = []{}> consteval auto ctCtr(void)  // NOTE: Not bound to any instance    // TODO: Limit to Max, split recursion by range groups
+{
+ if constexpr (hidden::counter<Tag,From>::exists(From))return ctCtr<Tag, From + Step, Step, U>();  // Recursive call (watch out for max recursion depth), starts from 'Id' every time // In whose namespace we check the existense?
+   return From;
+};  
+
+template<typename Tag, int idx=0> struct CtCtr   // Max is set to sane amount    // NOTE: Limited by max recursive instantiations      // , auto to = int{0xFFFF}
+{
+ template<auto From = int{}, auto Step = int{1}, auto U = []{}> static consteval auto Next(void)   // May step from 1 by 2 if needed
+  {
+   if constexpr (hidden::counter<Tag,From,idx>::exists(From))return Next<From + Step, Step, U>();  // Recursive call (watch out for max recursion depth), starts from 'Id' every time // In whose namespace we check the existense?
+     return From;
+  }
+};
+
+
+/*
+static_assert(ctCtr<InstB>() == 0);
+static_assert(ctCtr<InstB>() == 1);
+static_assert(ctCtr<InstB>() == 2);
+static_assert(ctCtr<InstB>() == 3);
+
+
+struct InstA        // This struct owns the counters (friend types)
+{
+ using nctr1 = CtCtr<InstA>;    // This counter is injected into InstA
+ using nctr2 = CtCtr<float>;    // This counter is too injected into InstA
+ using nctr1 = CtCtr<InstA,1>;  // A different index for the counter, to keep types at least consistent for listings
+
+ static_assert(nctr1::Next() == 0);
+ static_assert(nctr1::Next() == 1);
+ static_assert(nctr1::Next() == 2);
+ static_assert(nctr1::Next() == 3);
+
+ static_assert(nctr2::Next() == 0);
+ static_assert(nctr2::Next() == 1);
+ static_assert(nctr2::Next() == 2);
+ static_assert(nctr2::Next() == 3);
+};
+*/
 //============================================================================================================
 //template<typename T> consteval _finline static char* SigWithTmplParam(void){return FUNC_SIG; };    // Useless for templates
 //template<typename T> consteval _finline static char  CurrFuncSigChr(int Idx){return FUNC_SIG[Idx]; };

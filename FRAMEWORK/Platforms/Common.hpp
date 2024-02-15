@@ -134,7 +134,7 @@ static constexpr bool IsSysBSD = false;
 #endif
 
 
-#if defined(__DEBUG) || defined(DEBUG) && !defined(NDEBUG)
+#if (defined(__DEBUG) || defined(_DEBUG) || defined(DEBUG)) && !defined(NDEBUG) && !defined(_NDEBUG) && !defined(__NDEBUG)
 #define DBGBUILD
 #pragma message(">>> Building as DEBUG")
 static constexpr bool IsDbgBuild = true;
@@ -158,6 +158,7 @@ static constexpr bool IsDbgBuild = false;
 #define _ninline _declspec(noinline)
 #define _finline __forceinline               // At least '/Ob1' is still required     [[msvc::forceinline]] ??
 #define _naked __declspec(naked)
+#define _noret
 #define _used
 //#pragma code_seg(".xtext")
 #pragma section(".xtxt",execute,read)       // 'execute' will be ignored for a data declared with _codesec if the section name is '.text', another '.text' section will be created, not executable
@@ -176,6 +177,7 @@ static constexpr bool IsDbgBuild = false;
 #define _ninline __attribute__((noinline))
 #define _finline __attribute__((always_inline))
 #define _naked   __attribute__((naked))
+#define _noret  __attribute__((noreturn))      // [[noreturn]] is ignored for some reason
 #define _used __attribute__((used))       // Without it Clang will strip every reference to syscall stubs when building for ARM
 #ifdef SYS_MACOS
 #define _codesec __attribute__ ((section ("__TEXT,__text")))
@@ -283,6 +285,11 @@ static constexpr bool IsDbgBuild = false;
 
 #define UNUSED(expr) do { (void)(expr); } while (0)
 
+// Interface validator macros
+#define INTF_VALIDATE(fname,rettype,args...) static_assert(SameTypes<typename RemovePtr<decltype(static_cast<rettype(*)(args)>(fname))>::T, rettype (args)>::V, "");    // This will work with overloaded functions, including func(void)
+//#define INTF_VALIDATE(fname,rettype,args...) static_assert(SameTypes<decltype(fname), rettype (args)>::V, "");
+
+
 // This helps to create a function wrapper without copying its declared signature (If signatures is changed frequently during redesign it is a big hassle to keep the interfaces in sync)
 // Setting SAPI here as default helps to get rid of lambdas which generate too much assignment code:
 //   {return [&]<typename T=SAPI>() _finline {if constexpr(requires { typename T::unlink; })return T::unlink(args...); else return T::unlinkat(PX::AT_FDCWD, args..., 0);}();}
@@ -340,7 +347,7 @@ template<typename T> consteval static auto ChangeTypeSign(T Val=0)  // Should be
 constexpr static bool Is64BitBuild(void){return sizeof(void*) == 8;}   // To be used in constexpr expressions instead of __amd64__ macro
 //------------------------------------------------------------------------------------------------------------
 // NOTE: You must use these types if you want code randomization to be applied
-namespace NGenericTypes   // You should do 'using' for it yourselves if you want to bring these types to global name space   // If this is not Namespace than this would not be possible: 'using namespace NFWK::NGenericTypes;'
+namespace NGT   // NGenericTypes (Shortenrd to have shorter type dumps) // You should do 'using' for it yourselves if you want to bring these types to global name space   // If this is not Namespace than this would not be possible: 'using namespace NFWK::NGenericTypes;'
 {
 #ifdef FWK_DEBUG
  static_assert(1 == sizeof(unsigned char), "Unsupported size of char!");
@@ -384,13 +391,20 @@ pointer	    64	    64	    64	    32	    32
  using sint32  = signed int;
  using sint64  = signed long long;   // __int64_t
 
+#ifdef ARCH_X64          // Not present on X32
+ using uint128 = unsigned __int128; 
+ using sint128 = __int128; 
+#else
+// using int128_t = int __attribute__((mode(TI)));   // !!! https://gcc.gnu.org/onlinedocs/gccint/Machine-Modes.html
+#endif
+
  using int8    = sint8;
  using int16   = sint16;
  using int32   = sint32;
  using int64   = sint64;   // __int64_t
 
  using uint    = decltype(sizeof(void*));   // These 'int' are always platform-friendly (same size as pointer type, replace size_t) // "The result of sizeof and sizeof... is a constant of type std::size_t"
- using sint    = decltype(ChangeTypeSign(sizeof(void*)));
+ using sint    = decltype(ChangeTypeSign(sizeof(void*)));   // NOTE: use of arch`s default type size by default is better for ARM(no easy way to get/set half of a register) and worse for X86(wasted register halves could be used for something else)
  using vptr    = void*;
  using cvptr   = const void*;
 
@@ -405,11 +419,11 @@ pointer	    64	    64	    64	    32	    32
 
 };
 
-using PTRTYPE64  = typename NGenericTypes::uint64;
-using PTRTYPE32  = typename NGenericTypes::uint32;
-using PTRCURRENT = typename NGenericTypes::uint;
+using PTRTYPE64  = typename NGT::uint64;
+using PTRTYPE32  = typename NGT::uint32;
+using PTRCURRENT = typename NGT::uint;
 
-using namespace NGenericTypes;   // For 'Framework.hpp'   // You may do the same in your code if you want
+using namespace NGT;   // For 'Framework.hpp'   // You may do the same in your code if you want
 //------------------------------------------------------------------------------------------------------------
 
 static constexpr unsigned int StkAlign = Is64BitBuild()?8:4;   // X86,ARM     // ARM is 8, x86 16(32 is better)
@@ -432,6 +446,13 @@ typedef __builtin_va_list va_list;        // Requires stack alignment by 16
 
 //------------------------------------------------------------------------------------------------------------
 // Some type traits
+
+//https://stackoverflow.com/questions/64060929/why-does-the-implementation-of-declval-in-libstdc-v3-look-so-complicated
+//  template<typename _Tp, typename _Up = _Tp&&>  _Up __declval(int);
+//  template<typename _Tp> _Tp __declval(long);
+//  template<typename _Tp> auto reclval() noexcept -> decltype(__declval<_Tp>(0));
+// Ihis is fine... for now
+template <typename T> T declval();        // Not really useful to use an overloaded functions with decltype
 
 //template<typename T, typename U> struct SameTypes {enum { V = false };};   // Cannot be a member of a local class or a function
 //template<typename T> struct SameTypes<T, T> {enum { V = true };};
@@ -458,7 +479,7 @@ template <typename Ty> struct TyIdent { using T = Ty; };
 // NOTE: Use this only to pass an unused temporaries as unneeded return values of a function
 // EXAMPLE: ARef<typename RemoveRef<typename TyIdent<T>::T>::T> res
 // NOTE: The compiler will make a copy if a passed type is not same as type of REF (i.e. you pass an uint when type of REF is sint) (FIXED?)
-template <typename Ref> struct ARef       // Universal ref wrapper
+/*template <typename Ref> struct ARef       // Universal ref wrapper  // NOTE: DO NOT USE! Use 'auto&&' and ignore any possible mistakes (It is an universal reference and will behave like actual return value by implicit conversion)
 {
  Ref& ref;
 
@@ -480,7 +501,7 @@ template <typename Ref> struct ARef       // Universal ref wrapper
 
 // EXAMPLE: XRef<T> res
 template<typename T> using XRef = ARef<typename RemoveRef<typename TyIdent<T>::T>::T>;    // Template Alias
-
+*/
 //--------------
 template<typename Ty> struct RemovePtr { using T = Ty; };
 template<typename Ty> struct RemovePtr<Ty*> { using T = Ty; };
@@ -512,7 +533,9 @@ template <unsigned int MinVal=sizeof(void*), typename ... Ts> constexpr _finline
  return ( (ret = (sizeof(Ts) > ret ? sizeof(Ts) : ret)), ... );
 }
 
-template<int at, int idx=0> static constexpr _finline auto GetParFromPk(const auto first, const auto... rest)    // NOTE: With auto& it generates more complicated code (Even when inlined there are a lot of taking refs into local vars)
+// TODO: C++23 replace  https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2023/p2662r3.pdf    // Pack Indexing (Clang 19)
+// Generates a lot of back and forth local variable moves of all values in the pack on each value request!!! (O0)
+template<int at, int idx=0> static constexpr _finline auto GetParFromPk(const auto first, const auto... rest)    // NOTE: With auto& it generates more complicated code (Even when inlined there is a lot of taking refs into local vars)
 {
  if constexpr(idx == at)return first;
   else return GetParFromPk<at,idx+1>(rest...);
@@ -561,7 +584,7 @@ template<typename N> constexpr _finline static N AlignBkwd(N Value, N Alignment)
 // 2,4,8,16,...
 template<typename N> constexpr _finline static bool IsPowerOf2(N Value){return Value && !(Value & (Value - 1));}
 // TODO: Cast pointer types to size_t
-template<typename N> constexpr _finline static N AlignP2Frwd(N Value, unsigned int Alignment){return (Value+((N)Alignment-1)) & ~((N)Alignment-1);}    // NOTE: Result is incorrect if Alignment is not power of 2   
+template<typename N> constexpr _finline static N AlignP2Frwd(N Value, unsigned int Alignment){return (Value+((N)Alignment-1)) & ~((N)Alignment-1);}    // NOTE: Result is incorrect if Alignment is not power of 2
 template<typename N> constexpr _finline static N AlignP2Bkwd(N Value, unsigned int Alignment){return Value & ~((N)Alignment-1);}                       // NOTE: Result is incorrect if Alignment is not power of 2
 //------------------------------------------------------------------------------------------------------------
 
@@ -602,7 +625,7 @@ template<typename T, uint N> struct SDHldr
  constexpr _finline const T& operator[] (const uint idx) const {return this->data[idx];}  //rvalue
 };
 //------------------------------------------------------------------------------------------------------------
-struct pchar
+/*struct pchar
 {
  union
   {
@@ -621,15 +644,19 @@ _finline uint8 operator* () const {return (uint8)*this->val.cav;}    // *Ptr ?
 
 _finline operator achar* (void) const {return this->val.av;}
 _finline operator charb* (void) const {return this->val.bv;}
-};
+};*/
 //------------------------------------------------------------------------------------------------------------
 // The pointer proxy to use inside of a platform dependant structures (i.e. NTDLL)
 // Accepts a pointer to type T and stores it as type H
-template<typename T, typename H=uint> struct alignas(H) SPTR
+// On x86-x32 if a system api returns a pointer and it is wrapped in SPTR then compiler actually returns it by a hidden pointer, passes it as a first argument!!! (Except MSVC)
+// https://www.sco.com/developers/devspecs/abi386-4.pdf   // It is SystemV ABI for X86-X32!
+// This kills ALL wrapper classes!    // As usual, data management is at the bottom!   // Flexie note: Never do that for internal functions, only for explicitly marked with SystemV ABI
+// So, it is useless!!!
+/*template<typename T, typename H=uint> struct alignas(H) SPTR
 {
  using R = typename RemoveConst<typename RemoveRef<T>::T>::T;   // Base type
  STASRT(SameTypes<H, uint>::V || SameTypes<H, uint32>::V || SameTypes<H, uint64>::V, "Unsupported pointer type!");
- H Value;
+ char Value; //H Value;
  _finline constexpr SPTR(void) = default;    //{this->Value = 0;}          // Avoid default constructors in POD (SPTR will replace many members in POD structures)!
  _finline constexpr SPTR(H v){this->Value = v;}
  _finline constexpr SPTR(T* v) requires (!SameTypes<T, const char>::V) {this->Value = (H)v;}
@@ -657,7 +684,9 @@ template<typename T, typename H=uint> struct alignas(H) SPTR
 
 //constexpr _finline Self& operator+=(const auto& rhv) {; return *this;}
 //constexpr _finline Self& operator-=(const auto& rhv) {; return *this;}
-};
+}; */
+//template<typename T, typename H=uint> using SVAL = T;    // For the future, may be   // Should be separate from SPTR anyway
+template<typename T, typename H=uint> using SPTR = T*;   // Just a simple alias
 //using SPTRN  = SPTR<uint>;
 //using SPTR32 = SPTR<uint32>;
 //using SPTR64 = SPTR<uint64>;
@@ -665,10 +694,60 @@ template<typename T, typename H=uint> struct alignas(H) SPTR
 // Error returning:
 // 0 is always a success code
 // If a sint is the return type, it is a POSIX error code
-// 
-// 
+//
+//
 //
 //------------------------------------------------------------------------------------------------------------
- 
+// Reassignable reference
+template<typename T> class CRRef    // https://en.cppreference.com/w/cpp/utility/functional/reference_wrapper
+{
+ T* ptr;
+
+public:
+ CRRef(const T& v){this->ptr = (T*)&v;}
+ CRRef(const CRRef& v){this->ptr = (T*)v.ptr;}
+ CRRef& operator=(const T& v){this->ptr = (T*)&v;}
+ CRRef& operator=(const CRRef& v){this->ptr = (T*)v.ptr;}
+
+ constexpr operator T& () const noexcept { return *this->ptr; }
+ constexpr T& get() const noexcept { return *this->ptr; }
+
+ template<typename... Args> constexpr auto operator() (Args& ... args){return (*this->ptr)(args...);}   // Forward any 'operator()'
+
+};
+template<typename T> CRRef(T&) -> CRRef<T>;    // Deduction guides
+//------------------------------------------------------------------------------------------------------------
+template<size_t N> struct SStrLit   // String literal (Useful for templates where a string need to be passes as a nontype argument)
+{
+ achar value[N];        // Still no way to use it with a custom string class passed as a function argument    // Probably constexpr allocation and consteval counstructor would help somehow to get the size from the constructor?
+                         // Looks like user defined string literals are introduced to "hide" this problem ("argument deduction not allowed in function prototype")
+ constexpr SStrLit(const achar (&str)[N]) { for(int z=0;z < N;z++)value[z] = str[z]; }        // std::copy_n(str, N, value);   // constexpr cstring(char const* data)
+ auto operator<=>(const SStrLit&) const = default;
+ bool operator==(const SStrLit&) const  = default;
+};
+//template <std::size_t N> cstring(char const (&data)[N]) -> cstring<N>;
+/*struct String {                // Thus class can be a function argument
+  __attribute__((always_inline)) inline String(size_t size) {
+     bytes= static_cast<char*>(alloca( size ));// alloca() memory gets allocated here
+  }
+  char* bytes;
+}; */
+
+/*
+template <int N> struct ConstString
+{
+    char str[N];
+    consteval ConstString(const char (&new_str)[N])
+    {
+     for(int idx=0;idx < N;idx++)str[idx] = new_str[idx];
+    }
+};
+template <int N> ConstString(const char (&arr)[N]) -> ConstString<N>;
+
+template <ConstString S> struct Axx {};
+*/
+//template <cstring file_name> struct event {
+//    static constexpr char const* const file_name_ = file_name.data_;
+//};
 //------------------------------------------------------------------------------------------------------------
 

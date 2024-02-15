@@ -6,10 +6,12 @@
 // TODO: Rename to NTSYS and include definitions for drivers too and everything from NtDllEx(impossible,uses imports)?
 template<typename PHT> struct NNTDLL  // For members: alignas(sizeof(PHT))
 {
-using SIZE_T    = PHT; //TSW<sizeof(PHT) == sizeof(uint64), uint64, uint32>::T;    // Use direct type instead of SPTR<uint, PHT> to avoid unnecessary truncation
+using SIZE_T    = decltype(TypeToUnsigned<PHT>());  //  SPTR<uint,   PHT>;  // PHT; //TSW<sizeof(PHT) == sizeof(uint64), uint64, uint32>::T;    // Use direct type instead of SPTR<uint, PHT> to avoid unnecessary truncation
+using SSIZE_T   = decltype(TypeToSigned<PHT>());  //  SPTR<sint,   PHT>;
+
 using PVOID     = SPTR<void, PHT>;    // PHT aligned void* of current native type (32 bit for 32bit build)    // x32: You can assign a x32 void* and read it back but if some x64 code assigned a x64 value to it then you have to read it as UINT64 in your x32 code
 //using ADDR      = TSW<sizeof(PHT) == sizeof(void*), SPTR<void, PHT>, SPTR<uint, PHT>>::T;   // Can hold an address of PHT size for current build (Unsigned if PHT is not of native void* size)
-using HANDLE    = PVOID;
+using HANDLE    = SIZE_T;    // Had to make it SIZE_T and unsafe because math operations is now applicable to it (Cannot make pointer constants from integer constants at compile time)
 
 using VOID      = void;
 using BOOL      = unsigned int;
@@ -47,11 +49,11 @@ using PLARGE_INTEGER  = SPTR<LARGE_INTEGER, PHT>;
 using PULARGE_INTEGER = SPTR<ULARGE_INTEGER, PHT>;
 
 
-SCVR HANDLE NtCurrentThread  = ((HANDLE)(size_t)-2);
-SCVR HANDLE NtCurrentProcess = ((HANDLE)(size_t)-1);
+SCVR HANDLE NtCurrentThread  = ((HANDLE)(size_t)-2);   // HANDLE had to be made SIZE_T instead of PVOID because such constants is forbidden to create
+SCVR HANDLE NtCurrentProcess = ((HANDLE)(size_t)-1);   // HACK: static constexpr const void* ptr = __builtin_constant_p( reinterpret_cast<const void*>(0x1) ) ? reinterpret_cast<const void*>(0x1) : reinterpret_cast<const void*>(0x1)  ;
 
-#define NT_SUCCESS(Status)              ((NT::NTSTATUS)(Status) >= 0)
-#define NT_ERROR(Status)                ((((NT::ULONG)(Status)) >> 30) == 3)
+static _finline bool NT_SUCCESS(NTSTATUS Status){return (LONG)Status >= 0;}        //#define NT_SUCCESS(Status)              ((NT::NTSTATUS)(Status) >= 0)
+static _finline bool NT_ERROR(NTSTATUS Status){return (Status >> 30) == 3;}  //#define NT_ERROR(Status)                ((((NT::NTSTATUS)(Status)) >> 30) == 3)
 //============================================================================================================
 //                                          CORE FUNCTIONS
 //============================================================================================================
@@ -448,7 +450,7 @@ struct FILE_DIRECTORY_INFORMATION
  WCHAR FileName[1];
 };
 
-struct FILE_FULL_DIR_INFORMATION 
+struct FILE_FULL_DIR_INFORMATION
 {
  ULONG NextEntryOffset;
  ULONG FileIndex;
@@ -464,7 +466,7 @@ struct FILE_FULL_DIR_INFORMATION
  WCHAR FileName[1];
 };
 
-struct FILE_ID_FULL_DIR_INFORMATION 
+struct FILE_ID_FULL_DIR_INFORMATION
 {
  ULONG NextEntryOffset;
  ULONG FileIndex;
@@ -481,7 +483,7 @@ struct FILE_ID_FULL_DIR_INFORMATION
  WCHAR FileName[1];
 };
 
-struct FILE_BOTH_DIR_INFORMATION 
+struct FILE_BOTH_DIR_INFORMATION
 {
  ULONG NextEntryOffset;
  ULONG FileIndex;
@@ -499,7 +501,7 @@ struct FILE_BOTH_DIR_INFORMATION
  WCHAR FileName[1];
 };
 
-struct FILE_ID_BOTH_DIR_INFORMATION 
+struct FILE_ID_BOTH_DIR_INFORMATION
 {
  ULONG NextEntryOffset;
  ULONG FileIndex;
@@ -518,7 +520,7 @@ struct FILE_ID_BOTH_DIR_INFORMATION
  WCHAR FileName[1];
 };
 
-struct FILE_NAMES_INFORMATION 
+struct FILE_NAMES_INFORMATION
 {
  ULONG NextEntryOffset;
  ULONG FileIndex;

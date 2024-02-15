@@ -12,6 +12,10 @@
 // NOTE: We should be able to use these definitions to call X64 functions from X32 code if necessary (Windows only
 // TODO: size of int is platform dependant, replace it
 // PHS is size of pointer we require (set it default to sizeof(void*) here?))
+
+#define PXERR(err) (-NPTM::PX::err)
+#define MMERR(addr) (((size_t)addr & 0xFFF))
+
 template<typename PHT> struct NPOSIX  // For members: alignas(sizeof(PHT))
 {
 // Which Linux?
@@ -35,15 +39,15 @@ template<uint vARM, uint vX86> struct ASV
  V = (int)vX86
 #endif
 ;
-}; 
+};
 
 
 
  using PVOID    = SPTR<void,   PHT>;    // All of this is to be able to call X64 syscalls from X32 code
- using PCHAR    = SPTR<pchar,  PHT>;
+ using PCHAR    = SPTR<achar,  PHT>;  //SPTR<pchar,  PHT>;
  using PCVOID   = SPTR<const void,   PHT>;
- using PCCHAR   = SPTR<const pchar,  PHT>;
- using PPCHAR   = SPTR<const pchar*, PHT>;    // achar**
+ using PCCHAR   = SPTR<const achar,  PHT>;  //SPTR<const pchar,  PHT>;
+ using PPCHAR   = SPTR<const achar*, PHT>;  //SPTR<const pchar*, PHT>;    // achar**
 //using HANDLE   = PVOID;
  using SIZE_T   = decltype(TypeToUnsigned<PHT>());  //  SPTR<uint,   PHT>;
  using SSIZE_T  = decltype(TypeToSigned<PHT>());  //  SPTR<sint,   PHT>;
@@ -55,14 +59,16 @@ template<uint vARM, uint vX86> struct ASV
 //using NTSTATUS = LONG;
  using PSSIZE_T = SPTR<SSIZE_T, PHT>;
  using PSIZE_T  = SPTR<SIZE_T, PHT>;
+ using PUINT32  = SPTR<uint32, PHT>;
  using PUINT64  = SPTR<uint64, PHT>;
- using PINT64   = SPTR<int32, PHT>;
  using PINT32   = SPTR<int32, PHT>;
+ using PINT64   = SPTR<int64, PHT>;
+ using PUINT8   = SPTR<uint8, PHT>;
  using mode_t   = int32;  //uint32;
  using fdsc_t   = int32;
  using dev_t    = uint32;    // See makedev macro
  //using off_t    = int64;
- using pid_t    = int;
+ using pid_t    = SSIZE_T;   // Should be of size_t size to contain extra info on x64 if needed
  //using fd_t     = int;
  using time_t   = SSIZE_T;   // Old time_t which is 32-bit on x32 platforms
 
@@ -358,7 +364,7 @@ static SSIZE_T PXCALL readv(fdsc_t fd, PIOVec iov, int iovcnt);
 
 // Attempts to write nbytes of data to the object referenced by the descriptor d from the buffer pointed to by buf . writev() performs the same action, but gathers the output data from the iovcnt buffers specified by the members of the iov array: iov[0] , iov[1] , ..., iov[iovcnt-1] .
 // Upon successful completion, write() and writev() return the number of bytes actually written. Otherwise, they return -1 and set errno to indicate the error.
-static SSIZE_T PXCALL write(fdsc_t fd, PVOID buf, SIZE_T nbytes);
+static SSIZE_T PXCALL write(fdsc_t fd, PCVOID buf, SIZE_T nbytes);
 static SSIZE_T PXCALL writev(fdsc_t fd, PIOVec iov, int iovcnt);     // Windows: WriteFileGather
 
 enum ESeek
@@ -500,6 +506,7 @@ template<typename T> struct STSpec        // nanosleep, fstat (SFStat)
 inline STSpec<T>& operator= (const auto& tm){this->sec = (T)tm.sec; this->nsec = (T)tm.nsec; return *this;}
 };
 using timespec = STSpec<time_t>;
+using PTiSp = SPTR<timespec,   PHT>;
 
 template<typename T> struct STVal      // gettimeofday
 {
@@ -507,6 +514,7 @@ template<typename T> struct STVal      // gettimeofday
  T usec;  // Microseconds    // suseconds_t (long)
 };
 using timeval = STVal<time_t>;
+using PTiVl = SPTR<timeval,   PHT>;
 
 struct timezone
 {
@@ -561,7 +569,7 @@ struct SFStat      // Generic     // This one is used in NAPI
  STSpec<uint64> ctime;  // The field st_ctime is changed by writing or by setting inode information (i.e., owner, group, link count, mode, etc.)
 };
 
-struct SFStatX86x64      // On x86_64   
+struct SFStatX86x64      // On x86_64
 {
  uint64 dev;
  uint64 ino;
@@ -573,37 +581,37 @@ struct SFStatX86x64      // On x86_64
  uint64 rdev;
  sint64 size;
  uint64 blksize;
- uint64 blocks;         
- STSpec<uint64> atime;  
- STSpec<uint64> mtime;  
- STSpec<uint64> ctime;  
+ uint64 blocks;
+ STSpec<uint64> atime;
+ STSpec<uint64> mtime;
+ STSpec<uint64> ctime;
  int64  __unused[3];
 };
 
-/*struct SFStatX86x32    
+/*struct SFStatX86x32
 {
 
 };*/
 
-struct SFStatArm64      // On raspberry pi ARMx64   
+struct SFStatArm64      // On raspberry pi ARMx64
 {
  uint64 dev;
  uint64 ino;
  uint32 mode;
- uint32 nlink;             
+ uint32 nlink;
  uint64 uid;
  uint64 gid;
  uint64 rdev;
  sint64 size;
  uint64 blksize;
  uint64 blocks;
- STSpec<uint64> atime;  
- STSpec<uint64> mtime;  
- STSpec<uint64> ctime;  
+ STSpec<uint64> atime;
+ STSpec<uint64> mtime;
+ STSpec<uint64> ctime;
  int64  __unused[3];
 };
 
-/*struct SFStatArm32     // Do not use - 32bit sizes! (Use SFStat64 on x32 systems with xxx64 functions instead) 
+/*struct SFStatArm32     // Do not use - 32bit sizes! (Use SFStat64 on x32 systems with xxx64 functions instead)
 {
  uint32 dev;
  uint32 ino;
@@ -615,30 +623,30 @@ struct SFStatArm64      // On raspberry pi ARMx64
  uint32 size;
  uint32 blksize;
  uint32 blocks;
- STSpec<uint32> atime;     
- STSpec<uint32> mtime;     
- STSpec<uint32> ctime;     
+ STSpec<uint32> atime;
+ STSpec<uint32> mtime;
+ STSpec<uint32> ctime;
  uint32  unused[2]
 }; */
 
 struct SFStat64    // On ARMx32,...  For xxx64 functions (mode,nlink,uid,gid,size is compatible with SFStatArm64)
 {
- uint64  dev;         
+ uint64  dev;
  uint8   __pad0[4];
  uint32  __ino;       // inode number
- uint32  mode;        
- uint32  nlink;      
- uint32  uid;         
- uint32  gid;         
- uint64  rdev;        
+ uint32  mode;
+ uint32  nlink;
+ uint32  uid;
+ uint32  gid;
+ uint64  rdev;
  uint8   __pad3[4];
- sint64  size;       
- uint32  blksize;     
+ sint64  size;
+ uint32  blksize;
  uint64  blocks;      // Number 512-byte blocks allocated.
  STSpec<uint32>  atime;       // time of last access
  STSpec<uint32>  mtime;       // time of last modification
  STSpec<uint32>  ctime;       // time of last status change
- uint64  ino;         
+ uint64  ino;
 };
 
 static void ConvertToNormalFstat(SFStat* Dst, vptr Src)
@@ -647,33 +655,33 @@ static void ConvertToNormalFstat(SFStat* Dst, vptr Src)
  TSrcType* SrcPtr = (TSrcType*)Src;
  SFStat Tmp;   // Dst may be same as Src
 
- Tmp.dev     = SrcPtr->dev;    
- Tmp.ino     = SrcPtr->ino;    
- Tmp.nlink   = SrcPtr->nlink;  
- Tmp.mode    = SrcPtr->mode;   
- Tmp.uid     = SrcPtr->uid;    
- Tmp.gid     = SrcPtr->gid;    
- Tmp.rdev    = SrcPtr->rdev;   
- Tmp.size    = SrcPtr->size;   
+ Tmp.dev     = SrcPtr->dev;
+ Tmp.ino     = SrcPtr->ino;
+ Tmp.nlink   = SrcPtr->nlink;
+ Tmp.mode    = SrcPtr->mode;
+ Tmp.uid     = SrcPtr->uid;
+ Tmp.gid     = SrcPtr->gid;
+ Tmp.rdev    = SrcPtr->rdev;
+ Tmp.size    = SrcPtr->size;
  Tmp.blksize = SrcPtr->blksize;
- Tmp.blocks  = SrcPtr->blocks; 
+ Tmp.blocks  = SrcPtr->blocks;
  Tmp.atime   = SrcPtr->atime;   // May be STSpec<uint32>  to  STSpec<uint64>
- Tmp.mtime   = SrcPtr->mtime;  
- Tmp.ctime   = SrcPtr->ctime;  
+ Tmp.mtime   = SrcPtr->mtime;
+ Tmp.ctime   = SrcPtr->ctime;
 
- Dst->dev     = Tmp.dev;    
- Dst->ino     = Tmp.ino;    
- Dst->nlink   = Tmp.nlink;  
- Dst->mode    = Tmp.mode;   
- Dst->uid     = Tmp.uid;    
- Dst->gid     = Tmp.gid;    
- Dst->rdev    = Tmp.rdev;   
- Dst->size    = Tmp.size;   
+ Dst->dev     = Tmp.dev;
+ Dst->ino     = Tmp.ino;
+ Dst->nlink   = Tmp.nlink;
+ Dst->mode    = Tmp.mode;
+ Dst->uid     = Tmp.uid;
+ Dst->gid     = Tmp.gid;
+ Dst->rdev    = Tmp.rdev;
+ Dst->size    = Tmp.size;
  Dst->blksize = Tmp.blksize;
- Dst->blocks  = Tmp.blocks; 
- Dst->atime   = Tmp.atime;    
- Dst->mtime   = Tmp.mtime;  
- Dst->ctime   = Tmp.ctime;  
+ Dst->blocks  = Tmp.blocks;
+ Dst->atime   = Tmp.atime;
+ Dst->mtime   = Tmp.mtime;
+ Dst->ctime   = Tmp.ctime;
 }
 //------------------------------------------------------------------------------------------------------------
 
@@ -722,53 +730,53 @@ enum EDEntType
  DT_WHT     = 14   // BSD/Darwin
 
 // Framework extended:   // Bad idea - on Linux will have to loop through all records after getdents to change the flags and do 'stat' on links even if none of this will be useful afterwards
-/* DET_FIFO    = 0x01,   
- DET_CHR     = 0x02,   
- DET_DIR     = 0x04,   
- DET_BLK     = 0x08,   
- DET_REG     = 0x10,   
- DET_LNK     = 0x20,   
- DET_SOCK    = 0x40,   
- DET_WHT     = 0x80 */   
+/* DET_FIFO    = 0x01,
+ DET_CHR     = 0x02,
+ DET_DIR     = 0x04,
+ DET_BLK     = 0x08,
+ DET_REG     = 0x10,
+ DET_LNK     = 0x20,
+ DET_SOCK    = 0x40,
+ DET_WHT     = 0x80 */
 };
 
 struct darwin_dirent32   // when _DARWIN_FEATURE_64_BIT_INODE is NOT defined     // Untested!
-{ 
- uint32 ino;             // file number of entry 
- uint16 reclen;          // length of this record 
- uint8  type;            // file type, see below 
+{
+ uint32 ino;             // file number of entry
+ uint16 reclen;          // length of this record
+ uint8  type;            // file type, see below
  uint8  namlen;          // length of string in d_name
  achar  name[255 + 1];   // name must be no longer than this
-}; 
+};
 
 struct darwin_dirent64   // when _DARWIN_FEATURE_64_BIT_INODE is defined         // Untested!
-{                        
+{
  uint64 fileno;          // file number of entry
  uint64 seekoff;         // seek offset (optional, used by servers)
- uint16 reclen;          // length of this record 
- uint16 namlen;          // length of string in d_name 
- uint8  type;            // file type, see below 
- achar  name[1024];      // name must be no longer than this 
-};                       
-                         
+ uint16 reclen;          // length of this record
+ uint16 namlen;          // length of string in d_name
+ uint8  type;            // file type, see below
+ achar  name[1024];      // name must be no longer than this
+};
+
 struct bsd_dirent32      // For syscall 196 (freebsd11)     _WANT_FREEBSD11_DIRENT
-{                        
+{
  uint32 fileno;          // file number of entry
  uint16 reclen;          // length of this record
  uint8  type;            // file type, see below
- uint8  namlen;          // length of string in d_name 
- achar  name[255 + 1];   // name must be no longer than this 
-};                       
-                         
+ uint8  namlen;          // length of string in d_name
+ achar  name[255 + 1];   // name must be no longer than this
+};
+
 struct bsd_dirent64      // For syscall 554  // BSDSysVer >= 1200031
-{			             
- uint64 fileno;		     // file number of entry 
- sint64 off;		     // directory offset of next entry 
- uint16 reclen;		     // length of this record 
- uint8  type;		     // file type, see below 
- uint8  pad0;            
- uint16 namlen;		     // length of string in d_name 
- uint16 pad1;            
+{
+ uint64 fileno;		     // file number of entry
+ sint64 off;		     // directory offset of next entry
+ uint16 reclen;		     // length of this record
+ uint8  type;		     // file type, see below
+ uint8  pad0;
+ uint16 namlen;		     // length of string in d_name
+ uint16 pad1;
  achar  name[255 + 1];   // name must be no longer than this
 };
 
@@ -777,8 +785,8 @@ struct SDirEnt     // linux_dirent64  // For getdents64
 {
  uint64 ino;       // Inode number // BSD: ino_t   d_fileno
  sint64 off;       // Offset to next linux_dirent   // BSD: ff_t d_off
- uint16 reclen;    // Length of this linux_dirent 
- uint8  type;      // File type (only since Linux 2.6.4;           
+ uint16 reclen;    // Length of this linux_dirent
+ uint8  type;      // File type (only since Linux 2.6.4;
  achar  name[1];   // Filename (null-terminated)    // length is actually (d_reclen - 2 - offsetof(struct linux_dirent, d_name)
 };
 
@@ -849,7 +857,7 @@ enum EMapFlg
 };
 
 // Provides the same interface as mmap, except that the final argument specifies the offset into the file in 4096-byte units
-static PVOID PXCALL mmapGD(PVOID addr, SIZE_T length, uint prot, uint flags, fdsc_t fd, uint64 pgoffset);    // Generic definition for x32/x64
+static PVOID PXCALL mmapGD(PVOID addr, SIZE_T length, uint prot, uint flags, fdsc_t fd, uint64 pgoffset);    // Generic definition for x32/x64   // On X32 value of x64 pgoffset is shifted right for mmap2
 
 static PVOID PXCALL mmap2(PVOID addr, SIZE_T length, uint prot, uint flags, fdsc_t fd, SIZE_T pgoffset);     // This system call does not exist on x86-64 and ARM64
 
@@ -1097,9 +1105,10 @@ enum ECloneFlags
  CLONE_IO             = 0x80000000, // Clone io context
 };
 // https://github.com/raspberrypi/linux/blob/rpi-5.15.y/kernel/fork.c
+// glibc/glibc/sysdeps/unix/sysv/linux/x86_64/clone.S.html
 // It returns 0 in the child process and returns the PID of the child in the parent.
-static pid_t  PXCALL cloneB0(uint32 flags, PVOID newsp, PINT32 parent_tid, PINT32 child_tid, unsigned long tls);  // Linux specific  // x86-x64, ...
-static pid_t  PXCALL cloneB1(uint32 flags, PVOID newsp, PINT32 parent_tid, unsigned long tls, PINT32 child_tid);  // Linux specific  // x86-32, ARM32, ARM64, ...
+static pid_t  PXCALL cloneB0(uint32 flags, PVOID newsp, PINT32 parent_tid, PINT32 child_tid, PVOID tls);  // Linux specific  // x86-x64, ...            // struct user_desc* tls     // Use this as a generic definition
+static pid_t  PXCALL cloneB1(uint32 flags, PVOID newsp, PINT32 parent_tid, PVOID tls, PINT32 child_tid);  // Linux specific  // x86-32, ARM32, ARM64, ...
 
 // Spawn a new process
 // Default format of siofd is {oldfd,newfd,...,-1}
@@ -1107,54 +1116,113 @@ static pid_t  PXCALL cloneB1(uint32 flags, PVOID newsp, PINT32 parent_tid, unsig
 // See posix_spawn for actions that may be required
 static pid_t  PXCALL spawn(PCCHAR path, PPCHAR argv, PPCHAR envp, PINT32 siofd, uint32 flags);    // Improvised  // int siofd[3]{STDIN,STDOUT,STDERR} // Flags are additional flags for Clone, unused for now
 
+static pid_t  PXCALL thread(NTHD::PThreadProc Proc, PVOID Data, SIZE_T DatSize, SIZE_T StkSize, SIZE_T TlsSize, uint32 Flags);  // Improvised   // Actually allocates: PageAlign(Size+StkSize+TlsSize+ThreadRec)
+static sint   PXCALL thread_sleep(uint64 ns);     // nleepns???	  // -1 - wait infinitely  // Sleeps on its futex	 // -1 sleep until termination
+static sint   PXCALL thread_status(pid_t thid);
+static sint   PXCALL thread_kill(pid_t thid, sint status);
+static sint   PXCALL thread_exit(sint status);    // Allows to exit without returning from ThreadProc directly	   // Deallocate the thread`s stack memory?
+static sint   PXCALL thread_wait(pid_t thid, uint64 ns);   // -1 - wait infinitely
+static sint   PXCALL thread_affinity(pid_t thid, uint64 mask, uint32 from); 
+static sint   PXCALL thread_affinity(pid_t thid, size_t buf_len, PSIZE_T buf); 	 // Get
+// CPU affinity
+// Suspend/Resume
+// Terminate
+// Exit?   (Not exit_group which terminates the entire app)
 
-enum EThDefs
-{
- THD_MAX_MMGRS   = 4,
- THD_MAX_USR_TLS = 32
-};
-
-// This thread context is allocated on stack, no separate TLS memory block is used
-// Need some means to retrieve its pointer without conflicts with usual TLS mechanisms to allow libc coexist with the framework
-//
-struct SThCtx
-{
- PVOID  Self;  // Points to this SThCtx
- PVOID  StkBase;
- SIZE_T StkSize;
- pid_t  GroupID;     // Can be changed with setpgid
- pid_t  ThreadID;    // May be equal ProcesssID?
- pid_t  ProcesssID;
- PVOID  MMPtrs[THD_MAX_MMGRS];      // For thread local memory managers (mempool)
- PVOID  UsrTls[THD_MAX_USR_TLS];
-};
-
-using ThreadProc = SIZE_T (_scall *)(PVOID);
-
-static pid_t  PXCALL thread(ThreadProc* Proc, PVOID Arg, uint32 Flags, SIZE_T StkSize);  // Improvised
-
-static constexpr const int  WNOHANG       = 1;  // Don't block waiting.
-static constexpr const int  WUNTRACED    = 2;   // Report status of stopped children.
-static constexpr const int  WCONTINUED = 3; // Return if a stopped child has been resumed by delivery of SIGCONT
+static constexpr const int  WNOHANG    = 1;   // Don't block waiting.
+static constexpr const int  WUNTRACED  = 2;   // Report status of stopped children.
+static constexpr const int  WCONTINUED = 3;   // Return if a stopped child has been resumed by delivery of SIGCONT
 
 static constexpr _finline int32 WEXITSTATUS(int32 s) {return (((s) & 0xff00) >> 8);}
 static constexpr _finline int32 WTERMSIG(int32 s) {return ((s) & 0x7f);}
 static constexpr _finline int32 WSTOPSIG(int32 s) {return WEXITSTATUS(s);}
 static constexpr _finline bool  WCOREDUMP(int32 s) {return ((s) & 0x80);}
-static constexpr _finline bool  WIFEXITED(int32 s) {return (!WTERMSIG(s));}
-static constexpr _finline bool  WIFSTOPPED(int32 s){return  ((short)((((s)&0xffff)*0x10001U)>>8) > 0x7f00);}
+static constexpr _finline bool  WIFEXITED(int32 s) {return (!WTERMSIG(s));}		// returns true if the child terminated normally, that is, by calling exit(3) or _exit(2), or by returning from main().
+static constexpr _finline bool  WIFSTOPPED(int32 s) {return  ((short)((((s)&0xffff)*0x10001U)>>8) > 0x7f00);}
 static constexpr _finline bool  WIFSIGNALED(int32 s) {return (((s)&0xffff)-1U < 0xffu);}
 static constexpr _finline bool  WIFCONTINUED(int32 s) {return ((s) == 0xffff);}
 
 /*
+When a process terminates its parent process must acknowledge this using the wait or waitpid function. These functions also return the exit status.
+
 A child that terminates, but has not been waited for becomes a "zombie". The kernel maintains a minimal set of information about the
 zombie process (PID, termination status, resource usage information) in order to allow the parent to later perform a wait to obtain
 information about the child. As long as a zombie is not removed from the system via a wait, it will consume a slot in the kernel
 process table, and if this table fills, it will not be possible to create further processes. If a parent process terminates,
 then its "zombie" children (if any) are adopted by init(8), which automatically performs a wait to remove the zombies.
+
+The wait() system call suspends execution of the calling process until one of its children terminates. The call wait(&status) is equivalent to: waitpid(-1, &status, 0);
+The waitpid() system call suspends execution of the calling process until a child specified by pid argument has changed state.
+
+https://stackoverflow.com/questions/18441760/linux-where-are-the-return-codes-stored-of-system-daemons-and-other-processes?noredirect=1&lq=1
+/proc/[pid]/stat
+kill(getpid(), SIGKILL);
 */
-static pid_t  PXCALL wait4(pid_t pid, PINT32 wstatus, int options, PVOID rusage);
+static pid_t  PXCALL wait4(pid_t pid, PINT32 wstatus, int options, PVOID rusage);    // Old, should use  waitpid or waitid
 //static int    PXCALL waitid(idtype_t idtype, id_t id, siginfo_t *infop, int options);   // Later
+
+
+enum EFutex
+{
+ FUTEX_WAIT            = 0,    // BSD
+ FUTEX_WAKE            = 1,    // BSD
+ FUTEX_FD              = 2,    // Probably can be done on Windows
+ FUTEX_REQUEUE         = 3,    // BSD (Can it be done on Windows?)
+ FUTEX_CMP_REQUEUE     = 4,
+ FUTEX_WAKE_OP         = 5,
+ FUTEX_LOCK_PI         = 6,
+ FUTEX_UNLOCK_PI       = 7,
+ FUTEX_TRYLOCK_PI      = 8,
+ FUTEX_WAIT_BITSET     = 9,
+ FUTEX_WAKE_BITSET     = 10,
+ FUTEX_WAIT_REQUEUE_PI = 11,
+ FUTEX_CMP_REQUEUE_PI  = 12,
+ FUTEX_LOCK_PI2        = 13,
+ FUTEX_PRIVATE_FLAG    = 128,	  // Linux, new
+ FUTEX_CLOCK_REALTIME  = 256,
+ FUTEX_CMD_MASK        = ~(FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME),
+
+ FUTEX_WAIT_PRIVATE = (FUTEX_WAIT | FUTEX_PRIVATE_FLAG),
+ FUTEX_WAKE_PRIVATE = (FUTEX_WAKE | FUTEX_PRIVATE_FLAG),
+ FUTEX_REQUEUE_PRIVATE = (FUTEX_REQUEUE | FUTEX_PRIVATE_FLAG),
+
+ FUTEX_OP_SET       = 0,   // *(int *)UADDR2  = OPARG;
+ FUTEX_OP_ADD       = 1,   // *(int *)UADDR2 += OPARG; 
+ FUTEX_OP_OR        = 2,   // *(int *)UADDR2 |= OPARG; 
+ FUTEX_OP_ANDN      = 3,   // *(int *)UADDR2 &= ~OPARG; 
+ FUTEX_OP_XOR       = 4,   // *(int *)UADDR2 ^= OPARG; 
+
+ FUTEX_OP_OPARG_SHIFT = 8,   // Use (1 << OPARG) instead of OPARG. 
+
+ FUTEX_OP_CMP_EQ    = 0,   // if (oldval == CMPARG) wake 
+ FUTEX_OP_CMP_NE    = 1,   // if (oldval != CMPARG) wake 
+ FUTEX_OP_CMP_LT    = 2,   // if (oldval <  CMPARG) wake 
+ FUTEX_OP_CMP_LE    = 3,   // if (oldval <= CMPARG) wake 
+ FUTEX_OP_CMP_GT    = 4,   // if (oldval >  CMPARG) wake 
+ FUTEX_OP_CMP_GE    = 5,   // if (oldval >= CMPARG) wake 
+};
+
+// Before the thread is suspended the value of the futex variable is checked. If it does not have the same value as the val1 parameter the system call immediately returns with the error EWOULDBLOCK.
+// If the time runs out without a notification being sent, the system call returns with the error ETIMEDOUT
+// system call can return if the thread received a signal. In this case the error is EINTR.
+// for FUTEX_WAIT, timeout is interpreted as a relative value.  This differs from other futex operations, where timeout is interpreted as an absolute value.
+// https://man7.org/linux/man-pages/man2/futex.2.html
+//
+static sint32 PXCALL futexGD(PUINT32 uaddr, int op, uint32 val, const PTiSp timeout);	  // Minimal operation
+static sint32 PXCALL futex(PUINT32 uaddr, int op, uint32 val, const PTiSp timeout, PUINT32 uaddr2, uint32 val3);    // Linux   // timespec may be uint32_t val2 (see op)     // Returns long
+// OpenBSD:      int futex(PUINT32 uaddr, int op, uint32 val, const PTiSp timeout, PUINT32 uaddr2);
+// BSD:		  https://github.com/mumble-voip/sbcelt/blob/master/lib/futex-freebsd.c
+/*int futex_wake(int *futex) {return _umtx_op(futex, UMTX_OP_WAKE, 1, 0, 0);}
+
+int futex_wait(int *futex, int val, struct timespec *ts) {
+	int err = _umtx_op(futex, UMTX_OP_WAIT_UINT, val, 0, (void *)ts);
+	if (err != 0) {
+		if (errno == ETIMEDOUT)return FUTEX_TIMEDOUT;	
+		 else if (errno == EINTR)return FUTEX_INTERRUPTED; // XXX: unsure if umtx can be EINTR'd.	
+	}
+	return err;
+} */
+
 
 };
 

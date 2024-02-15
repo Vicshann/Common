@@ -1,6 +1,5 @@
 
 #pragma once
-
 template<typename T, int ATerm=-1> class CArr    // TODO: Allocator based?
 {
  using Self = CArr<T,ATerm>;
@@ -50,9 +49,10 @@ public:
  CArr(void){this->AData = nullptr;}
  CArr(uint Cnt){this->AData = nullptr; this->Resize(Cnt);}
  ~CArr(){this->SetLength(0);}
- operator  T*() const {return this->AData;}    // operator   const T*() {return this->AData;}
+ operator  T*() const {return this->AData;}     // operator   const T*() {return this->AData;}
  T* Data(void) const {return this->AData;}
  T* c_data(void) const {return this->AData;}    // For name compatibility in a templates
+ T* Ptr(uint at)const {return this->AData[at];} // NOTE: No checks
  uint Count(void) const {return (this->Size() / sizeof(T));}
  uint Size(void) const {return ((this->AData)?(((uint*)this->AData)[-1]):(0));}
  uint Length(void) const {return this->Size();}
@@ -64,14 +64,14 @@ sint TakeFrom(Self& arr)
 {
  if(sint res=this->SetLength(0);res < 0)return res;
  this->AData = arr.AData;
- arr.AData = nullptr;  
+ arr.AData = nullptr;
  return 0;
 }
 //----------------------------------------------------------
 sint Assign(void* Items, uint Cnt)     // Cnt is in Items
 {
  uint NewLen = Cnt * sizeof(T);
- if(sint res=this->SetLength(NewLen);res < 0)return res; 
+ if(sint res=this->SetLength(NewLen);res < 0)return res;
  if(Items)memcpy(this->AData, Items, NewLen);
  return 0;
 }
@@ -80,7 +80,7 @@ sint Append(void* Items, uint Cnt)     // Cnt is in Items
 {
  uint OldSize = this->Size();
  uint NewLen  = Cnt * sizeof(T);
- if(sint res=this->SetLength(OldSize+NewLen);res < 0)return res;    
+ if(sint res=this->SetLength(OldSize+NewLen);res < 0)return res;
  if(Items)memcpy(&((uint8*)this->AData)[OldSize], Items, NewLen);
  LOGMSG("DST=%p, SRC=%p, LEN=%08X",&((uint8*)this->AData)[OldSize], Items, NewLen);
  return 0;
@@ -91,9 +91,9 @@ sint Insert(void* Items, uint Cnt, uint At)
  uint OldSize = this->Size();
  uint ExtLen  = Cnt * sizeof(T);
  uint AtOffs  = At * sizeof(T);
- if(sint res=this->SetLength(OldSize+ExtLen);res < 0)return res; 
+ if(sint res=this->SetLength(OldSize+ExtLen);res < 0)return res;
  memmove(&((uint8*)this->AData)[AtOffs+ExtLen], &((uint8*)this->AData)[AtOffs], OldSize - AtOffs);
- if(Items)memcpy(&((uint8*)this->AData)[AtOffs], Items, ExtLen); 
+ if(Items)memcpy(&((uint8*)this->AData)[AtOffs], Items, ExtLen);
  return 0;
 }
 //----------------------------------------------------------
@@ -106,6 +106,8 @@ sint Remove(uint Cnt, uint At)
 //----------------------
  //CArr<T>& operator += (const wchar_t* str){this->Append((void*)str, lstrlenW(str)); return *this;}
 //----------------------
+void  operator = (const Self &arr){this->Assign(arr.Data(), arr.Count());}   // Must be defined or '=' op will steal the memory
+
 inline Self& operator += (const Self& arr){this->Append(arr.AData, arr.Size()); return *this;}
 template<typename A, uint N> inline Self& operator += (const A(&str)[N])
 {
@@ -142,16 +144,16 @@ sint SetLength(uint Len)    // In bytes!     // Preserves old data!
 sint FromFile(const achar* FileName)
 {
  int df = NPTM::NAPI::open(FileName,PX::O_RDONLY,0);
- if(df < 0){ DBGERR("Error: Failed to open the file %i: %s!",df,FileName); return (sint)df; }
+ if(df < 0){ DBGERR("Failed to open the file %i: '%s'!",df,FileName); return (sint)df; }
  sint flen = NPTM::NAPI::lseek(df, 0, PX::SEEK_END);    // TODO: Use fstat
  if(flen < 0){NPTM::NAPI::close(df); return flen;}
  NPTM::NAPI::lseek(df, 0, PX::SEEK_SET);     // Set the file position back
- if(sint res=this->SetLength(flen);res < 0){NPTM::NAPI::close(df); return res;}   
+ if(sint res=this->SetLength(flen);res < 0){NPTM::NAPI::close(df); return res;}
  sint rlen = NPTM::NAPI::read(df, this->AData, this->Size());
  NPTM::NAPI::close(df);
  if(rlen < 0)return rlen;
- if(rlen != flen){ DBGERR("Error: Data size mismatch!"); return PX::EFBIG; }
- return (rlen / sizeof(T));
+ if(rlen != flen){ DBGERR("Data size mismatch!"); return PX::EFBIG; }
+ return sint(rlen / sizeof(T));
 }
 //----------------------------------------------------------
 sint IntoFile(const achar* FileName, uint Length=0, uint Offset=0)       // TODO: Bool Append    // From - To
@@ -162,11 +164,11 @@ sint IntoFile(const achar* FileName, uint Length=0, uint Offset=0)       // TODO
  if((Offset+Length) > DataSize)Length = (DataSize - Offset);
  if(!Length)return 0;
  int df = NPTM::NAPI::open(FileName,PX::O_CREAT|PX::O_WRONLY|PX::O_TRUNC, 0666);   // O_TRUNC  O_EXCL   // 0666
- if(df < 0){ DBGERR("Error: Failed to create the output data file(%i): %s!",df,FileName); return (sint)df; }
+ if(df < 0){ DBGERR("Failed to create the output data file(%i): '%s'!",df,FileName); return (sint)df; }
  sint wlen = NPTM::NAPI::write(df, &((uint8*)this->AData)[Offset], Length);
  NPTM::NAPI::close(df);
  if(wlen < 0)return wlen;
- if((size_t)wlen != this->Size()){ DBGERR("Error: Data size mismatch!"); return PX::ENOSPC; }
+ if((size_t)wlen != this->Size()){ DBGERR("Data size mismatch!"); return PX::ENOSPC; }
  return (wlen / sizeof(T));
 }
 //----------------------------------------------------------

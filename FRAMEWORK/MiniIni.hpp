@@ -1,18 +1,18 @@
- 
+
 #pragma once
 
 /*
   Copyright (c) 2024 Victor Sheinmann, Vicshann@gmail.com
 
-  Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), 
-  to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, 
+  Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
+  to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense,
   and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
   The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
-  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
-  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, 
-  WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. 
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+  WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
 /*
@@ -47,19 +47,19 @@ TODO: 1) Encryption (With custom/build key)
       4) Extend support for duplicate names ???
 */
 //----------------------------------------------------------------------------
-class CMiniIni       // template<typename DS>   // DS may be a std::array     
+class CMiniIni       // template<typename DS>   // DS may be a std::array
 {
-enum EType  {etNone=0, etComment=0x01, etName=0x02, etValue=0x04, etSection=0x08};    // Order is important
+enum EType  {etNone=0, etComment=0x01, etName=0x02, etValue=0x04, etSection=0x08, etMaxType=etSection};    // Order is important
 enum EFlag  {efNone=0, efMultiline=0x01};
 public:
 enum EFlags {
   efUseFirstMrk      = 0x01,   // Use first found markers instead of statistic when parsing a file
-  efUseDisabledSec   = 0x02, 
-  efUseDisabledVal   = 0x04, 
-  efNameCaseSensSec  = 0x08, 
+  efUseDisabledSec   = 0x02,
+  efUseDisabledVal   = 0x04,
+  efNameCaseSensSec  = 0x08,
   efNameCaseSensVal  = 0x10,
   efAllowInlineCmnt  = 0x20,   // Makes '#' and ';' inappropriate value chars
-  efIgnoreSecNesting = 0x40, 
+  efIgnoreSecNesting = 0x40,
 };
 enum EFormat {      // Format when adding new records
   efSecAfterNL       = 0x01,
@@ -70,7 +70,7 @@ enum EFormat {      // Format when adding new records
   efNameValAlign     = 0x20,
   efCmntSpacing      = 0x40,
   efCmntIndenting    = 0x80,
-}; 
+};
 
 // Linux conf files
 static const achar  CfgMrkEOL  = '\n';   // 0x0A
@@ -97,14 +97,15 @@ static constexpr int    CmntValSpaces = 1;  // Between ';' and the value itself
 static constexpr int    CmntInlSpaces = 8;  // Base indent of inline comments
 
  CArr<achar> Data;
+ uint32 UsedRecSize = 0;
  uint16 LastRecSize = 0;  // ASize of last record
 
 #ifdef SYS_WINDOWS             // For creation of new files
- achar  DefEOL  = IniMrkEOL;   
+ achar  DefEOL  = IniMrkEOL;
  achar  DefCMN  = IniMrkCMN;
  achar  DefNVS  = IniMrkNVS;
 #else
- achar  DefEOL  = CfgMrkEOL;   
+ achar  DefEOL  = CfgMrkEOL;
  achar  DefCMN  = CfgMrkCMN;
  achar  DefNVS  = CfgMrkNVS;
 #endif
@@ -117,9 +118,6 @@ private:
 struct SRecHdr   // All records are aligned to 8  (8 byte SRecHdr should be faster than bitmasking Type And size every time during iterations)
 {
  using T = uint64;
-// uint32 DSize: 15;   // Size of actual data
-// uint32 FSize: 15;   // Size to a next record
-// uint32 Type:  2;    // EType   // High 2 bits
  uint16 ASize;   // Aligned size (includes size of header)
  uint16 DSize;   // Size of the text
  uint16 FSize;   // Full size (Includes anything that not the text value itself)
@@ -127,7 +125,7 @@ struct SRecHdr   // All records are aligned to 8  (8 byte SRecHdr should be fast
  uint8  Type;    // Type/Flags
  achar  Data[0];
 
- static uint ReadLineSizeAt(const achar* At){return (*At << 8) | At[1];}   // Big-endian
+ static uint ReadLineSizeAt(const achar* At){return uint((*At << 8) | At[1]);}   // Big-endian
 
  SRecHdr* Next(void){return (SRecHdr*)((uint8*)this + this->ASize);}
 //---------------------------------------
@@ -136,7 +134,7 @@ struct SRecHdr   // All records are aligned to 8  (8 byte SRecHdr should be fast
   if(this->Flags & efMultiline)
    {
     uint ExtraLen = 0;
-    achar* EndPtr = &this->Data[this->DSize]; 
+    achar* EndPtr = &this->Data[this->DSize];
     for(achar* CurPtr=this->Data;CurPtr < EndPtr;)
      {
       uint LineLen = ReadLineSizeAt(CurPtr);
@@ -148,7 +146,7 @@ struct SRecHdr   // All records are aligned to 8  (8 byte SRecHdr should be fast
   return this->FSize;
  }
  //---------------------------------------
- const achar* NextLine(const achar* PrvLine, uint* Size)    // NOTE: Returns meaningfull text only, not entire string of FSize 
+ const achar* NextLine(const achar* PrvLine, uint* Size)    // NOTE: Returns meaningfull text only, not entire string of FSize
  {
   if(this->Flags & efMultiline)
    {
@@ -157,7 +155,7 @@ struct SRecHdr   // All records are aligned to 8  (8 byte SRecHdr should be fast
       if(Size)*Size = ReadLineSizeAt(this->Data);
       return &this->Data[sizeof(uint16)];
      }
-    achar* EndPtr = &this->Data[this->DSize];  
+    achar* EndPtr = &this->Data[this->DSize];
     uint   PrvLen = ReadLineSizeAt(&PrvLine[-sizeof(uint16)]);
     const achar* CurPtr = PrvLine + PrvLen;
     if(CurPtr >= EndPtr)return nullptr;  // No more lines
@@ -225,10 +223,10 @@ const achar* GetName(uint& Size)     // Return of the size is mandatory(strings 
 const achar* GetValue(uint& Size, const achar* PrvLine=nullptr)    // Pointer to the data for fast read-only access
 {
  SRecHdr* rec = this->GetNextRec();
- return rec->NextLine(PrvLine, &Size);    
+ return rec->NextLine(PrvLine, &Size);
 }
 //---------------------------------------
-bool AsBool(void)           // 1(Any nonzero number), on, [y]es, [t]rue, enabled 
+bool AsBool(void)           // 1(Any nonzero number), on, [y]es, [t]rue, enabled
 {
  SRecHdr* rec  = this->GetNextRec();
  bool NegNum   = false;
@@ -254,16 +252,16 @@ bool AsBool(void)           // 1(Any nonzero number), on, [y]es, [t]rue, enabled
      if(val == '-'){NegNum=true; continue;}    // Sign is allowed as a first char
      if(val == '$'){HexNum=true; continue;}                                                       // $???
      if(val == '0' && (rec->DSize > 1) && ((CurPtr[1] | 0x20) == 'x')){HexNum=true; CurPtr++; Size++; continue;}    // 0x???
-    }  
+    }
    if((val <= '9') && (val >= '0'))
     {
-     ctr_num += (val != '0'); 
+     ctr_num += (val != '0');
      continue;
     }
-   if(val == '.')continue;  // Ignore // TODO: Check floats? 
+   if(val == '.')continue;  // Ignore // TODO: Check floats?
    val |= 0x20;  // ASCII to lower case
    if((val < 'a')||(val > 'z'))return false;  // Not a letter or a digit
-   if(HexNum){if(val > 'f')return false; ctr_hex++;}  
+   if(HexNum){if(val > 'f')return false; ctr_hex++;}
    if(Size < 4)
     {
      if(Size < 1)   // 0
@@ -322,8 +320,8 @@ sint64 AsInt(void)
  achar* BPtr = rec->Data;
  achar val = *BPtr;
  sint64 res;
- if(val == '$')res = NCNV::HexStrToNum<decltype(res)>(&BPtr[1]); 
- else if((rec->DSize > 2) && (val == '0') && ((BPtr[1] | 0x20) == 'x'))res = NCNV::HexStrToNum<decltype(res)>(&BPtr[2]); 
+ if(val == '$')res = NCNV::HexStrToNum<decltype(res)>(&BPtr[1]);
+ else if((rec->DSize > 2) && (val == '0') && ((BPtr[1] | 0x20) == 'x'))res = NCNV::HexStrToNum<decltype(res)>(&BPtr[2]);
  else res = NCNV::DecStrToNum<decltype(res)>(BPtr);
  return res;
 }
@@ -335,8 +333,8 @@ uint64 AsUInt(void)
  achar* BPtr = rec->Data;
  achar val = *BPtr;
  uint64 res;
- if(val == '$')res = NCNV::HexStrToNum<decltype(res)>(&BPtr[1]); 
- else if((rec->DSize > 2) && (val == '0') && ((BPtr[1] | 0x20) == 'x'))res = NCNV::HexStrToNum<decltype(res)>(&BPtr[2]); 
+ if(val == '$')res = NCNV::HexStrToNum<decltype(res)>(&BPtr[1]);
+ else if((rec->DSize > 2) && (val == '0') && ((BPtr[1] | 0x20) == 'x'))res = NCNV::HexStrToNum<decltype(res)>(&BPtr[2]);
  else res = NCNV::DecStrToNum<decltype(res)>(BPtr);
  return res;
 }
@@ -347,13 +345,13 @@ void AsBool(bool val)
 {
  if(val)
   {
-   achar val[] = {'t','r','u','e'};
-   this->Owner->ChangeValue(this, val, sizeof(val));
+   achar str[] = {'t','r','u','e'};
+   this->Owner->ChangeValue(this, str, sizeof(str));
   }
   else
    {
-    achar val[] = {'f','a','l','s','e'};
-    this->Owner->ChangeValue(this, val, sizeof(val));
+    achar str[] = {'f','a','l','s','e'};
+    this->Owner->ChangeValue(this, str, sizeof(str));
    }
 }
 //---------------------------------------
@@ -369,7 +367,7 @@ void AsUInt(uint64 val)
 {
  achar buf[64];
  uint Len = 0;
- achar* ptr = NCNV::DecNumToStrU(val, buf, &Len); 
+ achar* ptr = NCNV::DecNumToStrU(val, buf, &Len);
  this->Owner->ChangeValue(this, ptr, Len);
 }
 //---------------------------------------
@@ -378,14 +376,14 @@ void AsUInt(uint64 val)
 void AsBytes(vptr ptr, uint size)   // Set
 {
  this->Owner->ChangeValue(this, nullptr, size << 1);
- SRecHdr* rec = this->GetThisRec();
+ SRecHdr* rec = this->GetNextRec();
  NCNV::ByteArrayToHexStr(ptr, rec->Data, size, true);
 }
 //---------------------------------------
 vptr AsBytes(vptr ptr, uint* size)    // Get
 {
- SRecHdr* rec = this->GetThisRec();
- uint BytesInStr = rec->DSize >> 1;  //Div 2
+ SRecHdr* rec = this->GetNextRec();
+ uint BytesInStr = rec->DSize >> 1;   // Div 2
  if(BytesInStr > *size)BytesInStr = *size;
  *size = NCNV::HexStrToByteArray(ptr, rec->Data, BytesInStr);
  return ptr;
@@ -406,21 +404,119 @@ uint GetNestLvl(void) const
 //---------------------------------------
 SValRec GetValue(const achar* Name, uint Len=0) {return this->Owner->FindValue(this, Name, Len);}
 //SSecRec GetSection(const achar* Name, uint Len=0) {return this->Owner->FindSection(this, Name, Len);}
-SValRec SetValue(const achar* name, const achar* value, uint vlen=0, uint nlen=0){return this->Owner->SetValue(name, value, this, vlen, nlen);} 
+SValRec SetValue(const achar* name, const achar* value, uint vlen=0, uint nlen=0){return this->Owner->SetValue(name, value, this, vlen, nlen);}
 SSecRec GetSection(const achar* name, uint len=0) {return this->Owner->GetSection(name, this, len);}     // SetSection
+//---------------------------------------
+SValRec SetBool(const achar* Name, bool val, uint NLen=0, bool AllowDup=false)
+{
+ SValRec rec;
+ if(val)
+  {
+   achar str[] = {'t','r','u','e'};
+   if(AllowDup)rec = this->Owner->AddValue(Name, str, sizeof(str), NLen, this);
+    else rec = this->Owner->SetValue(Name, str, this, sizeof(str), NLen);
+  }
+  else
+   {
+    achar str[] = {'f','a','l','s','e'};
+    if(AllowDup)rec = this->Owner->AddValue(Name, str, sizeof(str), NLen, this);
+     else rec = this->Owner->SetValue(Name, str, this, sizeof(str), NLen);
+   }
+ return rec;
+}
+//---------------------------------------
+SValRec SetHex(const achar* Name, uint64 val, uint NLen=0, bool AllowDup=false)
+{
+ SValRec rec;
+ achar buf[64];
+ uint Len = 0;
+ achar* ptr = NCNV::NumToHexStr<uint64>(val, 16, &buf[1], true, &Len);
+ --ptr; *ptr = '$';
+ if(AllowDup)rec = this->Owner->AddValue(Name, ptr, Len+1, NLen, this);
+  else rec = this->Owner->SetValue(Name, ptr, this, Len+1, NLen);
+ return rec;
+}
+//---------------------------------------
+SValRec SetInt(const achar* Name, sint64 val, uint NLen=0, bool AllowDup=false)
+{
+ SValRec rec;
+ achar buf[64];
+ uint Len = 0;
+ achar* ptr = NCNV::DecNumToStrS(val, buf, &Len);
+ if(AllowDup)rec = this->Owner->AddValue(Name, ptr, Len, NLen, this);
+  else rec = this->Owner->SetValue(Name, ptr, this, Len, NLen);
+ return rec;
+}
+//---------------------------------------
+SValRec SetUInt(const achar* Name, uint64 val, uint NLen=0, bool AllowDup=false)
+{
+ SValRec rec;
+ achar buf[64];
+ uint Len = 0;
+ achar* ptr = NCNV::DecNumToStrU(val, buf, &Len);
+ if(AllowDup)rec = this->Owner->AddValue(Name, ptr, Len, NLen, this);
+  else rec = this->Owner->SetValue(Name, ptr, this, Len, NLen);
+ return rec;
+}
+//---------------------------------------
+//void SetFloat(double val){}
+//---------------------------------------
+SValRec SetBytes(const achar* Name, vptr ptr, uint size, uint NLen=0, bool AllowDup=false)   // Set
+{
+ SValRec rec;
+ if(AllowDup)rec = this->Owner->AddValue(Name, nullptr, size << 1, NLen, this);   // Preallocate a record
+  else rec = this->Owner->SetValue(Name, nullptr, this, size << 1, NLen);
+ SRecHdr* hdr = rec.GetNextRec();
+ NCNV::ByteArrayToHexStr(ptr, hdr->Data, size, true);
+ return rec;
+}
+//---------------------------------------
+// If the record does not exist - creates it
+SValRec DefBool(const achar* Name, bool DefVal, uint NLen=0)
+{
+ SValRec rec = this->Owner->FindValue(this, Name, NLen);
+ if(rec.IsValid())return rec;
+ return this->SetBool(Name, DefVal, NLen);
+}
+//---------------------------------------
+SValRec DefInt(const achar* Name, sint64 DefVal, uint NLen=0)
+{
+ SValRec rec = this->Owner->FindValue(this, Name, NLen);
+ if(rec.IsValid())return rec;
+ return this->SetInt(Name, DefVal, NLen);
+}
+//---------------------------------------
+SValRec DefUInt(const achar* Name, uint64 DefVal, uint NLen=0)
+{
+ SValRec rec = this->Owner->FindValue(this, Name, NLen);
+ if(rec.IsValid())return rec;
+ return this->SetUInt(Name, DefVal, NLen);
+}
+//---------------------------------------
+//void DefFloat(double val){}
+//---------------------------------------
+SValRec DefBytes(const achar* Name, vptr DefValPtr, uint DefValSize, uint NLen=0)   // Set
+{
+ SValRec rec = this->Owner->FindValue(this, Name, NLen);
+ if(rec.IsValid())return rec;
+ rec = this->Owner->AddValue(Name, nullptr, DefValSize << 1, NLen, this);
+ SRecHdr* hdr = rec.GetNextRec();
+ NCNV::ByteArrayToHexStr(DefValPtr, hdr->Data, DefValSize, true);
+ return rec;
+}
 //---------------------------------------
 };
 //===============================================================
 
 private:
 //----------------------------------------------------------------------------
-uint   GetBufLen(void) const {return this->Data.Size();}
+uint   GetBufLen(void) const {return this->Data.Size();}    // Full buffer size, including any preallocation
 uint8* GetBufPtr(void) const {return (uint8*)this->Data.Data();}
-uint8* GetBufEnd(void) const {uint len = this->GetBufLen(); return (len >= sizeof(SRecHdr))?(&this->GetBufPtr()[len - sizeof(SRecHdr)]):(nullptr);}
+uint8* GetDatEnd(void) const {return &this->GetBufPtr()[UsedRecSize];}
 uint   GetSizeOfEOL(void) const {return ((bool)(this->DefEOL >> 4)) + 1;}
 static bool IsLastRecHdr(const SRecHdr* rec) {return (*(uint64*)((uint8*)rec + rec->ASize) == NoRecMrk);}
 static _finline SRecHdr* NextRecHdr(const SRecHdr* rec) {return (SRecHdr*)((size_t)rec + rec->ASize);}
-SRecHdr* GetLastRecHdr(void) const {uint len = this->LastRecSize + sizeof(SRecHdr); return (this->GetBufLen() >= len)?((SRecHdr*)&this->GetBufPtr()[this->GetBufLen()-len]):nullptr;}              //(this->GetBufLen() >= (sizeof(SRecHdr))*2)?(SRecHdr*)&this->GetBufPtr()[this->GetBufLen()-sizeof(SRecHdr)]:nullptr;}   // NOTE: GetBufLen must be of actual data size
+SRecHdr* GetLastRecHdr(void) const {uint len = this->LastRecSize + sizeof(SRecHdr); return (this->GetBufLen() >= len)?((SRecHdr*)&this->GetBufPtr()[this->UsedRecSize-len]):nullptr;}              //(this->GetBufLen() >= (sizeof(SRecHdr))*2)?(SRecHdr*)&this->GetBufPtr()[this->GetBufLen()-sizeof(SRecHdr)]:nullptr;}   // NOTE: GetBufLen must be of actual data size
 
 //----------------------------------------------------------------------------
 static uint BufferedWriteFile(const void* Data, uint Size, vptr Buf, uint BufSize, uint BufOffs, uint& TotalWr, int fd, const achar* FilePath)  // Returns updated BufOffs    // TODO: File stream class with buffering
@@ -429,13 +525,13 @@ static uint BufferedWriteFile(const void* Data, uint Size, vptr Buf, uint BufSiz
  if((BufOffs + Size) >= BufSize)   // Need flushing
   {
    sint wlen = NPTM::NAPI::write(fd, Buf, BufOffs);
-   if(wlen <  BufOffs){DBGERR("Error: Failed to write(flush) the file(%i): %s!",wlen,FilePath); return 0;}  // NOTE: Returning without even trying to save current data
+   if(wlen <  BufOffs){DBGERR("Failed to write(flush) the file(%i): %s!",wlen,FilePath); return 0;}  // NOTE: Returning without even trying to save current data
    if(Size >= BufSize)   // Does not fits in the cache - Just save the data directly
     {
      if(Data)   // Size of BufSize can be used to just flush the buffer
       {
-       sint wlen = NPTM::NAPI::write(fd, Data, Size);
-       if(wlen < BufOffs){DBGERR("Error: Failed to write(save) the file(%i): %s!",wlen,FilePath);}  
+       wlen = NPTM::NAPI::write(fd, Data, Size);
+       if(wlen < BufOffs){DBGERR("Failed to write(save) the file(%i): %s!",wlen,FilePath);}
       }
      return 0;  // Saved - no caching needed
     }
@@ -484,7 +580,7 @@ static SRecHdr* FindPrevRec(uint8* CurPtr, uint8* EndPtr)  // Not 100% reliable
   {
    SRecHdr* rec = (SRecHdr*)CurPtr;
    if(!rec->ASize)continue;
-   if(rec->Type > 0xFF)continue;
+   if(rec->Type  > etMaxType)continue;
    if(rec->DSize > rec->FSize)continue;
    if(rec->ASize < rec->FSize)continue;
    if(&CurPtr[rec->ASize] == ThisRec)return rec;
@@ -499,13 +595,13 @@ static uint GetRecIndent(SRecHdr* rec)    // All indentation belongs to a prev r
  uint IndCtr = 0;
  for(;cptr >= bptr;cptr--)  // In tail range
   {
-   uint8 val = *cptr; 
+   uint8 val = *cptr;
    if(val == CfgMrkEOL)break;  // EOL
    if(val > 0x20)IndCtr = 0;   // Reset on non WS
      else IndCtr++;
   }
  return IndCtr;
-} 
+}
 //----------------------------------------------------------------------------
 static sint GetRecIndent(SBaseRec* rec)      // NOTE: Indents belong to a previous record (Meaningless for values)
 {
@@ -517,7 +613,7 @@ static sint GetRecIndent(SBaseRec* rec)      // NOTE: Indents belong to a previo
 //----------------------------------------------------------------------------
 achar* WriteEOL(achar* At)
 {
- achar val = this->IniMrkEOL;
+ achar val = this->DefEOL;
  *At = val & 0x0F;
  val >>= 4;
  if(val){At++; *At = val & 0x0F;}
@@ -526,7 +622,7 @@ achar* WriteEOL(achar* At)
 //----------------------------------------------------------------------------
 SRecHdr* GetNextRec(SRecHdr* rec) const   // No checks if GetBufPtr() returns NULL     // More checks than NextRecHdr()
 {
- uint8* EndPtr = this->GetBufEnd();
+ uint8* EndPtr = this->GetDatEnd();
  uint8* NxtPtr = (uint8*)rec + rec->ASize;
  if(NxtPtr >= EndPtr)return nullptr;
  return (SRecHdr*)NxtPtr;
@@ -535,17 +631,19 @@ SRecHdr* GetNextRec(SRecHdr* rec) const   // No checks if GetBufPtr() returns NU
 SRecHdr* GetPrevRec(SRecHdr* rec) const   // Not 100% reliable
 {
  uint8* EndPtr = this->GetBufPtr();
- return FindPrevRec((uint8*)rec, EndPtr); 
+ return FindPrevRec((uint8*)rec, EndPtr);
 }
 //----------------------------------------------------------------------------
-uint AppendRecord(uint DstOffs, uint SrcOffs, const achar* SrcPtr, uint dlen, uint flen, uint& ValLnCnt, EType type)     // From a source file
+uint AppendRecord(uint DstOffs, uint SrcOffs, const achar* SrcPtr, sint dlen, sint flen, uint& ValLnCnt, EType type)     // From a source file
 {
  const achar* dptr = &SrcPtr[SrcOffs];
  DBGDBG("Type=%u, DstOffs=%08X, SrcOffs=%08X, dlen=%08X, flen=%08X:\r\n%#*.32D",(int)type, DstOffs, SrcOffs, dlen, flen, flen, dptr);
  uint ExtrLen = 0;
+ if(dlen < 0)dlen = 0;    // No problems with that
+ if(flen < 0)flen = 0;
  if(ValLnCnt > 1)ExtrLen += CalcMultilineValueInfo(dptr, dlen, 0, nullptr);    // Indent chars is already there
- uint alsize  = AlignP2Frwd(flen+ExtrLen, sizeof(SRecHdr)) + sizeof(SRecHdr); 
- uint ResOffs = DstOffs + alsize; 
+ uint alsize  = AlignP2Frwd(flen+ExtrLen, sizeof(SRecHdr)) + sizeof(SRecHdr);
+ uint ResOffs = DstOffs + alsize;
  uint CurSize = this->GetBufLen();
  if(ResOffs >= CurSize)this->Data.SetSize(ResOffs + (CurSize/4) + 8);    // NOTE: No separate Size/Prealloc in CArray yet
  SRecHdr* Rec = (SRecHdr*)&this->GetBufPtr()[DstOffs];
@@ -567,55 +665,55 @@ uint AppendRecord(uint DstOffs, uint SrcOffs, const achar* SrcPtr, uint dlen, ui
 //----------------------------------------------------------------------------
 sint ParseIniData(const achar* SrcData, uint SrcSize)                    // Comment index 0 is at same line, -1 a line above, +1 a line below    // Multiline values can be read only as a string, receiving min and max line widths as optional
 {
- enum EState {stExpSecBeg=0x001, stExpSecEnd=0x002, stExpNVSep=0x004, stExpCmnt=0x008, stExpMultiline=0x010, stInSecName=0x020, stInValue=0x040, stInComnt=0x080, stExpSecName=0x100, stInMultiline=0x200}; 
+ enum EState {stExpSecBeg=0x001, stExpSecEnd=0x002, stExpNVSep=0x004, stExpCmnt=0x008, stExpMultiline=0x010, stInSecName=0x020, stInValue=0x040, stInComnt=0x080, stExpSecName=0x100, stInMultiline=0x200};
 
- uint   Offs = 0;
- sint   CtrLbWS = -1;        // From beginning of the line (indent)
- sint   FirstWS = -1;        // Can span lines 
- sint   FirstNonWS = -1;     // Cannot span lines
- sint   ValEndOffs = -1;
- sint   LastCtrLbWS = -1;
- sint   LastCmntOffs = -1;
- uint   LastLineOffs = 0;
- uint   DstOffs = 0;
- uint   Expect  = stExpSecBeg|stExpNVSep|stExpCmnt;        // List of unnamed values are supported too
- uint   LstVlLnCnt = 0;
- uint   LstNameInd = 0;
- uint   PrvRecOffs = 0;   // Beginning of the record
- sint   PrvRecType = 0;
- uint16 PrvRecDLen = 0; // Size of actual record`s data
- uint   CtrCfgEOL = 0;  // Statistic
- uint   CtrCfgCMN = 0;  // Statistic
- uint   CtrCfgNVS = 0;  // Statistic
- uint   CtrIniEOL = 0;  // Statistic   // Windows (2 chars - 'rn')
- uint   CtrIniCMN = 0;  // Statistic   // Windows
- uint   CtrIniNVS = 0;  // Statistic   // Windows
+ uint Offs = 0;
+ sint CtrLbWS = -1;        // From beginning of the line (indent)
+ sint FirstWS = -1;        // Can span lines
+ sint FirstNonWS = -1;     // Cannot span lines
+ sint ValEndOffs = -1;
+ sint LastCtrLbWS = -1;
+ sint LastCmntOffs = -1;
+ uint LastLineOffs = 0;
+ uint DstOffs = 0;
+ uint Expect  = stExpSecBeg|stExpNVSep|stExpCmnt;        // List of unnamed values are supported too
+ uint LstVlLnCnt = 0;
+ uint LstNameInd = 0;
+ uint PrvRecOffs = 0;   // Beginning of the record
+ sint PrvRecType = 0;
+ sint PrvRecDLen = 0; // Size of actual record`s data  // Can happen to be negative if a value is empty
+ uint CtrCfgEOL = 0;  // Statistic
+ uint CtrCfgCMN = 0;  // Statistic
+ uint CtrCfgNVS = 0;  // Statistic
+ uint CtrIniEOL = 0;  // Statistic   // Windows (2 chars - 'rn')
+ uint CtrIniCMN = 0;  // Statistic   // Windows
+ uint CtrIniNVS = 0;  // Statistic   // Windows
  bool UseFirstMrk = this->Flags & efUseFirstMrk;   // Use only a first encountered marker   // Useful only on Windows if values may contain '#'
  uint ExpctInlCmt = (this->Flags & efAllowInlineCmnt)?stExpCmnt:0;     // Allows inline comment parsing to be turned off
  for(;Offs <= SrcSize;Offs++)
   {
-   achar const* CurPtr = &SrcData[Offs];   //(Offs < SrcSize)?(&SrcData[Offs]):(&Nulls[0]);   // The source array may not contain final EOL or a terminating 0 
+   achar const* CurPtr = &SrcData[Offs];   //(Offs < SrcSize)?(&SrcData[Offs]):(&Nulls[0]);   // The source array may not contain final EOL or a terminating 0
    achar fc = *CurPtr;
    if(fc > 0x20)    // Is whitespace?
     {
      if(CtrLbWS < 0)CtrLbWS = (Offs - LastLineOffs);      // Required for multiline values
      if(FirstNonWS < 0){FirstNonWS = Offs; FirstWS = -1;}    // Start counting untill next whitespace
-     if(Expect & stExpMultiline)     // Check this separately and before anything else     // TODO: fill multiline separation with separation chars with -9 
+     if(Expect & stExpMultiline)     // Check this separately and before anything else     // TODO: fill multiline separation with separation chars with -9
       {
        if((CtrLbWS > LstNameInd) && (fc != '['))Expect = stInValue|stInMultiline;      // Continue the multiline value     // Indented deeper and NOT a some nested section        // NOTE: Have to store prev rec at begining of a new rec to have full len
-         else Expect &= ~stExpMultiline;      // Not a multiline value            
+         else Expect &= ~stExpMultiline;      // Not a multiline value
       }
      if((Expect & stExpSecBeg) && (fc == '['))       // Note: '[' and ']' are not part of the section name and in case of section detetion must be found again
       {
-       Expect     = stExpSecEnd;   
+       Expect     = stExpSecEnd;
        FirstNonWS = FirstWS = -1;    // Reset to get the section name later
       }
      else if((Expect & stExpSecEnd) && (fc == ']'))    // Skipping leading and trailing whitespaces   // It is possible to a change section`s name by adding any or a comment char to "disable" it
-      {       
+      {
        DstOffs    = AppendRecord(DstOffs, PrvRecOffs, SrcData, PrvRecDLen, FirstNonWS-PrvRecOffs, LstVlLnCnt, (EType)PrvRecType);    // Store some previous record (or emptiness)
        PrvRecType = etSection;           // Init the section record
-       PrvRecOffs = (uint)FirstNonWS;     
-       PrvRecDLen = FirstWS-FirstNonWS;  
+       PrvRecOffs = (uint)FirstNonWS;
+       PrvRecDLen = FirstWS-FirstNonWS;
        Expect     = ExpctInlCmt;         // Only comments allowed at the same line with a section name
       }
      else if((Expect & stExpNVSep) && ((fc == CfgMrkNVS)||(fc == IniMrkNVS)))    // Take anything from beginning of the line as a Name   // Valyes can be unnamed
@@ -624,8 +722,8 @@ sint ParseIniData(const achar* SrcData, uint SrcSize)                    // Comm
         else CtrIniNVS++;
        DstOffs    = AppendRecord(DstOffs, PrvRecOffs, SrcData, PrvRecDLen, FirstNonWS-PrvRecOffs, LstVlLnCnt, (EType)PrvRecType);    // Store some previous record (or emptiness)
        PrvRecType = etName;                  // Init the name record
-       PrvRecOffs = (uint)FirstNonWS;     
-       PrvRecDLen = (FirstWS >= 0)?(FirstWS-FirstNonWS):(Offs-FirstNonWS);    // May be no whitespace between a name and its value  
+       PrvRecOffs = (uint)FirstNonWS;
+       PrvRecDLen = (FirstWS >= 0)?(FirstWS-FirstNonWS):(Offs-FirstNonWS);    // May be no whitespace between a name and its value
        Expect     = stInValue|ExpctInlCmt;  // Values can be empty but records for them MUST be added anyway  // Inline comments will terminate multiline values
        FirstNonWS = -1;  // Reset to get a value without leading whitespaces
       }
@@ -643,9 +741,9 @@ sint ParseIniData(const achar* SrcData, uint SrcSize)                    // Comm
       }
      FirstWS = -1;   // Reset WS index
     }
-   else 
+   else
     {
-     uint eol = CheckLineBreak(CurPtr); 
+     uint eol = CheckLineBreak(CurPtr);
      if(FirstWS < 0)FirstWS = Offs;    // First line is empty or a line with no whitespaces
      if(eol)
       {
@@ -656,21 +754,22 @@ sint ParseIniData(const achar* SrcData, uint SrcSize)                    // Comm
         {
          if(!(Expect & stInMultiline))   // Single/First line
           {
-           DstOffs    = AppendRecord(DstOffs, PrvRecOffs, SrcData, PrvRecDLen, FirstNonWS-PrvRecOffs, LstVlLnCnt, (EType)PrvRecType);    // Store previous name record   
+           if(FirstNonWS < 0)FirstNonWS = Offs;  // No value! ('Name = \n')
+           DstOffs    = AppendRecord(DstOffs, PrvRecOffs, SrcData, PrvRecDLen, FirstNonWS-PrvRecOffs, LstVlLnCnt, (EType)PrvRecType);    // Store previous name record
            PrvRecType = etValue;           // Init the section record
-           PrvRecOffs = (uint)FirstNonWS;  
+           PrvRecOffs = (uint)FirstNonWS;
            LstVlLnCnt = 1;   // Start counting value lines
            if(LastCmntOffs < 0)  // No inline comments (May be multiline)   // Any leading or trailing whitespaces not considered to be a part of the value but preserved as they were in the file
-            {  
+            {
              LstNameInd = LastCtrLbWS;
-             PrvRecDLen = FirstWS-FirstNonWS; 
+             PrvRecDLen = FirstWS-FirstNonWS;
              Expect |= stExpMultiline;
             }
-             else 
+             else
               {
-               PrvRecDLen = ValEndOffs-FirstNonWS; 
+               PrvRecDLen = ValEndOffs-FirstNonWS;
                DstOffs    = AppendRecord(DstOffs, PrvRecOffs, SrcData, PrvRecDLen, LastCmntOffs-PrvRecOffs, LstVlLnCnt, (EType)PrvRecType);   // Store the value immediately (Its end is known here)
-               PrvRecOffs = LastCmntOffs;    // To avoid writing it again below (before adding a comment)          
+               PrvRecOffs = LastCmntOffs;    // To avoid writing it again below (before adding a comment)
               }
           }
            else    // Continuing multiline
@@ -679,15 +778,15 @@ sint ParseIniData(const achar* SrcData, uint SrcSize)                    // Comm
              PrvRecDLen = FirstWS - PrvRecOffs;
              LstVlLnCnt++;
             }
-         FirstWS = -1;     
+         FirstWS = -1;
         }
        if(LastCmntOffs >= 0)   // Comments end with EOL, any whitesspace becomes part of the comment
         {
          if(LastCmntOffs > PrvRecOffs)DstOffs = AppendRecord(DstOffs, PrvRecOffs, SrcData, PrvRecDLen, LastCmntOffs-PrvRecOffs, LstVlLnCnt, (EType)PrvRecType);    // Store some previous record (or emptiness)
          PrvRecType = etComment;             // Init the comment record
-         PrvRecOffs = (uint)LastCmntOffs;      
+         PrvRecOffs = (uint)LastCmntOffs;
          PrvRecDLen = Offs - LastCmntOffs;   // Comments end with EOL
-         FirstWS    = -1;      // Next line won`t be part of the comment  
+         FirstWS    = -1;      // Next line won`t be part of the comment
         }
        Offs        += eol  - 1;
        LastLineOffs = Offs + 1;
@@ -697,21 +796,22 @@ sint ParseIniData(const achar* SrcData, uint SrcSize)                    // Comm
       }
     }
   }
- 
+
  uint EndOffs = AppendRecord(DstOffs, PrvRecOffs, SrcData, PrvRecDLen, SrcSize-PrvRecOffs, LstVlLnCnt, (EType)PrvRecType);   // Store last record
- this->LastRecSize = EndOffs - DstOffs; 
+ this->LastRecSize = EndOffs - DstOffs;
+ this->UsedRecSize = EndOffs + sizeof(SRecHdr);
  *(SRecHdr::T*)&this->GetBufPtr()[EndOffs] = NoRecMrk;   // No more records marker
 
- if(CtrCfgEOL > CtrIniEOL)this->DefEOL = CtrCfgEOL;
-  else if(CtrCfgEOL < CtrIniEOL)this->DefEOL = CtrIniEOL;
+ if(CtrCfgEOL > CtrIniEOL)this->DefEOL = CfgMrkEOL;
+  else if(CtrCfgEOL < CtrIniEOL)this->DefEOL = IniMrkEOL;
 //    else this->DefEOL = MrkEOL;    // Leave as it is
 
- if(CtrCfgCMN > CtrIniCMN)this->DefCMN = CtrCfgCMN;
-  else if(CtrCfgCMN < CtrIniCMN)this->DefCMN = CtrIniCMN;
+ if(CtrCfgCMN > CtrIniCMN)this->DefCMN = CfgMrkCMN;
+  else if(CtrCfgCMN < CtrIniCMN)this->DefCMN = IniMrkCMN;
 //    else this->DefCMN = MrkCMN;    // Leave as it is
 
- if(CtrCfgNVS > CtrIniNVS)this->DefNVS = CtrCfgNVS;
-  else if(CtrCfgNVS < CtrIniNVS)this->DefNVS = CtrIniNVS;
+ if(CtrCfgNVS > CtrIniNVS)this->DefNVS = CfgMrkNVS;
+  else if(CtrCfgNVS < CtrIniNVS)this->DefNVS = IniMrkNVS;
 //    else this->DefNVS = MrkNVS;   // Leave as it is
 
  this->SetChanged(false);
@@ -719,12 +819,12 @@ sint ParseIniData(const achar* SrcData, uint SrcSize)                    // Comm
 }
 //----------------------------------------------------------------------------
 // NOTE: Complicated here so that record enumeration would be faster because all garbage put in tails instead of separate records
-uint InsertNewRecord(SRecHdr* PrvRec, const achar* TextA, const achar* TextB, uint SizeA, uint SizeB, uint ExtraA, uint ExtraB, EType type)    
+uint InsertNewRecord(SRecHdr* PrvRec, const achar* TextA, const achar* TextB, uint SizeA, uint SizeB, uint ExtraA, uint ExtraB, EType type)
 {
- if(type == etValue) 
+ if(type == etValue)
   {
-   if(TextA && SizeA)NormalizeTextForRec(TextA, SizeA, etName);    
-   if(TextB && SizeB)NormalizeTextForRec(TextB, SizeB, etValue);   
+   if(TextA && SizeA)NormalizeTextForRec(TextA, SizeA, etName);
+   if(TextB && SizeB)NormalizeTextForRec(TextB, SizeB, etValue);
   }
   else if(TextA && SizeA)NormalizeTextForRec(TextA, SizeA, type);    // etValue
 
@@ -742,7 +842,7 @@ uint InsertNewRecord(SRecHdr* PrvRec, const achar* TextA, const achar* TextB, ui
  uint TailLen = 0;     // The tail to move to the end of a new record from a prev record
  uint PrefLen = 0;     // Size for a prev record (After DSize)
  uint PostLen = 0;     // Size for a new record
- uint NewBLen = 0;     // Size for a terminating record if the buffer is empty 
+ uint NewBLen = 0;     // Size for a terminating record if the buffer is empty
  uint PSlkSpc = 0;     // Extra alignment space in a prev record
  uint CtrValN = 0;
  bool NoSSpcB = false;
@@ -773,35 +873,35 @@ uint InsertNewRecord(SRecHdr* PrvRec, const achar* TextA, const achar* TextB, ui
        achar val = *cptr;
        if(val == CfgMrkEOL){mid = prv; prv = cptr + 1;}
        else if(val != '\r')break;   // Allow only '\r' additionally, just in case
-      } 
+      }
      if(mid)prv = mid;
      NoSSpcB = (bool)prv;    // No empty line before is needed
      bool ForceSl = false;
      if((type == etComment) && SizeB){prv = cptr + 1; ForceSl = true;}    // Same line comment, steal all EOLs
      if(prv && (((mid || (PrvRec->Type != etSection)) && !(!mid && (type == etSection) && (this->Format & efSecBeforeNL))) || ForceSl))    // First () is for efSecAfterNL, last () is for efSecBeforeNL   // NOTE!!!: Inline comments will confuse all checks of PrvRec->Type  // TODO: use only EOL count somehow
       {
-       uint ext = cur - prv;      // Move extra EOLs to the tail 
+       uint ext = cur - prv;      // Move extra EOLs to the tail
        AtOffs  -= ext;
        TailLen += ext;
        PrvSize -= ext;
       }
     }
   }
-   else {ExtPrev += sizeof(SRecHdr); PrevRecOffs = AtOffs = 0;}   // No actual data in a prev rec (No PrvSize or TailLen)  (No records in the buffer)      
+   else {ExtPrev += sizeof(SRecHdr); PrevRecOffs = AtOffs = 0;}   // No actual data in a prev rec (No PrvSize or TailLen)  (No records in the buffer)
 
- if(type == etValue)    // Name+Value   // SizeA is SizeOfName; SizeB is SizeOfValue, ExtraA is name indent, ExtraB is max name size to format all '=' 
+ if(type == etValue)    // Name+Value   // SizeA is SizeOfName; SizeB is SizeOfValue, ExtraA is name indent, ExtraB is max name size to format all '='
   {
-   uint ExtraValLen = CalcMultilineValueInfo(TextB, SizeB, ExtraA+MLineValIndnt, &CtrValN); 
+   uint ExtraValLen = CalcMultilineValueInfo(TextB, SizeB, ExtraA+MLineValIndnt, &CtrValN);
    PrefLen += ExtraA;       // Name indent
-   PostLen  = 1;   // 1 for '='  
+   PostLen  = 1;   // 1 for '='
    if(this->Format & efNameValSpacing){NValSpc = NameValSpaces * 2; PostLen += NValSpc;}  // ' = '
    if((this->Format & efNameValAlign) && (SizeA < ExtraB)){NIndLen = ExtraB - SizeA; PostLen += NIndLen;}    // Alignment space  // ExtraB is max indent of '='
    NRMdLen  = SizeA + PostLen;     // For FSize of the name record
    NRLenAl += AlignP2Frwd(sizeof(SRecHdr) + NRMdLen, sizeof(SRecHdr));    // NRLast is size of name + header
    NRLast   = sizeof(SRecHdr) + SizeB + ExtraValLen;    // Value is last
-   PostLen  = EolLen; 
+   PostLen  = EolLen;
   }
- else if(type == etSection)    
+ else if(type == etSection)
   {
    if(this->Format & efSecAfterNL)PostLen += EolLen;   // TODO: FIX!!!! Will add extra NL if the section is last!!!!!
    if(PrvRec && !NoSSpcB && (this->Format & efSecBeforeNL))PrefLen += EolLen;   // NL before a section if it is not a first one     // FIX: Will add extra NL even if there is one already from efSecAfterNL !!!!!!!!!!!
@@ -810,7 +910,7 @@ uint InsertNewRecord(SRecHdr* PrvRec, const achar* TextA, const achar* TextB, ui
    NRLast  += ExtraB;       // The section nesting
    if(this->Format & efSecSpacedNames){SecNSpc = SecNameSpaces; PrefLen += SecNameSpaces; PostLen += SecNameSpaces;}
   }
- else if(type == etComment) 
+ else if(type == etComment)
   {
    PrefLen += 1;  // 1 for Cmnt marker
    CmnIndt += ExtraB?ExtraB:((SizeB)?CmntInlSpaces:0); // At least 1 indent
@@ -822,11 +922,11 @@ uint InsertNewRecord(SRecHdr* PrvRec, const achar* TextA, const achar* TextB, ui
  else  // Empty lines (Adding to a prev record)
   {
    PrefLen += ExtraA * EolLen;
-   PrefLen += TailLen;      // Tail stays where it is  
+   PrefLen += TailLen;      // Tail stays where it is
    TailLen  = NRLast = 0;   // No body
   }
 
- uint AlgPrvLen = AlignP2Frwd(ExtPrev+PrvSize+PrefLen, sizeof(SRecHdr));       // No need to allocate Bytes for PrvSize, only to align with them 
+ uint AlgPrvLen = AlignP2Frwd(ExtPrev+PrvSize+PrefLen, sizeof(SRecHdr));       // No need to allocate Bytes for PrvSize, only to align with them
  uint AlgLstLen = AlignP2Frwd(NRLast+TailLen+PostLen, sizeof(SRecHdr));        // Accounts for alignment WITH TailLen but does not allocates space for TailLen   // Name for Name/Value must be already aligned
  uint SizeToAdd = (AlgPrvLen + AlgLstLen + NRLenAl + NewBLen) - (PrvSize + TailLen + PSlkSpc);
  this->Data.Insert(nullptr, SizeToAdd, AtOffs);          // Inserting right before and old tail
@@ -834,11 +934,11 @@ uint InsertNewRecord(SRecHdr* PrvRec, const achar* TextA, const achar* TextB, ui
  BPtr = this->GetBufPtr();      // Refresh the pointer
  PrvRec = (SRecHdr*)&BPtr[PrevRecOffs];
  if(!AtOffs)  // Fill in a new prv record
-  {  
+  {
    PrvRec->ASize = AlgPrvLen;   // PrvSize was 0
-   PrvRec->DSize = 0;  
-   PrvRec->FSize = PrefLen;  
-   PrvRec->Type  = etNone;   
+   PrvRec->DSize = 0;
+   PrvRec->FSize = PrefLen;
+   PrvRec->Type  = etNone;
   }
    else  // Update prev rec
     {
@@ -851,15 +951,15 @@ uint InsertNewRecord(SRecHdr* PrvRec, const achar* TextA, const achar* TextB, ui
  if(type == etValue)
   {
    achar* DPtr = &PrvRec->Data[PrvSize];
-   for(achar* EndPtr=&DPtr[ExtraA];DPtr < EndPtr;DPtr++)*DPtr = IndentChar; 
+   for(achar* EndPtr=&DPtr[ExtraA];DPtr < EndPtr;DPtr++)*DPtr = IndentChar;
 
-   NewRec->ASize = NRLenAl;   
-   NewRec->DSize = SizeA;  
-   NewRec->FSize = NRMdLen;  
+   NewRec->ASize = NRLenAl;
+   NewRec->DSize = SizeA;
+   NewRec->FSize = NRMdLen;
    NewRec->Flags = 0;
-   NewRec->Type  = etName; 
+   NewRec->Type  = etName;
    DPtr = NewRec->Data;
-   memcpy(DPtr, TextA, SizeA);
+   if(TextA && SizeA)memcpy(DPtr, TextA, SizeA);
    NValSpc >>= 1;   // Div 2 (Same amount before and after)
    DPtr += SizeA;
    for(achar* EndPtr=&DPtr[NIndLen+NValSpc];DPtr < EndPtr;DPtr++)*DPtr = IndentChar;
@@ -867,52 +967,52 @@ uint InsertNewRecord(SRecHdr* PrvRec, const achar* TextA, const achar* TextB, ui
    for(achar* EndPtr=&DPtr[NValSpc];DPtr < EndPtr;DPtr++)*DPtr = IndentChar;   // Spaces after '='
 
    NewRec = (SRecHdr*)((uint8*)NewRec + NRLenAl);
-   NewRec->ASize = AlgLstLen;   
-   NewRec->DSize = NRLast - sizeof(SRecHdr);  
+   NewRec->ASize = AlgLstLen;
+   NewRec->DSize = NRLast - sizeof(SRecHdr);
    NewRec->FSize = NewRec->DSize + PostLen + TailLen;
-   NewRec->Flags = efNone;  
-   NewRec->Type  = etValue; 
+   NewRec->Flags = efNone;
+   NewRec->Type  = etValue;
    DPtr = NewRec->Data;
    if(CtrValN){DPtr = CopyTextAsMultiline(DPtr, TextB, SizeB, ExtraA+MLineValIndnt); NewRec->Flags |= efMultiline;}
-     else {memcpy(DPtr, TextB, SizeB); DPtr += SizeB;}
+     else {if(TextB && SizeB)memcpy(DPtr, TextB, SizeB); DPtr += SizeB;}
    DPtr = this->WriteEOL(DPtr);   // Write EOLs before the tail  // Tail is already moved there
   }
- else if(type == etSection) 
+ else if(type == etSection)
   {
    achar* DPtr = &PrvRec->Data[PrvSize];
    if(AtOffs && !NoSSpcB &&(this->Format & efSecBeforeNL))DPtr = this->WriteEOL(DPtr);  // Exlra new line before the section is requested
-   for(achar* EndPtr=&DPtr[ExtraA];DPtr < EndPtr;DPtr++)*DPtr = IndentChar; 
+   for(achar* EndPtr=&DPtr[ExtraA];DPtr < EndPtr;DPtr++)*DPtr = IndentChar;
    *DPtr = '['; DPtr++;
-   for(achar* EndPtr=&DPtr[SecNSpc];DPtr < EndPtr;DPtr++)*DPtr = IndentChar; 
+   for(achar* EndPtr=&DPtr[SecNSpc];DPtr < EndPtr;DPtr++)*DPtr = IndentChar;
 
-   NewRec->ASize = AlgLstLen;   
-   NewRec->DSize = SizeA + ExtraB;  
+   NewRec->ASize = AlgLstLen;
+   NewRec->DSize = SizeA + ExtraB;
    NewRec->FSize = NewRec->DSize + PostLen + TailLen;
    NewRec->Flags = 0;
-   NewRec->Type  = etSection; 
+   NewRec->Type  = etSection;
    DPtr  = NewRec->Data;
-   for(achar* EndPtr=&DPtr[ExtraB];DPtr < EndPtr;DPtr++)*DPtr = SecNestMrk;                    
-   memcpy(DPtr, TextA, SizeA);
+   for(achar* EndPtr=&DPtr[ExtraB];DPtr < EndPtr;DPtr++)*DPtr = SecNestMrk;
+   if(TextA && SizeA)memcpy(DPtr, TextA, SizeA);
    DPtr += SizeA;
-   for(achar* EndPtr=&DPtr[SecNSpc];DPtr < EndPtr;DPtr++)*DPtr = IndentChar; 
+   for(achar* EndPtr=&DPtr[SecNSpc];DPtr < EndPtr;DPtr++)*DPtr = IndentChar;
    *DPtr = ']';
    DPtr  = this->WriteEOL(++DPtr);   // Write EOLs before the tail   // Tail is already moved there
    if(this->Format & efSecAfterNL)this->WriteEOL(DPtr);
   }
- else if(type == etComment) 
+ else if(type == etComment)
   {
    achar* DPtr = &PrvRec->Data[PrvSize];
-   for(achar* EndPtr=&DPtr[CmnIndt];DPtr < EndPtr;DPtr++)*DPtr = IndentChar; 
+   for(achar* EndPtr=&DPtr[CmnIndt];DPtr < EndPtr;DPtr++)*DPtr = IndentChar;
    *DPtr = DefCMN; DPtr++;
-   for(achar* EndPtr=&DPtr[CmnSpac];DPtr < EndPtr;DPtr++)*DPtr = IndentChar; 
+   for(achar* EndPtr=&DPtr[CmnSpac];DPtr < EndPtr;DPtr++)*DPtr = IndentChar;
 
-   NewRec->ASize = AlgLstLen;   
-   NewRec->DSize = SizeA;  
-   NewRec->FSize = SizeA + PostLen + TailLen;  
+   NewRec->ASize = AlgLstLen;
+   NewRec->DSize = SizeA;
+   NewRec->FSize = SizeA + PostLen + TailLen;
    NewRec->Flags = 0;
-   NewRec->Type  = etComment; 
+   NewRec->Type  = etComment;
    DPtr = NewRec->Data;
-   memcpy(DPtr, TextA, SizeA);
+   if(TextA && SizeA)memcpy(DPtr, TextA, SizeA);
    if(!AtOffs || !SizeB)this->WriteEOL(&DPtr[SizeA]);    // Tail is already moved there   // Write EOL if not first rec or at the same line
   }
  else  // Empty lines
@@ -925,20 +1025,22 @@ uint InsertNewRecord(SRecHdr* PrvRec, const achar* TextA, const achar* TextB, ui
  uint8* NextPtr = (uint8*)NewRec + NewRec->ASize;
  if(NewBLen)*(uint64*)NextPtr = NoRecMrk;  // Adding a terminating rec
  if(*(uint64*)NextPtr == NoRecMrk)this->LastRecSize = NewRec->ASize;      // Must be also updated when deleting
+ this->UsedRecSize += SizeToAdd;
  this->SetChanged(true);
  return (uint8*)RetRec - BPtr;
 }
 //----------------------------------------------------------------------------
 static void NormalizeTextForRec(const achar*& Txt, uint& Len, uint type)
 {
+ if(!Txt || !Len)return;
  const achar* TxtPtr = Txt;
  uint TxtLen = Len;
- if(type & (etName|etValue|etSection))  // No leading whitespaces allowed 
+ if(type & (etName|etValue|etSection))  // No leading whitespaces allowed
   {
    for(const achar* EndPtr=&TxtPtr[TxtLen];TxtPtr < EndPtr;TxtPtr++,TxtLen--)
     if(*TxtPtr > 0x20)break;
   }
- if(type & (etName|etValue|etSection))  // No trailing whitespaces allowed      // For values too? For now the Parser does not considers trailing WS as a part of value 
+ if(type & (etName|etValue|etSection))  // No trailing whitespaces allowed      // For values too? For now the Parser does not considers trailing WS as a part of value
   {
    for(const achar* EndPtr=TxtPtr,*CurPtr=&TxtPtr[TxtLen-1];CurPtr >= EndPtr;CurPtr--,TxtLen--)
     if(*CurPtr > 0x20)break;
@@ -949,18 +1051,19 @@ static void NormalizeTextForRec(const achar*& Txt, uint& Len, uint type)
 //----------------------------------------------------------------------------
 static achar* CopyTextAsMultiline(achar* Dst, const achar* Txt, uint Len, uint Indent)
 {
+ if(!Txt || !Len)return Dst;
  uint LenLstNL = 0;
  for(const achar* EndPtr=&Txt[Len],*CurPtr=Txt,*LstPtr=Txt;;CurPtr++)
   {
    bool EndOfData = CurPtr >= EndPtr;
    if(EndOfData || (*CurPtr == '\n'))   // Starting from a second line spaces mean indent and preserved but not considered as part of the line`s value   // First: CTR+Text;  Next: CTR+NL+Indent+Text
     {
-     uint DOffs = 2; 
+     uint DOffs = 2;
      uint LenCurNL;
-     uint LineLen = CurPtr - LstPtr;     
+     uint LineLen = CurPtr - LstPtr;
      if(!EndOfData){LenCurNL = (CurPtr[-1] == '\r')?2:1; LineLen -= (LenCurNL-1);}   // Need to exclude EOL, it will be part of a next line
-       else LenCurNL = 0;    
-     uint FullLen = LineLen; 
+       else LenCurNL = 0;
+     uint FullLen = LineLen;
      if(LenLstNL)    // Not the first line
       {
        if(LenLstNL > 1)Dst[DOffs++] = '\r';
@@ -968,7 +1071,7 @@ static achar* CopyTextAsMultiline(achar* Dst, const achar* Txt, uint Len, uint I
        for(uint EndOffs=DOffs+Indent;DOffs < EndOffs;DOffs++)Dst[DOffs] = IndentChar;
        FullLen += LenLstNL + Indent;
       }
-     Dst[0] = FullLen >> 8; // Hi 
+     Dst[0] = FullLen >> 8; // Hi
      Dst[1] = FullLen;      // Lo
      memmove(&Dst[DOffs], LstPtr, LineLen);
      Dst += DOffs + LineLen;
@@ -982,11 +1085,12 @@ static achar* CopyTextAsMultiline(achar* Dst, const achar* Txt, uint Len, uint I
 //----------------------------------------------------------------------------
 static uint CalcMultilineValueInfo(const achar* Txt, uint Len, uint Indent, uint* NLCount=nullptr)   // Returns number of extra bytes needed to store line sizes and indents    // Must use line sizes (uint16) instead of line breaks ('\n' or '\r\n')
 {
+ if(!Txt || !Len)return 0;
  uint CtrValNL = 0;
  uint ExtraValLen = 0;
  for(const achar* EndPtr=&Txt[Len],*CurPtr=Txt;CurPtr < EndPtr;CurPtr++)     // NL+Indent chars will be in beginning of each line except first one
    if(*CurPtr == '\n')CtrValNL++;
- if(CtrValNL)ExtraValLen  += ((sizeof(uint16)+Indent) * CtrValNL) + sizeof(uint16);  
+ if(CtrValNL)ExtraValLen  += ((sizeof(uint16)+Indent) * CtrValNL) + sizeof(uint16);
  if(NLCount)*NLCount = CtrValNL;
  return ExtraValLen;
 }
@@ -1002,10 +1106,10 @@ sint EditRecTextAt(uint RecOffs, uint PrvRecOffs, const achar* NewTxt, uint TxtS
   {
    NormalizeTextForRec(NewTxt, TxtSize, Rec->Type);
    if(Rec->Type & etValue)
-    {                                         
+    {
      SRecHdr* PrvRec = (SRecHdr*)&this->GetBufPtr()[PrvRecOffs];   //this->GetPrevRec((SRecHdr*)&this->GetBufPtr()[PrvRecOffs]);   // For Value rec PrvRecOffs points to a rec before the Name rec
      Indnt = (PrvRec?GetRecIndent(PrvRec):0) + MLineValIndnt;
-     ExtraValLen = CalcMultilineValueInfo(NewTxt, TxtSize, Indnt, &CtrValNL);   
+     ExtraValLen = CalcMultilineValueInfo(NewTxt, TxtSize, Indnt, &CtrValNL);
     }
   }
  uint RecDLen = Rec->DSize;
@@ -1017,8 +1121,9 @@ sint EditRecTextAt(uint RecOffs, uint PrvRecOffs, const achar* NewTxt, uint TxtS
  if(NewALen > RecALen)       // Record grows
   {
    bool LstRec = IsLastRecHdr(Rec);
-   uint ExLen  = NewALen - RecALen;    
-   this->Data.Insert(nullptr, ExLen, RecOffs + Rec->ASize);   // Grow the array (Insert at the record`s end) 
+   uint ExLen  = NewALen - RecALen;
+   this->Data.Insert(nullptr, ExLen, RecOffs + Rec->ASize);   // Grow the array (Insert at the record`s end)
+   this->UsedRecSize += ExLen;
    if(LstRec)this->LastRecSize = NewALen;
    Rec = (SRecHdr*)&this->GetBufPtr()[RecOffs];   // Refresh the pointer
    Rec->ASize  = NewALen;
@@ -1028,13 +1133,13 @@ sint EditRecTextAt(uint RecOffs, uint PrvRecOffs, const achar* NewTxt, uint TxtS
  if(TxtSize && NewTxt)
   {
    if(CtrValNL){CopyTextAsMultiline(Rec->Data, NewTxt, TxtSize, Indnt); Rec->Flags |= efMultiline;}
-     else memmove(&Rec->Data, NewTxt, TxtSize); 
+     else memmove(&Rec->Data, NewTxt, TxtSize);
   }
  Rec->DSize = DataLen;
  Rec->FSize = DataLen + TailLen;
  this->SetChanged(true);
- return DataLen;  
-} 
+ return (sint)DataLen;
+}
 //----------------------------------------------------------------------------
 SRecHdr* GetRecByIndex(SRecHdr* Rec, sint Index, uint TypeMsk, bool BrkOnNonseq=false)
 {
@@ -1044,23 +1149,23 @@ SRecHdr* GetRecByIndex(SRecHdr* Rec, sint Index, uint TypeMsk, bool BrkOnNonseq=
    if(prv->Type & TypeMsk)return prv;
      else return nullptr;
   }
- uint idx = (Index < 0)?(-Index):Index;  // Starts from +1/-1
+ uint idx = uint((Index < 0)?(-Index):Index);  // Starts from +1/-1
  for(uint ctr = 1;ctr <= idx;)
   {
    SRecHdr* hdr = (Index < 0)?(this->GetPrevRec(prv)):(this->GetNextRec(prv));
    if(!hdr)break;
    if(hdr->Type & TypeMsk)
-    {  
+    {
      if(ctr == idx)return hdr;
      ctr++;
     }
-     else if(BrkOnNonseq)return nullptr;   // Records are not in sequense 
-   prv = hdr;    
+     else if(BrkOnNonseq)return nullptr;   // Records are not in sequense
+   prv = hdr;
   }
  return nullptr;
 }
 //----------------------------------------------------------------------------
-void SetChanged(bool val){if(this->GetBufLen())this->GetBufPtr()[this->GetBufLen()] = val;}   // Use ONLY after insert! (Not saved, outside of array in extra bytes)
+void SetChanged(bool val){if(this->GetBufLen())this->GetBufPtr()[this->UsedRecSize] = val;}   // Use ONLY after insert! (Not saved, outside of array in extra bytes)
 //----------------------------------------------------------------------------
 
 public:
@@ -1068,7 +1173,7 @@ CMiniIni(void){}
 //----------------------------------------------------------------------------
 ~CMiniIni(){}
 //----------------------------------------------------------------------------
-bool IsChanged(void){return this->GetBufLen() && this->GetBufPtr()[this->GetBufLen()];}
+bool IsChanged(void){return this->GetBufLen() && this->GetBufPtr()[this->UsedRecSize];}
 //----------------------------------------------------------------------------
 sint Load(const achar* FilePath)  // TODO: Support for UTF-16 INI files (Convert entire file?)   // NOTE: No need to skip BOM marker of UTF-8 files - it will be ignored and stored in an unused record
 {
@@ -1093,59 +1198,59 @@ sint Save(CArr<achar>& DstData)
  uint FullSize = 0;
  for(SRecHdr* rec = (SRecHdr*)this->GetBufPtr();;rec=NextRecHdr(rec))FullSize += rec->TextSize();    // TODO: Multiline line size
  DstData.SetSize(FullSize);    // Must set exact known size     // this->RawSize
- SRecHdr* rec = (SRecHdr*)this->GetBufPtr(); 
+ SRecHdr* rec = (SRecHdr*)this->GetBufPtr();
  achar*  DPtr = DstData.Data();
- uint TotalWr = 0;            
+ uint TotalWr = 0;
  for(;;rec=NextRecHdr(rec))
-  {  
-   if(*(SRecHdr::T*)rec == NoRecMrk)break; 
+  {
+   if(*(SRecHdr::T*)rec == NoRecMrk)break;
    uint DoneSize = 0;
    if(rec->Flags & efMultiline)
     {
      const achar* PrvLine = nullptr;
      for(;;)
       {
-       uint linelen = 0;  
+       uint linelen = 0;
        PrvLine = rec->NextLine(PrvLine, &linelen);
        if(!PrvLine)break;
        memcpy(DPtr, PrvLine, linelen);    // Save with NLs and indents
        DPtr += linelen;
       }
-     DoneSize = rec->DSize;   
+     DoneSize = rec->DSize;
     }
-   uint reclen = rec->FSize - DoneSize;   
+   uint reclen = rec->FSize - DoneSize;
    memcpy(DPtr, &rec->Data[DoneSize], reclen);
-   DPtr += reclen;  
+   DPtr += reclen;
   }
  this->SetChanged(false);
  return TotalWr;
 }
 //----------------------------------------------------------------------------
-sint Save(const achar* FilePath) 
+sint Save(const achar* FilePath)
 {
  achar outbuf[4096];
  if(this->GetBufLen() <= sizeof(SRecHdr))return 0;  // No data
  int df = NPTM::NAPI::open(FilePath,PX::O_CREAT|PX::O_WRONLY|PX::O_TRUNC, 0666);   // O_TRUNC  O_EXCL   // 0666
  if(df < 0){ DBGERR("Error: Failed to create the output data file(%i): %s!",df,FilePath); return (sint)df; }
- SRecHdr* rec = (SRecHdr*)this->GetBufPtr(); 
- uint TotalWr = 0;  
- uint BufOffs = 0;        
+ SRecHdr* rec = (SRecHdr*)this->GetBufPtr();
+ uint TotalWr = 0;
+ uint BufOffs = 0;
  for(;;rec=NextRecHdr(rec))
-  {  
+  {
    if(*(SRecHdr::T*)rec == NoRecMrk)break;
    if(rec->Flags & efMultiline)
     {
      const achar* PrvLine = nullptr;
-     for(;;)                     
+     for(;;)
       {
-       uint linelen = 0;  
+       uint linelen = 0;
        PrvLine = rec->NextLine(PrvLine, &linelen);
        if(!PrvLine)break;
        BufOffs = BufferedWriteFile(PrvLine, linelen, &outbuf, sizeof(outbuf), BufOffs, TotalWr, df, FilePath);    // Save the line with NLs and indents
       }
      BufOffs = BufferedWriteFile(&rec->Data[rec->DSize], rec->FSize - rec->DSize, &outbuf, sizeof(outbuf), BufOffs, TotalWr, df, FilePath);  // Write rest of the text
     }
-     else BufOffs = BufferedWriteFile(&rec->Data, rec->FSize, &outbuf, sizeof(outbuf), BufOffs, TotalWr, df, FilePath); 
+     else BufOffs = BufferedWriteFile(&rec->Data, rec->FSize, &outbuf, sizeof(outbuf), BufOffs, TotalWr, df, FilePath);
   }
  BufferedWriteFile(nullptr, sizeof(outbuf), &outbuf, sizeof(outbuf), BufOffs, TotalWr, df, FilePath);    // Flush the buffer
  NPTM::NAPI::close(df);
@@ -1165,9 +1270,9 @@ bool ChangeValue(SValRec* Rec, const achar* txt, uint len=0)
  if(!Rec->IsValid())return false;
  SRecHdr* hdr = Rec->GetThisRec();
  uint voffs = Rec->Offset + hdr->ASize;  // Offset of associated etValue
- this->EditRecTextAt(voffs, Rec->PrvOffs, txt, len); 
+ this->EditRecTextAt(voffs, Rec->PrvOffs, txt, len);
  return true;
-} 
+}
 //----------------------------------------------------------------------------
 const achar* GetComment(SBaseRec* Rec, sint cmntidx, uint* ValLen)   // index is only in sequence of comments. Any noncomment record will stop the search   // NOTE: No checks if the Rec belongs to another Ini instance
 {
@@ -1184,7 +1289,7 @@ const SCmtRec SetComment(SBaseRec* Rec, sint cmntidx, const achar* src, uint src
  SRecHdr* hdr = this->GetRecByIndex(Rec->GetThisRec(), cmntidx, etComment, true);    // Keep enumerating nonsequent comments?
  if(!hdr)return SCmtRec{};
  uint RecOffs = (uint8*)hdr - this->GetBufPtr();
- this->EditRecTextAt(RecOffs, 0, src, srcsize);  
+ this->EditRecTextAt(RecOffs, 0, src, srcsize);
  hdr = (SRecHdr*)&this->GetBufPtr()[RecOffs];   // Update the pointer
  return SCmtRec{this,(uint32)RecOffs,(uint32)-1};
 }
@@ -1199,12 +1304,12 @@ const SBaseRec NextRecord(const SBaseRec* Rec, uint TypeMsk)             // Disa
    SRecHdr* hdr = this->GetNextRec(prv);
    if(!hdr)break;
    if(hdr->Type & TypeMsk)return SBaseRec{this, (uint32)((uint8*)hdr - BPtr), (uint32)((uint8*)prv - BPtr)};
-   prv = hdr; 
+   prv = hdr;
   }
  return SBaseRec{};
 }
 //----------------------------------------------------------------------------
-const SBaseRec PrevRecord(const SBaseRec* Rec, uint TypeMsk) 
+const SBaseRec PrevRecord(const SBaseRec* Rec, uint TypeMsk)
 {
  if(!Rec->IsValid())return SBaseRec{};
  uint8*  BPtr = this->GetBufPtr();
@@ -1242,11 +1347,11 @@ SCmtRec AddComment(const achar* txt, uint len=0, SBaseRec* BaseRec=nullptr, bool
  SRecHdr* prec;
  if(!len && txt)len = NSTR::StrLen(txt);
  if(BaseRec)
-  { 
+  {
    prec   = BaseRec->GetThisRec();
    Indent = GetRecIndent(BaseRec);  // From a prev rec
   }
-   else 
+   else
     {
      prec = (SRecHdr*)this->GetLastRecHdr();   // Indent is unknown because PrevRec is unknown
      if(prec && (this->Format & efCmntIndenting))
@@ -1258,12 +1363,12 @@ SCmtRec AddComment(const achar* txt, uint len=0, SBaseRec* BaseRec=nullptr, bool
     }
  if(Indent < 0)Indent = 0;
  if(SameLine && !(this->Flags & efAllowInlineCmnt))SameLine = false;
- uint PrvOffs = (uint8*)prec - this->GetBufPtr();
- uint ROffs   = this->InsertNewRecord(prec, txt, nullptr, len, SameLine, Indent, indents, etComment);  
- return SCmtRec{this, (uint32)ROffs, (uint32)PrvOffs};
+ sint PrvOffs = (uint8*)prec - this->GetBufPtr();
+ sint ROffs   = this->InsertNewRecord(prec, txt, nullptr, len, SameLine, Indent, indents, etComment);
+ return SCmtRec{this, (uint32)ROffs, (uint32)(prec?PrvOffs:0)};
 }
 //----------------------------------------------------------------------------
-SSecRec AddSection(const achar* txt, uint len=0, SSecRec* BaseSec=nullptr)  
+SSecRec AddSection(const achar* txt, uint len=0, SSecRec* BaseSec=nullptr)
 {
  sint NstLvl = -1;   // Current nesting level (Root)
  sint Indent = 0;    // May be manually indented
@@ -1277,11 +1382,11 @@ SSecRec AddSection(const achar* txt, uint len=0, SSecRec* BaseSec=nullptr)
    if(this->Format & efSecIndentNested)Indent = GetRecIndent(BaseSec) + NestSecIndent;   // One char deeper from a parent
    rec  = BaseSec->GetNextRec();
   }
-   else {rec = nullptr; prec = (SRecHdr*)this->GetLastRecHdr();}   
+   else {rec = nullptr; prec = (SRecHdr*)this->GetLastRecHdr();}
  if(rec)
   {
    for(;;prec=rec,rec=NextRecHdr(rec))  // Find last place
-    {  
+    {
      if(*(SRecHdr::T*)rec == NoRecMrk)break;  // No more records
      if(rec->Type != etSection)continue;      // Ignore anything but sections (Adding as last, no insertion is supported yet)
      sint Nestl = 0;
@@ -1289,30 +1394,30 @@ SSecRec AddSection(const achar* txt, uint len=0, SSecRec* BaseSec=nullptr)
      if(Nestl <= NstLvl)break;   // This is a parent or a sibling section (Never breaks if BaseSec is NULL)
     }
   }
- uint PrvOffs = (uint8*)prec - this->GetBufPtr();
- uint ROffs   = this->InsertNewRecord(prec, txt, nullptr, len, 0, Indent, NstLvl+1, etSection);   
- return SSecRec{this, (uint32)ROffs, (uint32)PrvOffs};
+ sint PrvOffs = (uint8*)prec - this->GetBufPtr();
+ sint ROffs   = this->InsertNewRecord(prec, txt, nullptr, len, 0, Indent, NstLvl+1, etSection);
+ return SSecRec{this, (uint32)ROffs, (uint32)(prec?PrvOffs:0)};
 }
 //----------------------------------------------------------------------------
 SValRec AddValue(const achar* name, const achar* value, uint vlen=0, uint nlen=0, SSecRec* BaseSec=nullptr)   // Values should be added at section indent
 {
  sint Indent = 0;    // May be manually indented
- sint MaxNamLen = 0; 
+ sint MaxNamLen = 0;
  SRecHdr* rec;
  SRecHdr* prec;
  if(!nlen && name)nlen = NSTR::StrLen(name);
  if(!vlen && value)vlen = NSTR::StrLen(value);
  if(BaseSec)
-  { 
+  {
    Indent = GetRecIndent(BaseSec);
    prec   = BaseSec->GetThisRec();
    rec    = BaseSec->GetNextRec();
   }
-   else {rec = nullptr; prec = (SRecHdr*)this->GetLastRecHdr();} 
+   else {rec = nullptr; prec = (SRecHdr*)this->GetLastRecHdr();}
  if(rec)
   {
    for(;;prec=rec,rec=NextRecHdr(rec))  // Find last place in the section (Adding as last, no insertion is upported yet)
-    {  
+    {
      if(*(SRecHdr::T*)rec == NoRecMrk)break;  // No more records
      if(rec->Type == etSection)break;         // Don`t go into other sections
      if(rec->Type == etName)
@@ -1321,12 +1426,12 @@ SValRec AddValue(const achar* name, const achar* value, uint vlen=0, uint nlen=0
       }
     }
   }
- uint PrvOffs = (uint8*)prec - this->GetBufPtr();
- uint ROffs   = this->InsertNewRecord(prec, name, value, nlen, vlen, Indent, MaxNamLen, etValue);  
- return SValRec{this, (uint32)ROffs, (uint32)PrvOffs};
+ sint PrvOffs = (uint8*)prec - this->GetBufPtr();
+ sint ROffs   = this->InsertNewRecord(prec, name, value, nlen, vlen, Indent, MaxNamLen, etValue);
+ return SValRec{this, (uint32)ROffs, (uint32)(prec?PrvOffs:0)};
 }
 //----------------------------------------------------------------------------
-SSecRec GetSection(const achar* name, SSecRec* From=nullptr, uint len=0) 
+SSecRec GetSection(const achar* name, SSecRec* From=nullptr, uint len=0)
 {
  SSecRec sec = this->FindSection(From, name, len);
  if(sec.IsValid())return sec;
@@ -1336,12 +1441,12 @@ SSecRec GetSection(const achar* name, SSecRec* From=nullptr, uint len=0)
 // These two are slow and inefficient
 const achar* GetValue(const achar* SecName, const achar* ValName, const achar* DefVal, uint* ValLen, SSecRec* BaseSec=nullptr, uint LineIdx=0, uint DefValLen=0, uint SecNamLen=0, uint ValNamLen=0)   // No nested sections support, only Root/BaseSec
 {
- SValRec  rec = this->GetValue(SecName, ValName, DefVal, BaseSec, DefValLen, SecNamLen, ValNamLen); 
+ SValRec  rec = this->GetValue(SecName, ValName, DefVal, BaseSec, DefValLen, SecNamLen, ValNamLen);
  SRecHdr* ptr = rec.GetThisRec();
  uint  StrLen = 0;
- const achar* str  = ptr->NextLine(nullptr, &StrLen);  // NOTE: Only first line of a multiline value 
- if(ValLen)*ValLen = StrLen;    
- return str; 
+ const achar* str  = ptr->NextLine(nullptr, &StrLen);  // NOTE: Only first line of a multiline value
+ if(ValLen)*ValLen = StrLen;
+ return str;
 }
 //----------------------------------------------------------------------------
 SValRec GetValue(const achar* SecName, const achar* ValName, const achar* DefVal, SSecRec* BaseSec=nullptr, uint DefValLen=0, uint SecNamLen=0, uint ValNamLen=0)   // No nested sections support, only Root/BaseSec  // NOTE: No multiline retrieving here
@@ -1350,7 +1455,7 @@ SValRec GetValue(const achar* SecName, const achar* ValName, const achar* DefVal
  if(!sec.IsValid())sec = this->AddSection(SecName, SecNamLen, BaseSec);
  SValRec rec = this->FindValue(&sec, ValName, ValNamLen);
  if(!rec.IsValid())rec = this->AddValue(ValName, DefVal, DefValLen, ValNamLen, &sec);
- return rec; 
+ return rec;
 }
 //----------------------------------------------------------------------------
 SValRec SetValue(const achar* name, const achar* value, SSecRec* BaseSec=nullptr, uint vlen=0, uint nlen=0)
@@ -1362,7 +1467,7 @@ SValRec SetValue(const achar* name, const achar* value, SSecRec* BaseSec=nullptr
    return rec;
   }
  return this->AddValue(name, value, vlen, nlen, BaseSec);
-} 
+}
 //----------------------------------------------------------------------------
 const achar* FindValue(SBaseRec* From, const achar* ValName, uint* ValLen, uint ValNamLen=0, uint MatchIdx=0)    // NOTE: No multiline retrieving here
 {
@@ -1370,9 +1475,9 @@ const achar* FindValue(SBaseRec* From, const achar* ValName, uint* ValLen, uint 
  if(!rec.IsValid())return nullptr;
  SRecHdr* ptr = rec.GetThisRec();
  uint  StrLen = 0;
- const achar* str  = ptr->NextLine(nullptr, &StrLen);  // NOTE: Only first line of a multiline value 
- if(ValLen)*ValLen = StrLen;    
- return str;  
+ const achar* str  = ptr->NextLine(nullptr, &StrLen);  // NOTE: Only first line of a multiline value
+ if(ValLen)*ValLen = StrLen;
+ return str;
 }
 //----------------------------------------------------------------------------
 SValRec FindValue(SBaseRec* From, const achar* ValName, uint ValNamLen=0, uint MatchIdx=0)
@@ -1380,7 +1485,7 @@ SValRec FindValue(SBaseRec* From, const achar* ValName, uint ValNamLen=0, uint M
  uint MatchCtr = 0;
  uint8* BPtr = this->GetBufPtr();
  SRecHdr* rec, *prec;
- if(From && From->IsValid())
+ if(From && From->IsValid())    // As Next
   {
    prec = (SRecHdr*)&BPtr[From->Offset];
    rec  = NextRecHdr(prec);
@@ -1388,19 +1493,19 @@ SValRec FindValue(SBaseRec* From, const achar* ValName, uint ValNamLen=0, uint M
    else prec = rec = (SRecHdr*)BPtr;
 
  if(!ValNamLen && ValName)ValNamLen = NSTR::StrLen(ValName);    // Allowed non 0-terminated strings
- bool Unnamed  = !ValNamLen || !ValName || !*ValName;   
- bool CaseSens = (this->Flags & efNameCaseSensVal);         
+ bool Unnamed  = !ValNamLen || !ValName || !*ValName;
+ bool CaseSens = (this->Flags & efNameCaseSensVal);
  for(;;prec=rec,rec=NextRecHdr(rec))
-  {  
+  {
    if(*(SRecHdr::T*)rec == NoRecMrk)break;
    if(rec->Type == etSection)break;     // Another section begins
    if(rec->Type != etName)continue;
    achar* NPtr = (achar*)&rec->Data;
    uint nsize  = rec->DSize;
-   uint noffs  = 0; 
+   uint noffs  = 0;
    bool Disbl  = (*NPtr == CfgMrkCMN) || (*NPtr == IniMrkCMN);    // Disabled
-   noffs += Disbl; 
-   if(Disbl && !(this->Flags & efUseDisabledVal))continue;     // Skip a disabled value 
+   noffs += Disbl;
+   if(Disbl && !(this->Flags & efUseDisabledVal))continue;     // Skip a disabled value
    if(Unnamed)return SValRec{this, uint32((uint8*)rec - BPtr), uint32((uint8*)prec - BPtr)};     // Return just a next sibling section
    if(nsize != ValNamLen)continue;
    if((CaseSens && NSTR::IsStrEqualCS(&NPtr[noffs], ValName, nsize)) || NSTR::IsStrEqualCI(&NPtr[noffs], ValName, nsize))
@@ -1412,8 +1517,8 @@ SValRec FindValue(SBaseRec* From, const achar* ValName, uint ValNamLen=0, uint M
  return SValRec{};
 }
 //----------------------------------------------------------------------------
-SSecRec FindSection(SBaseRec* From, const achar* SecName, uint SecNamLen=0, uint MatchIdx=0)   // Without IgnoreNLvl it should check only sections that are at same nesting level as a first encountered section or the specified section (If SBaseRec is a section)
-{ 
+SSecRec FindSection(SBaseRec* From, const achar* SecName, uint SecNamLen=0, uint MatchIdx=0, bool AsSecChild=true)   // Without IgnoreNLvl it should check only sections that are at same nesting level as a first encountered section or the specified section (If SBaseRec is a section)
+{
  sint CurNestLvl = -1;
  uint MatchCtr = 0;
  uint8* BPtr = this->GetBufPtr();
@@ -1421,17 +1526,17 @@ SSecRec FindSection(SBaseRec* From, const achar* SecName, uint SecNamLen=0, uint
  SRecHdr* rec = (SRecHdr*)BPtr;
  SRecHdr* prec = rec;
  bool RspSecNst = !(this->Flags & efIgnoreSecNesting);
- if(From)
+ if(From)     // As child or sibling?
   {
    prec = (SRecHdr*)&BPtr[From->Offset];
-   if(RspSecNst && (prec->Type == etSection)){GetSecInfoFromName(prec, ++CurNestLvl, 0); CurNestLvl++;}   // It may be disabled
+   if(RspSecNst && (prec->Type == etSection)){GetSecInfoFromName(prec, ++CurNestLvl, 0); CurNestLvl += AsSecChild;}   // It may be disabled
    rec = NextRecHdr(prec);
   }
  if(!SecNamLen && SecName)SecNamLen = NSTR::StrLen(SecName);    // Allowed non 0-terminated strings
- bool Unnamed  = !SecNamLen || !SecName || !*SecName; 
- bool CaseSens = (this->Flags & efNameCaseSensSec);       
+ bool Unnamed  = !SecNamLen || !SecName || !*SecName;
+ bool CaseSens = (this->Flags & efNameCaseSensSec);
  for(;;prec=rec,rec=NextRecHdr(rec))
-  {  
+  {
    if(*(SRecHdr::T*)rec == NoRecMrk)break;
    if(rec->Type != etSection)continue;    // Ignore anything but sections
    sint CmnCtr = 0;
@@ -1442,7 +1547,7 @@ SSecRec FindSection(SBaseRec* From, const achar* SecName, uint SecNamLen=0, uint
      if(RspSecNst)
       {
        if(Nestl < CurNestLvl)return SSecRec{};  // No more sibling sections Return invalid section
-       if(Nestl > CurNestLvl)continue;          // Do not go into child sections      
+       if(Nestl > CurNestLvl)continue;          // Do not go into child sections
       }
     }
      else CurNestLvl = Nestl;        // Lock to this nesting level from now on
@@ -1477,14 +1582,14 @@ bool RemoveRec(SBaseRec* Rec)
    sint BaseNstLvl = 0;
    GetSecInfoFromName(CurHdr, BaseNstLvl, 0);
    for(SRecHdr* rec=CurHdr;;)  // Find last place
-    {  
+    {
      rec = NextRecHdr(rec);
      if(*(SRecHdr::T*)rec == NoRecMrk)break;  // No more records
      if(rec->Type == etSection)      // Deleting any records inside
       {
        sint Nestl = 0;
        GetSecInfoFromName(rec, Nestl, 0);
-       if(Nestl <= BaseNstLvl)break;   // This is a parent or a sibling section 
+       if(Nestl <= BaseNstLvl)break;   // This is a parent or a sibling section
       }
      DelSize += rec->ASize;
      CurHdr   = rec;      // If it is last then its tail will be required
@@ -1495,7 +1600,7 @@ bool RemoveRec(SBaseRec* Rec)
    if(CurHdr->Type == etSection)   // Remove ']'
     {
      for(achar* EndPtr = &CurHdr->Data[CurHdr->FSize],*CurPtr=&CurHdr->Data[CurHdr->DSize];CurPtr < EndPtr;CurPtr++,CurHdr->DSize++)
-       if(*CurPtr == ']'){CurHdr->DSize++; break;}      
+       if(*CurPtr == ']'){CurHdr->DSize++; break;}
     }
   }
  else if(CurHdr->Type == etName)   // Remeve Name+Value recs
@@ -1507,7 +1612,7 @@ bool RemoveRec(SBaseRec* Rec)
  else PrvHdr->ASize += CurHdr->ASize;     // Just expand prev rec, no deallocation is made
  uint TailLen = CurHdr->FSize - CurHdr->DSize;
  memmove(&PrvHdr->Data[PrvOffs], &CurHdr->Data[CurHdr->DSize], TailLen);   // Add the tail
- PrvHdr->FSize = PrvOffs + TailLen;
+ PrvHdr->FSize = uint16(PrvOffs + TailLen);
  if(IsLastRecHdr(PrvHdr))this->LastRecSize = PrvHdr->ASize;   // It became a last record
  this->SetChanged(true);
  return true;

@@ -1,6 +1,6 @@
 #pragma once
 
-
+// TODO: Move out of NPTM - nothing platform specific is here
 //---------------------------------------------------------------------------
 
 
@@ -51,10 +51,10 @@ template<typename T> constexpr _finline static T GetFileName(T FullPath, uint Le
 template<typename T> constexpr _finline static T GetFileExt(T FullPath, uint Length=(uint)-1)
 {
  sint LastDel = -1;
- sint ctr = 0;
- for(uint8 val=FullPath[ctr];val && Length;ctr++,Length--,val=FullPath[ctr]){if(val=='.')LastDel=ctr;}
- if(LastDel < 0)LastDel = ctr-1;
- return &FullPath[LastDel+1];
+ uint ctr = 0;
+ for(sint val=FullPath[ctr];val && (ctr < Length);ctr++,val=FullPath[ctr]){if(val=='.')LastDel=ctr;}
+ if(LastDel < 0)LastDel = ctr;  // Point at the end if no ext
+ return &FullPath[LastDel];    // Return points to '.' or end of name (For an ext to be added without any checks)
 }
 //---------------------------------------------------------------------------
 _finline static uint SizeOfWStrAsUtf8(const wchar* str, uint size=uint(-1), uint term=uint(0))
@@ -72,13 +72,13 @@ _finline static uint SizeOfWStrAsUtf8(const wchar* str, uint size=uint(-1), uint
  return ResLen;
 }
 //---------------------------------------------------------------------------
-_finline static uint WStrToUtf8(achar* dst, const wchar* str, XRef<uint> dlen, XRef<uint> slen, uint term=uint(0))
+_finline static uint WStrToUtf8(achar* dst, const wchar* str, auto&& dlen, auto&& slen, uint term=uint(0))
 {
  uint SrcIdx = 0;
  uint DstIdx = 0;
  wchar terml = wchar(term >> 16);  // Usually 0
  wchar terme = wchar(term);
- while((str[SrcIdx] ^ terme) && (str[SrcIdx] > terml) && (DstIdx < dlen) && (SrcIdx < slen))
+ while((str[SrcIdx] ^ terme) && (str[SrcIdx] > terml) && (DstIdx < (uint)dlen) && (SrcIdx < (uint)slen))
   {
    uint32 Val;
    SrcIdx += NUTF::ChrUtf16To32(&Val, str, 0, SrcIdx);
