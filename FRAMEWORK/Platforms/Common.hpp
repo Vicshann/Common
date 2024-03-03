@@ -162,7 +162,7 @@ static constexpr bool IsDbgBuild = false;
 #define _used
 //#pragma code_seg(".xtext")
 #pragma section(".xtxt",execute,read)       // 'execute' will be ignored for a data declared with _codesec if the section name is '.text', another '.text' section will be created, not executable
-#define _codesec _declspec(allocate(".xtxt"))
+#define _codesec _declspec(allocate(".xtxt"))         
 #define _codesecn(n) _declspec(allocate(".xtxt"))
 #pragma comment(linker,"/MERGE:.xtxt=.text")     // Without this SAPI struct won`t go into executable '.text' section
 #else   // CLANG/GCC
@@ -180,7 +180,7 @@ static constexpr bool IsDbgBuild = false;
 #define _noret  __attribute__((noreturn))      // [[noreturn]] is ignored for some reason
 #define _used __attribute__((used))       // Without it Clang will strip every reference to syscall stubs when building for ARM
 #ifdef SYS_MACOS
-#define _codesec __attribute__ ((section ("__TEXT,__text")))
+#define _codesec __attribute__ ((section ("__TEXT,__text")))             // [[gnu::section(".xtxt")]]  // ???
 #define _codesecn(n) __attribute__ ((section ("__TEXT,__text" #n )))
 #elifdef SYS_WINDOWS   // WINDOWS with GCC driver
 #define _codesec __attribute__ ((section (".xtxt")))     // NOTE: For PE exe sections any static inline MEMBER(not a global data) will go into a separate data section named as '.text'  // Either merge sections by linker or put such data outside of any struct/class
@@ -600,6 +600,14 @@ template<typename T> constexpr _finline static int SizeOfP2Type(void)
     return sizeof(T);
    }
 }
+//------------------------------------------------------------------------------------------------------------
+/*template<typename ...TA> struct find_overload 
+{ 
+template<typename TObj, typename TR> using member_func_t = TR(TObj::*)(TA...); 
+template<typename TObj, typename TR> static constexpr auto get_address(member_func_t<TObj, TR> func) -> member_func_t<TObj, TR> { return func; } 
+};*/
+template<typename... A, typename T, typename R> constexpr auto find_overload(R(T::*f)(A...)) { return f; } 
+template<typename... A, typename R> constexpr auto find_overload(R(*f)(A...)) { return f; }
 //------------------------------------------------------------------------------------------------------------
 // Makes the pointer 'arbitrary', like it came from some malloc
 // Helps the optimizer to 'forget' about where this pointer came from

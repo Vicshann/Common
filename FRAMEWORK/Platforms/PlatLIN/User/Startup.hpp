@@ -4,6 +4,7 @@
 //------------------------------------------------------------------------------------------------------------
 private:
 // TODO: Pack these fields in a structure and scramble them (OPTIONAL)
+enum ESFlags {sfInitialized=0x01, sfDynamicLib=0x02, sfLoadedByLdr=0x04};
 struct SSINF
 {
  void*            STInfo;  // Pointer to stack frame info, received from kernel  // PEB on windows?
@@ -16,7 +17,7 @@ struct SSINF
  size_t TheModSize;
  achar  SysDrive[8];
  sint32 UTCOffs;      // In seconds
- sint32 HaveLoader;   // TODO: Flags
+ uint32 Flags;
  NTHD::SThCtx MainTh;    // Main(Init/Entry) thread // A thread from which the framework is initialized at main entry point for a module/app (For modules this is NOT the app`s process main thread)
  NTHD::SThInf* ThreadInfo;  // For additional threads (Null if only entry thread is used)
 
@@ -48,7 +49,7 @@ static _finline PX::fdsc_t GetStdOut(void) {return PX::STDOUT;}  // 1
 static _finline PX::fdsc_t GetStdErr(void) {return PX::STDERR;}  // 2
 //------------------------------------------------------------------------------------------------------------
 static _finline sint32 GetTZOffsUTC(void)  {return fwsinf.UTCOffs;}   // In seconds   // TODO: Reread optionally?
-static _finline bool   IsLoadedByLdr(void) {return fwsinf.HaveLoader;}    // OnWindows, Any DLL that loaded by loader
+static _finline bool   IsLoadedByLdr(void) {return fwsinf.Flags & sfLoadedByLdr;}    // OnWindows, Any DLL that loaded by loader
 static _finline bool   IsDynamicLib(void)  {return false;}
 //------------------------------------------------------------------------------------------------------------
 // %rdi, %rsi, %rdx, %rcx, %r8 and %r9
@@ -177,7 +178,7 @@ static NTHD::SThCtx* GetThreadByAddr(vptr addr)   // By an address on stack
  return nullptr;
 }*/
 //------------------------------------------------------------------------------------------------------------
-static sint InitStartupInfo(void* StkFrame=nullptr, void* ArgA=nullptr, void* ArgB=nullptr, void* ArgC=nullptr)  // Probably should be private but...
+static sint InitStartupInfo(vptr StkFrame=nullptr, vptr ArgA=nullptr, vptr ArgB=nullptr, vptr ArgC=nullptr)  // Probably should be private but...
 {
  DBGDBG("StkFrame=%p, ArgA=%p, ArgB=%p, ArgC=%p",StkFrame,ArgA,ArgB,ArgC);
  IFDBG{ DBGDBG("Stk[0]=%p, Stk[1]=%p, Stk[2]=%p, Stk[3]=%p, Stk[4]=%p", ((void**)StkFrame)[0], ((void**)StkFrame)[1], ((void**)StkFrame)[2], ((void**)StkFrame)[3], ((void**)StkFrame)[4]); }

@@ -52,7 +52,8 @@ public:
  operator  T*() const {return this->AData;}     // operator   const T*() {return this->AData;}
  T* Data(void) const {return this->AData;}
  T* c_data(void) const {return this->AData;}    // For name compatibility in a templates
- T* Ptr(uint at)const {return this->AData[at];} // NOTE: No checks
+ T* Ptr(uint at)const {return &this->AData[at];} // NOTE: No checks
+ T* Get(uint at)const {return &this->AData[at];}
  uint Count(void) const {return (this->Size() / sizeof(T));}
  uint Size(void) const {return ((this->AData)?(((uint*)this->AData)[-1]):(0));}
  uint Length(void) const {return this->Size();}
@@ -68,7 +69,7 @@ sint TakeFrom(Self& arr)
  return 0;
 }
 //----------------------------------------------------------
-sint Assign(void* Items, uint Cnt)     // Cnt is in Items
+sint Assign(void* Items, uint Cnt=1)     // Cnt is in Items
 {
  uint NewLen = Cnt * sizeof(T);
  if(sint res=this->SetLength(NewLen);res < 0)return res;
@@ -76,13 +77,13 @@ sint Assign(void* Items, uint Cnt)     // Cnt is in Items
  return 0;
 }
 //----------------------------------------------------------
-sint Append(void* Items, uint Cnt)     // Cnt is in Items
+sint Append(void* Items, uint Cnt=1)     // Cnt is in Items
 {
  uint OldSize = this->Size();
  uint NewLen  = Cnt * sizeof(T);
  if(sint res=this->SetLength(OldSize+NewLen);res < 0)return res;
  if(Items)memcpy(&((uint8*)this->AData)[OldSize], Items, NewLen);
- LOGMSG("DST=%p, SRC=%p, LEN=%08X",&((uint8*)this->AData)[OldSize], Items, NewLen);
+ DBGMSG("DST=%p, SRC=%p, LEN=%08X",&((uint8*)this->AData)[OldSize], Items, NewLen);
  return 0;
 }
 //----------------------------------------------------------

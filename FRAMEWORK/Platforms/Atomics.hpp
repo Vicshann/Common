@@ -41,12 +41,12 @@ Built-in Function: type __sync_nand_and_fetch (type *ptr, type value, ...)     /
 warning: implicit use of sequentially-consistent atomic may incur stronger memory barriers than necessary [-Watomic-implicit-seq-cst]    // NOTE: All above are have 'seq-cst' memory model implicitly
 
 // These built-in functions perform an atomic compare and swap. That is, if the current value of *ptr is oldval, then write newval into *ptr.
-// The “bool” version returns true if the comparison is successful and newval is written. The “val” version returns the contents of *ptr before the operation.
+// The `bool` version returns true if the comparison is successful and newval is written. The `val` version returns the contents of *ptr before the operation.
 
 https://gcc.gnu.org/wiki/Atomic/GCCMM/AtomicSync
 https://gcc.gnu.org/onlinedocs/gcc/_005f_005fatomic-Builtins.html  // C++11 memory model
-// Note that the ‘__atomic’ builtins assume that programs will conform to the C++11 memory model. In particular, they assume that programs are free of data races. See the C++11 standard for detailed requirements.
-// The ‘__atomic’ builtins can be used with any integral scalar or pointer type that is 1, 2, 4, or 8 bytes in length. 16-byte integral types are also allowed if ‘__int128’ (see 128-bit Integers) is supported by the architecture.
+// Note that the `__atomic` builtins assume that programs will conform to the C++11 memory model. In particular, they assume that programs are free of data races. See the C++11 standard for detailed requirements.
+// The `__atomic` builtins can be used with any integral scalar or pointer type that is 1, 2, 4, or 8 bytes in length. 16-byte integral types are also allowed if `__int128` (see 128-bit Integers) is supported by the architecture.
           __atomic_add_fetch (&Ptr[2], 4, 0); //__sync_fetch_and_add(&Ptr[2], 4);
 
 https://gcc.gnu.org/onlinedocs/gcc/_005f_005fatomic-Builtins.html

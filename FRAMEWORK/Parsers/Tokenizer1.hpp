@@ -38,6 +38,7 @@ https://en.wikipedia.org/wiki/Plane_(Unicode)#Basic_Multilingual_Plane
     in this case tokenizer continues expecting 'as' to be 'asterisk' because it have higher priority than 'as'
     if it turns out to be 'ask' then 'as' will be stored as a token
    an ordinary sorting by size is enough here, if 'as' had higher priority then 'asterisk' would never be recognized
+NOTE: It is very inefficient to split tokens after tokenization is done so the Tokenizer must use Lexer for splitting, beside ranges 
 Ranges:
    Any ranges can be registered with a index(tag)
    Char from one range group will break token with chars of another range group (Several ranges can have same Group id)
@@ -81,17 +82,24 @@ enum ERngType
 };
 
 // When a group or a single token is added it is specified to which groups it is tolerable (left size). if it is not, then it starts a new token
-enum EGroupType  // The groups are arbitrary and defined here for convenience only   // This is kept as current state   // Token separation will depend at which groups is allowed in which current state
+enum ERangeState  // The groups are arbitrary and defined here for convenience only   // This is kept as current state   // Token separation will depend on which groups is allowed in which current state
 {
-  gtName     = 0x0001,   // Any name, containing gigits or letters
-  gtDigit    = 0x0002,
-  gtNumHex   = 0x0004,
-  gtNumOct   = 0x0008,
-  gtNumBin   = 0x0010,
-  gtComment  = 0x0020,      // Must skip tokenization of comments to avoid a lot of problems
-  gtMLCmnt   = 0x0040,
-  gtString   = 0x0080,      // Must skip tokenization of string contents to avoid a lot of problems
-  gtRawStr   = 0x0100,      // No escapes are processed
+  rsName     = 0x0001,      // Any letter have this
+  rsDigit    = 0x0002,      // 0-9 have this
+  rsNumHex   = 0x0004,      // 'x'
+  rsNumOct   = 0x0008,      
+  rsNumBin   = 0x0010,      // 'b'
+  rsComment  = 0x0020,      // Must skip tokenization of comments to avoid a lot of problems
+  rsMLCmnt   = 0x0040,
+  rsString   = 0x0080,      // Must skip tokenization of string contents to avoid a lot of problems [???]
+  rsRawStr   = 0x0100,      // No escapes are processed
+};
+
+
+struct SStateRec   // Expected/Unexpected
+{
+ uint32 StateClr;    // Do first in all states
+ uint32 StateSet;
 };
 
 /*
@@ -100,24 +108,28 @@ enum EGroupType  // The groups are arbitrary and defined here for convenience on
  x is a gtName and tolerable to gtDigit. Removes gtNumOctal and gtNumBinary
  A is a gtName but all gtName is tolerable to gtNumHex
 */
-struct SRange
+/*struct SRange
 {
- uint32 First;     // Sorted by this for fast search     // A note for 'struct-of-arrays' lovers(like Odin?). How cache friendly it would be to read 'First' from one memory page and then 'Last' from another?
- uint32 Last;
-
- uint16 StateClr;  // Order: 0
+ uint8  First;     // Sorted by this for fast search     // A note for 'struct-of-arrays' lovers(like Odin?). How cache friendly it would be to read 'First' from one memory page and then 'Last' from another?
+ uint8  Last;
+ uint8  Group;
+ uint8  Flags; 
+ uint32 Expected;
+ uint32 UnExpected;
+  */
+/* uint16 StateClr;  // Order: 0
  uint16 StateSet;  // Order: 1
  uint16 StateXor;  // Order: 2   // This is needed for scopes that defined by same char, like strings ( '"' )
 
- uint16 SplitOn;   // Split of any of these states are set
+ uint16 SplitOn;   // Split if any of these states are set
  uint16 KeepOn;    // But keep anyway if any of these are set
 
- uint16 Group;     // Useful?
+ uint16 Group;     // Priority
  uint8  Flags;     // IncDepth, DecDepth, IncCounter, DecCounter, LowCaseASCII(Useful for hex numbers)
  uint8  Type;      // ERngType
  uint8  Ctr;       // Index of a counter (Max 256 counters) // Required to trace scope closing overflows (Closing brace without opening, or that there are unclosed braces left)
- uint8  Tag;
-};
+ uint8  Tag;   */
+//};
 
 enum ETknFlg {
   tfNone     = 0,
@@ -138,9 +150,11 @@ enum ELexFlg {
 };
 
 //------------------------------------------------------------------------------------------------------------
-static const uint MaxScope  = 0xFF;
-static const uint MaxStrNum = 0xFFFF;  // MAX_UINT16
-static const uint MaxLexNum = 0xFFFF;
+SCVR uint MaxScope    = 0xFF;
+SCVR uint MaxStrNum   = 0xFFFF;  // MAX_UINT16
+SCVR uint MaxLexNum   = 0xFFFF;
+SCVR uint MaxStates   = 32;      // For uint32
+SCVR uint MaxTokenLen = 2048;
 
 static inline SLOC* LS = &LocNone;       // Should it be global, in APP state?
 
@@ -179,50 +193,121 @@ void Add(uint16 StrIdx, sint LexIdx, sint ExtIdx, uint8 slflg, uint32 AbsPos, ui
 }
 
 };
-//------------------------------------------------------------------------------------------------------------
+//============================================================================================================
 struct SRangeLst
 {
- CArr<SRange> RangeArr;
-
-//------------------------------------------------------
-sint Add(SRange& rec)
+ SCVR uint MaxRanges = 256;   // Max for all states
+struct SState
 {
- return 0;
+ uint8 RangeMap[MaxRanges];   // 0 is for an empty slot (max 255 ranges)  // Range indexes for chars  // Max 256 ranges (Meaning that we can declare each char separatedly)
+};
+
+struct SRange
+{
+ uint8  First;    
+ uint8  Last;
+ uint8  Group;
+ uint8  State; 
+// uint32 Expected;
+// uint32 UnExpected;
+};
+
+ CArr<SRange> RangeArr;
+ CArr<SState> StateArr; 
+//------------------------------------------------------
+SRangeLst(void)
+{
+// memset(this->RangeMap,0,sizeof(this->RangeMap));
 }
 //------------------------------------------------------
-bool Match(uint32 val)  // Returns true if this char should start a new token
+sint Add(SRange& rec)      // Returns range index(Can change after next add because of sorting)
 {
- return false;
+ if(this->RangeArr.Count() >= (MaxRanges-1))return -1;
+ sint res = this->RangeArr.Append(&rec);
+ SRange* Ranges = this->RangeArr.Data();
+ for(uint idx=rec.First;idx <= rec.Last;idx++)    // Add in array and update char map (Shorter ranges overlap larger ones)
+  {   
+   if(uint ridx = this->RangeMap[idx];ridx)   // Already belongs to some range   // We can write ranges inside of ranges but without overlapped borders
+    {
+     SRange* Rng = &Ranges[ridx-1];
+     if(rec.Group <= Rng->Group)              // A higher group will always overwrite
+      {
+       if(rec.First < Rng->First)continue;    // Do not overwrite ranges with intersecting borders
+       if(rec.Last  > Rng->Last )continue; 
+      }
+    }
+   this->RangeMap[idx] = res + 1;   // This slot is free
+  }
+ return res;
+}
+//------------------------------------------------------
+SRange* Get(uint8 chr)  // Returns true if this char should start a new token
+{
+ return &this->RangeArr.Data()[this->RangeMap[chr] - 1];
 }
 //------------------------------------------------------
 };
-//------------------------------------------------------------------------------------------------------------
-SRangeLst Ranges;
+//============================================================================================================
+SRangeLst Ranges;     // TODO: Use table for ASCII range optimization (Store exact range index)
 STokenLst Tokens;
-//------------------------------------------------------------------------------------------------------------
-sint AddRange(uint32 First, uint32 Last, uint16 StateClr=0, uint16 StateSet=0, uint16 StateXor=0, uint16 SplitOn=0, uint16 KeepOn=0, uint16 Group=0, uint8 Flags=0, uint8 Type=0, uint8 Ctr=0, uint8 Tag=0)
+
+SStateRec StExpected[MaxStates];
+SStateRec StUnExpected[MaxStates];
+
+CTokenizer(void)
 {
- SRange rng{.First=First, .Last=Last, .StateClr=StateClr, .StateSet=StateSet, .StateXor=StateXor, .SplitOn=SplitOn, .KeepOn=KeepOn, .Group=Group, .Flags=Flags, .Type=Type, .Ctr=Ctr, .Tag=Tag};
+ memset(this->StExpected,0,sizeof(this->StExpected));
+ memset(this->StUnExpected,0,sizeof(this->StUnExpected));
+}
+//------------------------------------------------------------------------------------------------------------
+/*sint AddRange(uint8 First, uint8 Last, uint16 Group=0, uint16 StateClr=0, uint16 StateSet=0, uint16 StateXor=0, uint16 SplitOn=0, uint16 KeepOn=0, uint8 Flags=0, uint8 Type=0, uint8 Ctr=0, uint8 Tag=0)
+{
+ SRange rng{.First=First, .Last=Last, .Group=Group, .StateClr=StateClr, .StateSet=StateSet, .StateXor=StateXor, .SplitOn=SplitOn, .KeepOn=KeepOn, .Flags=Flags, .Type=Type, .Ctr=Ctr, .Tag=Tag};
  //
- // Any checks
+ // Any checks?
  //
  return this->Ranges.Add(rng);
+} */
+//------------------------------------------------------------------------------------------------------------
+sint AddRange(uint8 First, uint8 Last, uint16 Group=0, uint32 Expect=0, uint32 UnExpect=0, uint8 Flags=0)
+{
+ SRange rng;//{.First=First, .Last=Last, .Group=Group, .Expected=Expect, .UnExpected=UnExpect, .Flags=Flags};
+ return this->Ranges.Add(rng);
+}
+//------------------------------------------------------------------------------------------------------------
+void SetExpected(uint32 State, uint32 StatesSet, uint32 StatesClr)
+{
+ State = ctz(State);
+ this->StExpected[State].StateClr = StatesClr;
+ this->StExpected[State].StateSet = StatesSet;
+}
+//------------------------------------------------------------------------------------------------------------
+void SetUnExpected(uint32 State, uint32 StatesSet, uint32 StatesClr)
+{
+ State = ctz(State);
+ this->StUnExpected[State].StateClr = StatesClr;
+ this->StUnExpected[State].StateSet = StatesSet;
 }
 //------------------------------------------------------------------------------------------------------------
 sint Parse(const achar* Data, uint Size)
 {
+ uint8 TokenBuf[MaxTokenLen];
  const achar* EndPtr = &Data[Size];
  const achar* CurPtr = Data;
  const achar* CurTkn = CurPtr;
- while(CurPtr < EndPtr)
+ uint  TknOffs = 0;
+ uint32 States = 0;        // Split if the state becomes 0
+ for(;CurPtr < EndPtr;CurPtr++)        // Skip BOM if any?
   {
-   uint32 Val;
-   CurPtr += NUTF::ChrUtf8To32(&Val, CurPtr);
-   if(!Val)return -(CurPtr - Data);         // Unvalid UTF-8 code
-   if(this->Ranges.Match(Val))   // How to ignore whitespaces or anytthing?
-    {
-    // this->Tokens.Add(???);
-    }
+   uint8   Val = *CurPtr;
+   SRange* Rng = this->Ranges.Get(Val);
+
+
+//   States &= ~Rng->StateClr;
+   // Split if zero?
+//   States |= Rng->StateSet;
+//   States ^= Rng->StateXor;
+   // Split if zero?
   }
  return CurPtr - Data;   // Return size of processed text
 }
@@ -230,3 +315,38 @@ sint Parse(const achar* Data, uint Size)
 
 
 };
+
+/*
+  0  NUL (null)                      32  SPACE     64  @         96  `
+  1  SOH (start of heading)          33  !         65  A         97  a
+  2  STX (start of text)             34  "         66  B         98  b
+  3  ETX (end of text)               35  #         67  C         99  c
+  4  EOT (end of transmission)       36  $         68  D        100  d
+  5  ENQ (enquiry)                   37  %         69  E        101  e
+  6  ACK (acknowledge)               38  &         70  F        102  f
+  7  BEL (bell)                      39  '         71  G        103  g
+  8  BS  (backspace)                 40  (         72  H        104  h
+  9  TAB (horizontal tab)            41  )         73  I        105  i
+ 10  LF  (NL line feed, new line)    42  *         74  J        106  j
+ 11  VT  (vertical tab)              43  +         75  K        107  k
+ 12  FF  (NP form feed, new page)    44  ,         76  L        108  l
+ 13  CR  (carriage return)           45  -         77  M        109  m
+ 14  SO  (shift out)                 46  .         78  N        110  n
+ 15  SI  (shift in)                  47  /         79  O        111  o
+ 16  DLE (data link escape)          48  0         80  P        112  p
+ 17  DC1 (device control 1)          49  1         81  Q        113  q
+ 18  DC2 (device control 2)          50  2         82  R        114  r
+ 19  DC3 (device control 3)          51  3         83  S        115  s
+ 20  DC4 (device control 4)          52  4         84  T        116  t
+ 21  NAK (negative acknowledge)      53  5         85  U        117  u
+ 22  SYN (synchronous idle)          54  6         86  V        118  v
+ 23  ETB (end of trans. block)       55  7         87  W        119  w
+ 24  CAN (cancel)                    56  8         88  X        120  x
+ 25  EM  (end of medium)             57  9         89  Y        121  y
+ 26  SUB (substitute)                58  :         90  Z        122  z
+ 27  ESC (escape)                    59  ;         91  [        123  {
+ 28  FS  (file separator)            60  <         92  \        124  |
+ 29  GS  (group separator)           61  =         93  ]        125  }
+ 30  RS  (record separator)          62  >         94  ^        126  ~
+ 31  US  (unit separator)            63  ?         95  _        127  DEL
+ */

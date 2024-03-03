@@ -56,6 +56,7 @@ https://stackoverflow.com/questions/64961708/is-there-a-way-to-remove-segment-gn
    *(.dynamic*); /* References imported libraries. Disabled only by '-Wl,--no-pie'*/
    *(.comment*);
    *(.ARM.exidx*);  /*The section containing information for unwinding the stack*/
+   *(.ARM.attributes);
   }
 /* Export the code size.  ABSOLUTE(ALIGN(.)) ; +8 for the variable itself  Made negative for obfuscation*/
 /* Unaccessible from C++ with 'tiny' memory model (unknown relocation against symbol)

@@ -13,7 +13,7 @@ consteval static int CalcStubSize(void)
    if constexpr(IsCpuARM)
     {
 #if defined(FWK_OLD_UBOOT)
-     return 48;
+     return 56;
 #elif defined(FWK_OLD_ARM)       // Less than ARMv7, no movw   // Can it be detected with one of __TARGET_ARCH_ARM macros?
      return 32;   // For max 7 args (Extra R4,R5,R6)
 #else
@@ -215,7 +215,7 @@ enum class ESysCNum: int { //                       x86_32  x86_64  arm_32  arm_
 //                                  STUBS
 //---------------------------------------------------------------------------
 
-static constexpr const int MaxStubSize = SCalcStubSize::CalcStubSize();  // CalcStubSize();   // The compiler refuses to see CalcStubSize here
+static constexpr const int MaxStubSize   = SCalcStubSize::CalcStubSize();  // CalcStubSize();   // The compiler refuses to see CalcStubSize here
 static constexpr const int StubAlignment = IsCpuARM?4:16;
 //---------------------------------------------------------------------------
 //                              MacOS
@@ -256,12 +256,12 @@ http://man7.org/linux/man-pages/man2/syscall.2.html
 #  if defined(CPU_X86) && defined(ARCH_X64)
 //_codesec      // Putting this into code section only needed if syscalls are encrypted or on Windows, when passing a syscall number as an argument to avoid calling ntdll directly(worth it?)
 static constexpr inline uint8 syscall_tmpl[MaxStubSize] = {
-                                                           0xB8, (uint)ESysCNum::mprotect, (uint)ESysCNum::mprotect >> 8, (uint)ESysCNum::mprotect >> 16, (uint)ESysCNum::mprotect >> 24,  // mov eax, ESysCNum::mprotect
-                                                           0x49, 0x89, 0xCA,    // mov r10, rcx
-                                                           0x0F, 0x05,          // syscall
-                                                           0x73, 0x03,          // jnc to retn
-                                                           0x48, 0xF7, 0xD8,    // neg rax  // Make error code negative, as in Linux syscalls
-                                                           0xC3                 // retn
+   0xB8, (uint)ESysCNum::mprotect, (uint)ESysCNum::mprotect >> 8, (uint)ESysCNum::mprotect >> 16, (uint)ESysCNum::mprotect >> 24,  // mov eax, ESysCNum::mprotect
+   0x49, 0x89, 0xCA,    // mov r10, rcx
+   0x0F, 0x05,          // syscall
+   0x73, 0x03,          // jnc to retn
+   0x48, 0xF7, 0xD8,    // neg rax  // Make error code negative, as in Linux syscalls
+   0xC3                 // retn
 };
 static constexpr inline uint SYSCALLOFFS = 1;
 static constexpr inline uint SYSCALLSFTL = 0;
@@ -284,11 +284,11 @@ static constexpr inline uint SYSCALLMASK = 0;
 
 //_codesec
 static constexpr inline uint8 syscall_tmpl[MaxStubSize] = {
-                                                           0x48,0x8B,0x44,0x24,0x30,          // mov rax, [rsp+30]    // NtProtectVirtualMemory syscall is unknown on Windows, pass it as an argument // (HANDLE ProcessHandle, PPVOID BaseAddress, PSIZE_T RegionSize, ULONG NewProtect, PULONG OldProtect, Syscall_Num)
-                                                           0x4C,0x8B,0xD1,                    // mov r10,rcx
-                                                           0x0F,0x05,                         // syscall              // CD 2E         int 2E  // Will cause AV (Works only under a virtualized kernel?)
-                                                           0xC3,                              // ret
-                                                           0xCC,0xCC,0xCC,0xCC,0xCC           // int 3   //NOPs
+   0x48,0x8B,0x44,0x24,0x30,          // mov rax, [rsp+30]    // NtProtectVirtualMemory syscall is unknown on Windows, pass it as an argument // (HANDLE ProcessHandle, PPVOID BaseAddress, PSIZE_T RegionSize, ULONG NewProtect, PULONG OldProtect, Syscall_Num)
+   0x4C,0x8B,0xD1,                    // mov r10,rcx
+   0x0F,0x05,                         // syscall              // CD 2E         int 2E  // Will cause AV (Works only under a virtualized kernel?)
+   0xC3,                              // ret
+   0xCC,0xCC,0xCC,0xCC,0xCC           // int 3   //NOPs
 };
 static constexpr inline uint SYSCALLOFFS = 12;     // Store the function name hash in unused space
 static constexpr inline uint SYSCALLSFTL = 0;
@@ -572,9 +572,9 @@ template<uint64 val, int num> struct SStubBase
  SCVR int ArgNum = (num > 8)?8:num;           // NOTE: Will break if args is more than 7!
  SCVR int AExNum = (ArgNum > 4)?(ArgNum-4):0;
  SCVR int ArgMsk = (0xFF >> (8-ArgNum)) & 0xF0;    // LDM SP, {}: 0x00,0x00,0x9D,0xE8  // Registers: R0-R7, 8 args
- SCVR int SOffs  = AExNum?4:0;     // From second instruction, first will be copied separately
+ SCVR int SOffs  = AExNum?4:0;           // From second instruction, first will be copied separately
  SCVR int DOffs  = AExNum?(AExNum*4):0;  // Only required if the number of arguments exceeds 4 (R0-R3)   // Space for 'ldr r4, [sp, #12]' and so on
- SCVR int VOffs  = DOffs + SOffs;  // 4 for first instruction(PUSH)
+ SCVR int VOffs  = DOffs + SOffs;        // 4 for first instruction(PUSH)
  SCVR int StubSize = SYSCALLSTUBLEN - (12-DOffs);   // Let it be copyable with __m256 ? Why?    // 12 is extra unused DWORDs for extra args loading from stack
 #else
  SCVR int SOffs  = 0;
@@ -692,7 +692,7 @@ template<uint64 val, class TRet, class... TPar> struct SFuncStubVA<val, TRet(TPa
  SCVR int ArgNum = sizeof...(TPar);
 
 //-------------------------
-template<typename... VA> _finline TRet operator()(TPar... params, VA... vp) const {return ((const TFuncPtr)&this->Stub)(params..., vp...);}     //return ptr(params...);  // asm volatile ("nop" ::: "memory")
+template<typename... VA> _finline TRet operator()(TPar... params, VA... vp) const noexcept {return ((const TFuncPtr)&this->Stub)(params..., vp...);}     //return ptr(params...);  // asm volatile ("nop" ::: "memory")
 //-------------------------
 };
 

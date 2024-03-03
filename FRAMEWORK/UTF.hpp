@@ -33,7 +33,9 @@ static const inline uint8  UTF8_BYTES[] = {
     2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2, 3,3,3,3,3,3,3,3,4,4,4,4,5,5,5,5};
 // TODO: Make the table shorter by replacing values with their correspoindig counts: {192, 32, 16, 8, 4, 4}  for 0, 1, 2, 3, 4, 5
 //---------------------------------------------------------------------------
-static uint CharLenUtf8(achar LeadChr)     // Same as 'return UTF8_BYTES[LeadChr]'
+static uint GetCharSize(achar LeadChr){return UTF8_BYTES[LeadChr]+1;}     // Any validation?
+//---------------------------------------------------------------------------
+static uint CharLenUtf8(achar LeadChr)     // Same as 'return UTF8_BYTES[LeadChr]+1'
 {
  if((LeadChr & 0xFE) == 0xFC)return 6;
  if((LeadChr & 0xFC) == 0xF8)return 5;

@@ -28,10 +28,13 @@ struct SThCtx
  size_t TlsSize;
  vptr   StkBase;     // For unmapping
  size_t StkSize;     // Can a thread unmap its own stack before calling 'exit'?
+ size_t StkOffs;     // Initial stack offset
  uint   GroupID;     // Can be changed with setpgid
  uint   ThreadID;    // May be equal ProcesssID?
  uint   ProcesssID;
  uint   LastThrdID;  // Of prev thead that owned this memory (ThreadID is set to 0 already)
+ uint   LastThrdHnd;
+ uint   ThreadHndl;  // Used on Windows instead of ThreadID in all thread_* functions    // MacOS?
  vptr   ThreadProc;
  vptr   ThreadData;
  size_t ThDataSize;
@@ -93,6 +96,22 @@ static _finline auto IdxToPtr(uint16 idx)
  return SR{PIdx, RIdx};
 }  */
 //------------------------------------------------------------------------------------------------------------
+/*static int InitPages(SThInf** FromFirst, vptr PageBuf, uint BufLen)
+{
+ uint8* CurSrcPtr  = (uint8*)PageBuf;
+ uint8* EndSrcPtr  = (uint8*)(((size_t)CurSrcPtr + BufLen) & size_t(~(MEMPAGESIZE-1)));
+ SThInf* CurInfPtr = (SThInf*)CurSrcPtr;
+ *FromFirst = CurInfPtr;
+ CurSrcPtr += MEMPAGESIZE;
+ int PCtr   = 1;
+ for(;CurSrcPtr < EndSrcPtr;PCtr++,CurSrcPtr += MEMPAGESIZE)
+  {
+   CurInfPtr->NextPage = (SThInf*)CurSrcPtr;  
+   CurInfPtr = CurInfPtr->NextPage;
+  }
+ return PCtr;
+}  */
+//------------------------------------------------------------------------------------------------------------
 // A record is in use if its bit 0 is set
 //
 //
@@ -116,6 +135,26 @@ SThCtx** FindOldThreadByTID(size_t tid)
  return nullptr;
 }
 //------------------------------------------------------------------------------------------------------------
+SThCtx** FindOldThreadByHandle(size_t hnd)
+{
+ SThInf* ThisPage  = this;
+ //uint    TotalRecs = ThisPage->Total;
+ for(;;)
+  {
+   for(uint idx=0;idx < RecsOnPage;idx++)
+    {
+     size_t val = ThisPage->Recs[idx];
+     if(!val)break;   // No more recs    // Free recs are either 1 or a pointer
+     SThCtx* ptr = (SThCtx*)(val & (size_t)~1);
+     if(ptr->LastThrdHnd == hnd)return (SThCtx**)&ThisPage->Recs[idx];
+    }
+   if(!ThisPage->NextPage)break;
+   ThisPage  = ThisPage->NextPage;
+ //  TotalRecs = ThisPage->Total;
+  }
+ return nullptr;
+}
+//------------------------------------------------------------------------------------------------------------
 SThCtx** FindThByTID(size_t tid, bool ActiveOnly=true)
 {
  SThInf* ThisPage  = this;
@@ -129,6 +168,27 @@ SThCtx** FindThByTID(size_t tid, bool ActiveOnly=true)
      if(!(val & 1) && ActiveOnly)continue;  // Inactive
      SThCtx* ptr = (SThCtx*)(val & (size_t)~1);
      if(ptr->ThreadID == tid)return (SThCtx**)&ThisPage->Recs[idx];
+    }
+   if(!ThisPage->NextPage)break;
+   ThisPage  = ThisPage->NextPage;
+ //  TotalRecs = ThisPage->Total;
+  }
+ return nullptr;
+}
+//------------------------------------------------------------------------------------------------------------
+SThCtx** FindThByHandle(size_t hnd, bool ActiveOnly=true)
+{
+ SThInf* ThisPage  = this;
+ //uint    TotalRecs = ThisPage->Total;
+ for(;;)
+  {
+   for(uint idx=0;idx < RecsOnPage;idx++)
+    {
+     size_t val = ThisPage->Recs[idx];
+     if(!val)break;   // No more recs    // Free recs are either 1 or a pointer
+     if(!(val & 1) && ActiveOnly)continue;  // Inactive
+     SThCtx* ptr = (SThCtx*)(val & (size_t)~1);
+     if(ptr->ThreadHndl == hnd)return (SThCtx**)&ThisPage->Recs[idx];
     }
    if(!ThisPage->NextPage)break;
    ThisPage  = ThisPage->NextPage;

@@ -64,14 +64,14 @@ copy /B "Base\TgtBsdArm64.txt" + "Base\Base.cfg" + "Base\BaseRel.cfg" + "Base\Ba
 
 rem --- UBOOT
 
-copy /B "Base\TgtLinArm32.txt" + "Base\Base.cfg" + "Base\BaseDbg.cfg" + "Base\BaseUBoot.cfg" + "Base\BaseARM.cfg" + "Base\BaseARM32.cfg" "DBG_UBT_ARM_X32.cfg"
-copy /B "Base\TgtLinArm32.txt" + "Base\Base.cfg" + "Base\BaseRel.cfg" + "Base\BaseUBoot.cfg" + "Base\BaseARM.cfg" + "Base\BaseARM32.cfg" "REL_UBT_ARM_X32.cfg"
+copy /B "Base\TgtLinArm32.txt" + "Base\Base.cfg" + "Base\BaseDbg.cfg" + "Base\BaseUBoot.cfg" + "Base\BaseARM.cfg" + "Base\BaseARM32.cfg" + "Base\BaseRaw.cfg" "DBG_UBT_ARM_X32.cfg"
+copy /B "Base\TgtLinArm32.txt" + "Base\Base.cfg" + "Base\BaseRel.cfg" + "Base\BaseUBoot.cfg" + "Base\BaseARM.cfg" + "Base\BaseARM32.cfg" + "Base\BaseRaw.cfg" "REL_UBT_ARM_X32.cfg"
 
-copy /B "Base\TgtLinArm64.txt" + "Base\Base.cfg" + "Base\BaseDbg.cfg" + "Base\BaseUBoot.cfg" + "Base\BaseARM.cfg" + "Base\BaseARM64.cfg" "DBG_UBT_ARM_X64.cfg"
-copy /B "Base\TgtLinArm64.txt" + "Base\Base.cfg" + "Base\BaseRel.cfg" + "Base\BaseUBoot.cfg" + "Base\BaseARM.cfg" + "Base\BaseARM64.cfg" "REL_UBT_ARM_X64.cfg"
+copy /B "Base\TgtLinArm64.txt" + "Base\Base.cfg" + "Base\BaseDbg.cfg" + "Base\BaseUBoot.cfg" + "Base\BaseARM.cfg" + "Base\BaseARM64.cfg" + "Base\BaseRaw.cfg" "DBG_UBT_ARM_X64.cfg"
+copy /B "Base\TgtLinArm64.txt" + "Base\Base.cfg" + "Base\BaseRel.cfg" + "Base\BaseUBoot.cfg" + "Base\BaseARM.cfg" + "Base\BaseARM64.cfg" + "Base\BaseRaw.cfg" "REL_UBT_ARM_X64.cfg"
 
-copy /B "Base\Base.cfg" + "Base\BaseDbg.cfg" + "Base\BaseUBoot.cfg" + "Base\BaseARM.cfg" + "Base\BaseARM32.cfg" + "Base\BaseOldARM.cfg" "DBG_OUBT_ARM_X32.cfg"
-copy /B "Base\Base.cfg" + "Base\BaseRel.cfg" + "Base\BaseUBoot.cfg" + "Base\BaseARM.cfg" + "Base\BaseARM32.cfg" + "Base\BaseOldARM.cfg" "REL_OUBT_ARM_X32.cfg"
+copy /B "Base\BaseOldARM.cfg" + "Base\Base.cfg" + "Base\BaseDbg.cfg" + "Base\BaseUBoot.cfg" + "Base\BaseARM.cfg" + "Base\BaseARM32.cfg" + "Base\BaseRaw.cfg" "DBG_OUBT_ARM_X32.cfg"
+copy /B "Base\BaseOldARM.cfg" + "Base\Base.cfg" + "Base\BaseRel.cfg" + "Base\BaseUBoot.cfg" + "Base\BaseARM.cfg" + "Base\BaseARM32.cfg" + "Base\BaseRaw.cfg" "REL_OUBT_ARM_X32.cfg"
 
 
 
@@ -91,8 +91,8 @@ copy /B "Base\TgtLinArm64.txt" + "Base\Base.cfg" + "Base\BaseDbg.cfg" + "Base\Ba
 copy /B "Base\TgtLinArm64.txt" + "Base\Base.cfg" + "Base\BaseRel.cfg" + "Base\BaseARM.cfg" + "Base\BaseARM64.cfg" + "Base\BaseRaw.cfg" "REL_RAW_ARM_X64.cfg"
 
 
-copy /B "Base\Base.cfg" + "Base\BaseDbg.cfg" + "Base\BaseARM.cfg" + "Base\BaseARM32.cfg" + "Base\BaseOldARM.cfg" + "Base\BaseRaw.cfg" "DBG_RAW_OARM_X32.cfg"
-copy /B "Base\Base.cfg" + "Base\BaseRel.cfg" + "Base\BaseARM.cfg" + "Base\BaseARM32.cfg" + "Base\BaseOldARM.cfg" + "Base\BaseRaw.cfg" "REL_RAW_OARM_X32.cfg"
+copy /B "Base\BaseOldARM.cfg" + "Base\Base.cfg" + "Base\BaseDbg.cfg" + "Base\BaseARM.cfg" + "Base\BaseARM32.cfg" "Base\BaseRaw.cfg" "DBG_RAW_OARM_X32.cfg"
+copy /B "Base\BaseOldARM.cfg" + "Base\Base.cfg" + "Base\BaseRel.cfg" + "Base\BaseARM.cfg" + "Base\BaseARM32.cfg" "Base\BaseRaw.cfg" "REL_RAW_OARM_X32.cfg"
 
 
 

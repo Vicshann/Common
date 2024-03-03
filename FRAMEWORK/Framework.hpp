@@ -97,7 +97,7 @@ using PX64 = NPTM::PX64;
 //#include "StrStorage.hpp"
 //#include "StrPool.hpp"
 #include "Arrays.hpp"
-#include "MiniIni.hpp"
+#include "Parsers/MiniIni.hpp"
 
 namespace NCRYPT     // https://github.com/abbbaf/Compile-time-hash-functions
 {
@@ -111,7 +111,7 @@ namespace NCRYPT     // https://github.com/abbbaf/Compile-time-hash-functions
 //--- Extra
 #include "StrLocalizer.hpp"
 #include "StrIntern.hpp"    // StrStorage.hpp ???
-#include "Tokenizer.hpp"
+#include "Parsers/Tokenizer.hpp"
 //---
 
 #include "AppDef.hpp"
@@ -135,4 +135,6 @@ using NFWK::NCTM::operator""_es;
  -ast-dump <filename.c>
 
  -Xclang -ast-print -fsyntax-only
+---------------
+https://dorotac.eu/posts/input_broken/
 */

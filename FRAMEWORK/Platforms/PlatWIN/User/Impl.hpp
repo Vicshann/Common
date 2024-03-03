@@ -37,12 +37,19 @@ DECL_SYSCALL(WPROCID(HashNtDll,"NtQuerySection"),             NT::NtQuerySection
 DECL_SYSCALL(WPROCID(HashNtDll,"NtCreateSymbolicLinkObject"), NT::NtCreateSymbolicLinkObject, NtCreateSymbolicLinkObject )
 DECL_SYSCALL(WPROCID(HashNtDll,"NtOpenSymbolicLinkObject"),   NT::NtOpenSymbolicLinkObject,   NtOpenSymbolicLinkObject   )
 DECL_SYSCALL(WPROCID(HashNtDll,"NtQuerySymbolicLinkObject"),  NT::NtQuerySymbolicLinkObject,  NtQuerySymbolicLinkObject  )
+DECL_SYSCALL(WPROCID(HashNtDll,"NtQueryInformationProcess"),  NT::NtQueryInformationProcess,  NtQueryInformationProcess  )
 
 DECL_SYSCALL(WPROCID(HashNtDll,"NtClose"),                    NT::NtClose,                    NtClose                    )
-
+                                                                                                                               
 DECL_SYSCALL(WPROCID(HashNtDll,"NtDelayExecution"),           NT::NtDelayExecution,           NtDelayExecution           )
+DECL_SYSCALL(WPROCID(HashNtDll,"NtCreateThread"),             NT::NtCreateThread,             NtCreateThread             )
+DECL_SYSCALL(WPROCID(HashNtDll,"NtCreateProcess"),            NT::NtCreateProcess,            NtCreateProcess            )   // Use NtCreateProcessEx instead?
+DECL_SYSCALL(WPROCID(HashNtDll,"NtCreateProcessEx"),          NT::NtCreateProcessEx,          NtCreateProcessEx          )
+DECL_SYSCALL(WPROCID(HashNtDll,"NtResumeThread"),             NT::NtResumeThread,             NtResumeThread             )
+DECL_SYSCALL(WPROCID(HashNtDll,"NtSuspendThread"),            NT::NtSuspendThread,            NtSuspendThread            )
 DECL_SYSCALL(WPROCID(HashNtDll,"NtTerminateThread"),          NT::NtTerminateThread,          NtTerminateThread          )
 DECL_SYSCALL(WPROCID(HashNtDll,"NtTerminateProcess"),         NT::NtTerminateProcess,         NtTerminateProcess         )
+DECL_SYSCALL(WPROCID(HashNtDll,"NtWaitForSingleObject"),      NT::NtWaitForSingleObject,      NtWaitForSingleObject      )
 
 DECL_SYSCALL(WPROCID(HashNtDll,"NtLoadDriver"),               NT::NtLoadDriver,               NtLoadDriver               )
 DECL_SYSCALL(WPROCID(HashNtDll,"NtUnloadDriver"),             NT::NtUnloadDriver,             NtUnloadDriver             )   // Should be last
@@ -54,7 +61,7 @@ DECL_SYSCALL(WPROCID(HashNtDll,"NtUnloadDriver"),             NT::NtUnloadDriver
 //============================================================================================================
 struct NAPI   // On NIX all syscall stubs will be in NAPI   // uwin-master
 {
-//#include "../POSX.hpp"
+#include "../../UtilsNAPI.hpp"
 
 FUNC_WRAPPERFI(PX::exit,       exit       ) { SAPI::NtTerminateThread(NT::NtCurrentThread, (uint32)GetParFromPk<0>(args...)); }
 FUNC_WRAPPERFI(PX::exit_group, exit_group ) { SAPI::NtTerminateProcess(NT::NtCurrentProcess, (uint32)GetParFromPk<0>(args...)); }
@@ -70,7 +77,7 @@ FUNC_WRAPPERNI(PX::getppid,    getppid    ) {return 0;}
 FUNC_WRAPPERNI(PX::getpgrp,    getpgrp    ) {return 0;}
 FUNC_WRAPPERNI(PX::getpgid,    getpgid    ) {return 0;}
 FUNC_WRAPPERNI(PX::setpgid,    setpgid    ) {return 0;}
-
+//------------------------------------------------------------------------------------------------------------
 /*
 https://man7.org/linux/man-pages/man2/mmap.2.html
 
@@ -166,6 +173,7 @@ FUNC_WRAPPERNI(PX::mmapGD,     mmap       )
  NOTE: Ideally we must RELEASE only if the Size covers the entire region (But we have to use QueryVirtualMemory to know that)
 
 */
+//------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERNI(PX::munmap,     munmap     )                // ZwUnmapViewOfSectionEx
 {
  const vptr   addr   = (vptr)GetParFromPk<0>(args...);
@@ -182,9 +190,9 @@ FUNC_WRAPPERNI(PX::munmap,     munmap     )                // ZwUnmapViewOfSecti
  if(!res)return PX::NOERROR;
  return -(sint)NTX::NTStatusToLinuxErr(res);
 }
-
+//------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERNI(PX::mremap,     mremap     ) {return 0;}    // LINUX specific
-
+//------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERNI(PX::madvise,    madvise    )
 {
     // instead of unmapping the address, we're just gonna trick
@@ -195,13 +203,14 @@ FUNC_WRAPPERNI(PX::madvise,    madvise    )
  //   msync(addr, size, MS_SYNC|MS_INVALIDATE);
  return 0;
 }
+//------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERNI(PX::mprotect,   mprotect   ) {return 0;}
 FUNC_WRAPPERNI(PX::msync,      msync      ) {return 0;}    // NtFlushVirtualMemory  (FlushViewOfFile)
 FUNC_WRAPPERNI(PX::mlock,      mlock      ) {return 0;}    // NtLockVirtualMemory
 FUNC_WRAPPERNI(PX::munlock,    munlock    ) {return 0;}    // NtUnlockVirtualMemory
-
+//------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERNI(PX::close,      close      ) {return SAPI::NtClose((NT::HANDLE)GetParFromPk<0>(args...));}
-
+//------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERFI(PX::read,       read       )
 {
  NT::IO_STATUS_BLOCK iosb = {};
@@ -212,7 +221,7 @@ FUNC_WRAPPERFI(PX::read,       read       )
  if(!res)return (ssize_t)iosb.Information;    // Number of bytes read
  return -(sint)NTX::NTStatusToLinuxErr(res);
 }
-
+//------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERFI(PX::write,      write      )
 {
  NT::IO_STATUS_BLOCK iosb = {};
@@ -223,10 +232,10 @@ FUNC_WRAPPERFI(PX::write,      write      )
  if(!res)return (ssize_t)iosb.Information;    // Number of bytes written
  return -(sint)NTX::NTStatusToLinuxErr(res);
 }
-
+//------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERNI(PX::readv,      readv      ) {return 0;}
 FUNC_WRAPPERNI(PX::writev,     writev     ) {return 0;}
-
+//------------------------------------------------------------------------------------------------------------
 // Upon successful completion, lseek() returns the resulting offset location as measured in bytes from the beginning of the file.
 FUNC_WRAPPERNI(PX::lseekGD,    lseek      )
 {
@@ -259,10 +268,10 @@ FUNC_WRAPPERNI(PX::lseekGD,    lseek      )
  if(res)return -NTX::NTStatusToLinuxErr(res);
  return offset;
 }
-
+//------------------------------------------------------------------------------------------------------------
 // Complicated
 FUNC_WRAPPERNI(PX::mkfifo,     mkfifo     ) {return 0;}
-
+//------------------------------------------------------------------------------------------------------------
 // Or use 'open' with O_DIRECTORY instead?
 FUNC_WRAPPERNI(PX::mkdir,      mkdir      )
 {
@@ -276,13 +285,13 @@ FUNC_WRAPPERNI(PX::mkdir,      mkdir      )
  SAPI::NtClose(FileHandle);
  return PX::NOERROR;
 }
-
+//------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERNI(PX::rmdir,      rmdir      )
 {
  // !!!!!!!!!!!!!!!
  return 0;
 }
-
+//------------------------------------------------------------------------------------------------------------
 // Note: link behaviour on Windows is different
 //This means its not sufficient to delete a file, it may not be deleted immediately, and this may cause problems in deleting directories and/or creating a new file of the same name.
 
@@ -296,8 +305,9 @@ FUNC_WRAPPERNI(PX::unlink,     unlink     )
  // !!!!!!!!!!!!!!!
  return 0;
 }
-
+//------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERNI(PX::rename,     rename     ) {return 0;}
+//------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERNI(PX::readlink,   readlink   )
 {
 /* const achar* path = (achar*)GetParFromPk<0>(args...);
@@ -321,7 +331,7 @@ FUNC_WRAPPERNI(PX::readlink,   readlink   )
 
  return 0;
 }
-
+//------------------------------------------------------------------------------------------------------------
 // Compatibility?
 FUNC_WRAPPERNI(PX::access,     access     )
 {
@@ -339,7 +349,7 @@ FUNC_WRAPPERNI(PX::access,     access     )
  SAPI::NtClose(FileHandle);
  return PX::NOERROR;
 }
-
+//------------------------------------------------------------------------------------------------------------
 // NOTE: The buffer size is abstract and number of entries returned will depend on a platform and underlying file system
 // When the NtQueryDirectoryFile routine is called for a particular handle, the RestartScan parameter is treated as if it were set to TRUE, regardless of its value. On subsequent NtQueryDirectoryFile calls, the value of the RestartScan parameter is honored.
 // https://www.boost.org/doc/libs/1_83_0/libs/filesystem/src/directory.cpp
@@ -403,7 +413,7 @@ FUNC_WRAPPERNI(PX::getdentsGD,     getdents     )
   }
  return (int)OutOffs;
 }
-
+//------------------------------------------------------------------------------------------------------------
 /*
 FILE_STANDARD_INFORMATION   // https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ns-wdm-_file_standard_information
 FILE_BASIC_INFORMATION      // https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ns-wdm-_file_basic_information
@@ -436,12 +446,12 @@ FUNC_WRAPPERNI(PX::fstatat,       fstatat       )       // TODO: AT_SYMLINK_FOLL
  SAPI::NtClose(FileHandle);
  return rs;
 }
-
+//------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERNI(PX::stat,       stat       )
 {
  return NAPI::fstatat(PX::AT_FDCWD, args..., 0);
 }
-
+//------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERNI(PX::fstat,      fstat      )
 {
  NT::IO_STATUS_BLOCK iosb = {};
@@ -592,9 +602,91 @@ FUNC_WRAPPERNI(PX::fdatasync,  fdatasync  ) {return 0;}
 
 FUNC_WRAPPERNI(PX::dup3,       dup        ) {return 0;}
 
-FUNC_WRAPPERNI(PX::spawn,      spawn      ) {return 0;}
-FUNC_WRAPPERNI(PX::thread,     thread     ) {return 0;}
+//------------------------------------------------------------------------------------------------------------
+// https://learn.microsoft.com/ru-ru/archive/blogs/wsl/pico-process-overview
+// NOTE Will work only for those processes which are ready to behave like on Linux (No manifest, activation context, Fusion/SxS, ...)
+// NOTE: Args may be too big for stack!
+FUNC_WRAPPERNI(PX::spawn,      spawn      ) 
+{
+ return 0;
+}
+//------------------------------------------------------------------------------------------------------------
+FUNC_WRAPPERNI(PX::thread,     thread     ) 
+{
+ auto   ThProc  = GetParFromPk<0>(args...);
+ vptr   ThData  = GetParFromPk<1>(args...);
+ if(!ThProc)return PXERR(ENOEXEC);     // Nothing to execute
+ size_t DatSize = GetParFromPk<2>(args...);
+ size_t StkSize = GetParFromPk<3>(args...);   // NOTE: As StkSize is aligned to a page size, there will be at least one page wasted for ThreadContext struct (Assume it always available for some thread local data?)
+ size_t TlsSize = GetParFromPk<4>(args...);   // Slots is at least of pointer size
 
+ size_t* StkFrame = nullptr;
+ NTHD::SThCtx* ThrFrame = InitThreadRec((vptr)ThProc, ThData, StkSize, TlsSize, DatSize, &StkFrame);
+ if(uint err=MMERR(ThrFrame);err)return -err;
+
+ NT::PVOID  StackBase = ThrFrame->StkBase;
+ NT::SIZE_T StackSize = ThrFrame->StkOffs;    // Allowed to be not aligned to PAGESIZE if the stack is already allocated
+ NT::NTSTATUS res = NTX::NativeCreateThread(NAPI::ThProcCallStub, ThrFrame, 0, NT::NtCurrentProcess, false, &StackBase, &StackSize, (NT::PHANDLE)&ThrFrame->ThreadHndl, (NT::PULONG)&ThrFrame->ThreadID);
+ DBGMSG("NativeCreateThread: %08X",res);
+ return (uint)ThrFrame->ThreadHndl;    // Use handle instead of ID (Must be closed)   // GetExitCodeThread have problems with return codes(STILL_ACTIVE)
+}
+//------------------------------------------------------------------------------------------------------------
+FUNC_WRAPPERNI(PX::thread_sleep,      thread_sleep     ) {return 0;} 
+FUNC_WRAPPERNI(PX::thread_wait,       thread_wait      ) 
+{
+ uint64 time = GetParFromPk<1>(args...);
+ NTHD::SThCtx* tinf = GetThreadByHandle(GetParFromPk<0>(args...));
+ if(!tinf)return PXERR(EBADF);   // i.e. the thread is already finished
+ if(time != (uint64)-1)
+  {
+   // TODO: fill TS
+  }
+NT::HANDLE  hndl = (NT::HANDLE)tinf->ThreadHndl;    // Cache the value
+NT::NTSTATUS res = SAPI::NtWaitForSingleObject(hndl, true, nullptr);  //  TODO: PLARGE_INTEGER Timeout     // On Linux 'wait' is alertable   // Returns 0 after NtTerminateThread too
+if((res != NT::STATUS_INVALID_HANDLE) && (tinf->ThreadHndl == (uint)hndl))SAPI::NtClose(hndl);    //NOTE: May crash under debugger if the handle is already closed by the exiting thread
+return -NTX::NTStatusToLinuxErr(res);
+}    
+//------------------------------------------------------------------------------------------------------------
+FUNC_WRAPPERNI(PX::thread_status,     thread_status    ) 
+{
+ uint hnd = GetParFromPk<0>(args...);
+ NTHD::SThCtx* ThCtx = nullptr;
+ if(hnd != fwsinf.MainTh.ThreadID)
+  {
+   if(!fwsinf.ThreadInfo)return PXERR(ENOMEM); // No more threads
+   NTHD::SThCtx** ptr = fwsinf.ThreadInfo->FindOldThreadByHandle(hnd);
+   if(!ptr)return PXERR(ENOENT);
+   ThCtx = NTHD::ReadRecPtr(ptr);
+  }
+   else ThCtx = &fwsinf.MainTh;
+ if(!ThCtx)return PXERR(EBADF);
+ DBGMSG("Status: %08X",ThCtx->ExitCode);
+ return ThCtx->ExitCode;
+}
+//------------------------------------------------------------------------------------------------------------
+FUNC_WRAPPERNI(PX::thread_exit,       thread_exit      ) 
+{
+ sint status = GetParFromPk<0>(args...);   // If this var is on stack, the stack may become deallocated (probably - Even marked records should be checked for zero TID)
+ NTHD::SThCtx* tinf = GetThreadSelf();
+ if(tinf && tinf->SelfPtr)
+  {
+   tinf->LastThrdID  = tinf->ThreadID; 
+   tinf->LastThrdHnd = tinf->ThreadHndl; 
+   tinf->ExitCode    = status; 
+   NT::HANDLE hndl   = tinf->ThreadHndl;  // TODO: Memory barrier
+   tinf->ThreadHndl  = 0;  // The system will not clear this for us  // Windows will not clear ThreadID either!
+   tinf->ThreadID    = 0;
+   SAPI::NtClose(hndl);
+   NTHD::ReleaseRec((NTHD::SThCtx**)tinf->SelfPtr); 
+ }
+ return NAPI::exit(status);
+}    
+//------------------------------------------------------------------------------------------------------------
+FUNC_WRAPPERNI(PX::thread_kill, thread_kill ) {return 0;}
+FUNC_WRAPPERNI(PX::thread_alert, thread_alert ) {return 0;}
+FUNC_WRAPPERNI(PX::thread_affinity_set, thread_affinity_set ) {return 0;}
+FUNC_WRAPPERNI(PX::thread_affinity_get, thread_affinity_get ) {return 0;}
+//------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERNI(PX::gettimeofday,  gettimeofday  )
 {
  PX::timeval*  tv = GetParFromPk<0>(args...);
@@ -614,8 +706,9 @@ FUNC_WRAPPERNI(PX::gettimeofday,  gettimeofday  )
   }
  return PX::NOERROR;
 }
+//------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERNI(PX::settimeofday,  settimeofday  ) {return 0;}
-
+//------------------------------------------------------------------------------------------------------------
 // >>>>> MEMORY <<<<<
 //#include "Impl_Mem.hpp"
 // >>>>> NETWORK <<<<<
@@ -679,6 +772,22 @@ sint Initialize(void* StkFrame=nullptr, vptr ArgA=nullptr, vptr ArgB=nullptr, vp
  SetErrorHandlers();
 
  IFDBG{DbgLogStartupInfo();}
+ if(NTHD::SThCtx* MainTh=&fwsinf.MainTh; !MainTh->Self)
+  {
+   MainTh->Self       = MainTh;     // For checks
+   MainTh->SelfPtr    = nullptr;    // Not owned
+   MainTh->TlsBase    = nullptr;    // Allocate somewhere on demand?
+   MainTh->TlsSize    = 0;
+   MainTh->StkBase    = nullptr;    // Get from ELF header or proc/mem ???
+   MainTh->StkSize    = 0;          // StkSize; ??? // Need full size for unmap  // Can a thread unmap its own stack before calling 'exit'?
+   MainTh->GroupID    = NAPI::getpgrp();   // pid
+   MainTh->ThreadID   = NAPI::gettid();
+   MainTh->ProcesssID = NAPI::getpid();
+   MainTh->ThreadProc = nullptr;    // Get it from ELF or set from arg?
+   MainTh->ThreadData = nullptr;
+   MainTh->ThDataSize = 0;
+   MainTh->Flags      = 0;    // ???
+  }
  return 0;// crc;
 }
 

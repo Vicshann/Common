@@ -46,7 +46,9 @@ static vptr* FindJumpTable(vptr AddrInUboot)
   {
    size_t val = (size_t)GTbl[idx];
    if(val < 0x00010000)continue;  // Too small
+#ifdef ARCH_X32
    if(val > 0xFFFF0000)continue;  // Too big
+#endif  
    if((val < (size_t)GTbl)||(val > ((size_t)GTbl+0x100000)))continue; // Allocated in next block (separate malloc)   // NOTE: This check is unreliable
    size_t* TstTbl = (size_t*)val;
    for(int ctr=0;ctr < 24;ctr++)
@@ -77,7 +79,7 @@ uint8* Update(uint8* Addr, uint32 val)
  if(!Ptr1 || !Ptr2 || !Ptr3)return nullptr;  // Not all is present yet
  if(NMATH::Abs(Ptr2-Ptr1) > T::Dist)return nullptr;  // Some matches are too far from each other
  if(NMATH::Abs(Ptr3-Ptr2) > T::Dist)return nullptr;
- return Ptr1;
+ return Ptr1 - T::Offs;
 }
 
 };
@@ -98,7 +100,7 @@ struct SExecCmdLineFinder_ARM32a: public SExecCmdLineFinder_Base<SExecCmdLineFin
  static constexpr uint32 Msk3 = ~0x00F000u;
  static constexpr uint32 Dist = 8;  // Should consider possible instruction reordering
  static constexpr uint32 Step = 4;
-
+ static constexpr uint32 Offs = 0;
 };
 
 struct SExecCmdLineFinder_ARM32b: public SExecCmdLineFinder_Base<SExecCmdLineFinder_ARM32b>   // Old U-BOOT
@@ -115,7 +117,7 @@ struct SExecCmdLineFinder_ARM32b: public SExecCmdLineFinder_Base<SExecCmdLineFin
  static constexpr uint32 Msk3 = 0;             // Unused, always accept
  static constexpr uint32 Dist = 4;
  static constexpr uint32 Step = 4;
-
+ static constexpr uint32 Offs = 0;
 };
 
 struct SExecCmdLineFinder_ARM32c: public SExecCmdLineFinder_Base<SExecCmdLineFinder_ARM32c>   // THUMB
@@ -135,10 +137,10 @@ struct SExecCmdLineFinder_ARM32c: public SExecCmdLineFinder_Base<SExecCmdLineFin
  static constexpr uint32 Msk3 = -1;            // Exact match
  static constexpr uint32 Dist = 4;
  static constexpr uint32 Step = 2;
-
+ static constexpr uint32 Offs = 0;
 };
 
-struct SExecCmdLineFinder_ARM64a: public SExecCmdLineFinder_Base<SExecCmdLineFinder_ARM64a>   // Old U-BOOT
+struct SExecCmdLineFinder_ARM64a: public SExecCmdLineFinder_Base<SExecCmdLineFinder_ARM64a>   
 {
 /*
   21 00 1E 12   AND    W1, W1, #4
@@ -147,16 +149,22 @@ struct SExecCmdLineFinder_ARM64a: public SExecCmdLineFinder_Base<SExecCmdLineFin
   61 01 80 52   MOV    W1, #0xB
   41 00 81 1A   CSEL   W1, W2, W1, EQ
   A7 60 FF 17   B      ExecListCmd
+---
+  3F 00 7E F2   TST    X1, #4
+  62 00 80 52   MOV    W2, #3
+  61 01 80 52   MOV    W1, #0xB
+  41 00 81 1A   CSEL   W1, W2, W1, EQ
+  AD D5 FF 17   B      ExecListCmd
 */
- static constexpr uint32 Tgt1 = 0x121E0021;    // AND W1, W1, #4
- static constexpr uint32 Tgt2 = 0x52800062;    // MOV W2, #3
- static constexpr uint32 Tgt3 = 0x52800161;    // MOV W1, #0xB
- static constexpr uint32 Msk1 = ~0x03FFu;      // Mask out registers field
+ static constexpr uint32 Tgt1 = 0x52800062;    // MOV  W2, #3
+ static constexpr uint32 Tgt2 = 0x52800161;    // MOV  W1, #0xB
+ static constexpr uint32 Tgt3 = 0x1A810041;    // CSEL W1, W2, W1, EQ
+ static constexpr uint32 Msk1 = ~0x001Fu;   // Mask out registers field 
  static constexpr uint32 Msk2 = ~0x001Fu;
- static constexpr uint32 Msk3 = ~0x001Fu;
+ static constexpr uint32 Msk3 = -1;
  static constexpr uint32 Dist = 8;
  static constexpr uint32 Step = 4;
-
+ static constexpr uint32 Offs = 4;  // Offset from actual beginning
 };
 //-----------------------------------------------------------------------------------------
 static vptr FindExecCmdLine(vptr BaseAddr, size_t Size)
@@ -195,8 +203,8 @@ static vptr FindExecCmdLine(vptr BaseAddr, size_t Size)
  for(;CurPtr < EndPtr;CurPtr += Step)
   {
    uint32 val = ((uint16*)CurPtr)[0] | (((uint16*)CurPtr)[1] << 16);  // Read 4 bytes by 2 // NOTE: Inefficient with step 2
-   if(Ptr=fnd1.Update(CurPtr, val))break;
-   if constexpr (PCnt > 1){if(Ptr=fnd2.Update(CurPtr, val))break;}
+   if((Ptr=fnd1.Update(CurPtr, val)))break;
+   if constexpr (PCnt > 1){if((Ptr=fnd2.Update(CurPtr, val)))break;}
 //   if(Ptr=fnd2.Update(CurPtr, val))break;
 //   if(Ptr=fnd3.Update(CurPtr, val))break;
   }
@@ -437,13 +445,13 @@ static sint InitStartupInfo(void* StkFrame=nullptr, void* ArgA=nullptr, void* Ar
  DJTAPI(i2c_read);
 
  DBGDBG("StkFrame=%p, RetAddr=%p, ArgV=%p, ArgC=%u",StkFrame,ArgC,ArgA,ArgB);    // On Windows syscalls are not initialized yet at this point!
- DBGMSG("Base of UBOOT: %p",SInfo.UBootBase);
- DBGMSG("Jump Table: %p",SInfo.JmpTable);
+ UBTMSG("Base of UBOOT: %p",SInfo.UBootBase);
+ UBTMSG("Jump Table: %p",SInfo.JmpTable);
 
  vptr pExecCmdLine = FindExecCmdLine((void*)((size_t)SInfo.JmpTable[(int)NUBOOT::EApiIdx::malloc] & ~0xFFFF), 0x20000);     // ((size_t)this->malloc & ~0xFFFF)
  *UnbindPtr(SAPI::ExecCmdLine.GetPtrSC<vptr*>()) = pExecCmdLine;
 
- DBGMSG("ExecCmdLine addr: %p",pExecCmdLine);  // DBGMSG   // NOTE: Framework`s logging will make the UBOOT module much bigger
+ UBTMSG("ExecCmdLine addr: %p",pExecCmdLine);  // DBGMSG   // NOTE: Framework`s logging will make the UBOOT module much bigger
  if(!pExecCmdLine)return -3;
  return 0;
 }

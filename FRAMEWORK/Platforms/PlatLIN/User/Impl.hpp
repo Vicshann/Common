@@ -103,13 +103,15 @@ DECL_SYSCALL(NSYSC::ESysCNum::llseek,     PX::llseek,   llseek       )     // De
 //
 struct NAPI    // https://docs.oracle.com/cd/E19048-01/chorus4/806-3328/6jcg1bm05/index.html
 {
+#include "../../UtilsNAPI.hpp"
+
 FUNC_WRAPPERFI(PX::exit,       exit       ) {return SAPI::exit(args...);}
 FUNC_WRAPPERFI(PX::exit_group, exit_group ) {return SAPI::exit_group(args...);}
 FUNC_WRAPPERFI(PX::cloneB0,    clone      ) { CALL_IFEXISTRPC(clone,clone,(IsArchX64&&IsCpuX86),(args...),(flags,newsp,parent_tid,tls,child_tid),(uint32 flags, vptr newsp, int32* parent_tid, int32* child_tid, vptr tls)) }
 FUNC_WRAPPERFI(PX::fork,       fork       ) { CALL_IFEXISTRN(fork,clone,NAPI,(args...),(PX::SIGCHLD, nullptr, nullptr, nullptr, nullptr)) }
 FUNC_WRAPPERFI(PX::vfork,      vfork      ) { CALL_IFEXISTRN(vfork,clone,NAPI,(args...),(PX::CLONE_VM | PX::CLONE_VFORK | PX::SIGCHLD, nullptr, nullptr, nullptr, nullptr)) }   // SIGCHLD makes the cloned process work like a "normal" unix child process
 FUNC_WRAPPERFI(PX::execve,     execve     ) {return SAPI::execve(args...);}
-
+//------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERNI(PX::gettimeofday,  gettimeofday  )     // TODO: Prefer VDSO
 {
  PX::timeval*  tv = GetParFromPk<0>(args...);
@@ -135,9 +137,9 @@ FUNC_WRAPPERNI(PX::gettimeofday,  gettimeofday  )     // TODO: Prefer VDSO
   }
  return res;
 }
-
+//------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERNI(PX::settimeofday,  settimeofday  ) {return SAPI::settimeofday(args...);}
-
+//------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERFI(PX::futexGD,    futex      ) {return SAPI::futex(args..., nullptr, 0);}
 FUNC_WRAPPERFI(PX::wait4,      wait       ) {return SAPI::wait4(args...);}
 FUNC_WRAPPERFI(PX::gettid,     gettid     ) {return SAPI::gettid(args...);}
@@ -146,18 +148,18 @@ FUNC_WRAPPERFI(PX::getppid,    getppid    ) {return SAPI::getppid(args...);}
 FUNC_WRAPPERFI(PX::getpgrp,    getpgrp    ) {return SAPI::getpgid(0);}
 FUNC_WRAPPERFI(PX::getpgid,    getpgid    ) {return SAPI::getpgid(args...);}
 FUNC_WRAPPERFI(PX::setpgid,    setpgid    ) {return SAPI::setpgid(args...);}
-
+//------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERFI(PX::mmapGD,     mmap       ) { CALL_IFEXISTRPC(mmap,mmap2,(IsArchX64),(args...),(addr,length,prot,flags,fd,uint32(offset>>12)),(vptr addr, size_t length, uint prot, uint flags, int fd, uint64 offset)) }
 FUNC_WRAPPERFI(PX::munmap,     munmap     ) {return SAPI::munmap(args...);}
 FUNC_WRAPPERFI(PX::madvise,    madvise    ) {return SAPI::madvise(args...);}
 FUNC_WRAPPERFI(PX::mprotect,   mprotect   ) {return SAPI::mprotect(args...);}
-
+//------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERFI(PX::close,      close      ) {return SAPI::close(args...);}
 FUNC_WRAPPERFI(PX::read,       read       ) {return SAPI::read(args...);}
 FUNC_WRAPPERFI(PX::write,      write      ) {return SAPI::write(args...);}
 FUNC_WRAPPERFI(PX::readv,      readv      ) {return SAPI::readv(args...);}
 FUNC_WRAPPERFI(PX::writev,     writev     ) {return SAPI::writev(args...);}
-
+//------------------------------------------------------------------------------------------------------------
 // How the file descriptor connects llseek to underlying devices?
 // loff_t mtdchar_lseek(struct file *file, loff_t offset, int orig)  // This matches lseek, not llseek on x32
 // Is llseek on x32 cannot actually replace lseek, at least for devices?  (We must always use SAPI::lseek for them?)
@@ -173,7 +175,7 @@ FUNC_WRAPPERFI(PX::lseekGD,    lseek      )
   }
    else return SAPI::lseek(args...);   // Compatible
 }
-
+//------------------------------------------------------------------------------------------------------------
 // Complicated
 FUNC_WRAPPERFI(PX::mkfifo,     mkfifo     ) { CALL_IFEXISTR(mknod,mknodat,(GetParFromPk<0>(args...), PX::S_IFIFO|GetParFromPk<1>(args...), 0),(PX::AT_FDCWD, GetParFromPk<0>(args...), PX::S_IFIFO|GetParFromPk<1>(args...), 0)) }
 FUNC_WRAPPERFI(PX::mkdir,      mkdir      ) { CALL_IFEXISTR(mkdir,mkdirat,(args...),(PX::AT_FDCWD, args...)) }
@@ -182,8 +184,7 @@ FUNC_WRAPPERFI(PX::unlink,     unlink     ) { CALL_IFEXISTR(unlink,unlinkat,(arg
 FUNC_WRAPPERFI(PX::rename,     rename     ) { CALL_IFEXISTRP(rename,renameat,(args...),(PX::AT_FDCWD,oldpath,PX::AT_FDCWD,newpath),(achar* oldpath, achar* newpath)) }
 FUNC_WRAPPERFI(PX::readlink,   readlink   ) { CALL_IFEXISTR(readlink,readlinkat,(args...),(PX::AT_FDCWD, args...)) }
 FUNC_WRAPPERFI(PX::access,     access     ) { CALL_IFEXISTR(access,faccessat,(args...),(PX::AT_FDCWD, args..., 0)) }
-
-
+//------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERFI(PX::fstatat,    fstatat    )
 {
  int res = SAPI::fstatat(args...);
@@ -191,7 +192,7 @@ FUNC_WRAPPERFI(PX::fstatat,    fstatat    )
  if(res >= 0){vptr buf = GetParFromPk<2>(args...); PX::ConvertToNormalFstat((PX::SFStat*)buf, buf);}
  return res;
 }
-
+//------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERFI(PX::stat,       stat       )
 {
  int res = SAPI::fstatat(PX::AT_FDCWD, args..., 0);     //  CALL_RIFEXISTR(stat,fstatat,(args...),(PX::AT_FDCWD, args..., 0))
@@ -199,7 +200,7 @@ FUNC_WRAPPERFI(PX::stat,       stat       )
  if(res >= 0){vptr buf = GetParFromPk<1>(args...); PX::ConvertToNormalFstat((PX::SFStat*)buf, buf);}
  return res;
 }
-
+//------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERFI(PX::fstat,      fstat      )
 {
  int res = SAPI::fstat(args...);
@@ -207,14 +208,14 @@ FUNC_WRAPPERFI(PX::fstat,      fstat      )
  if(res >= 0){vptr buf = GetParFromPk<1>(args...); PX::ConvertToNormalFstat((PX::SFStat*)buf, buf);}
  return res;
 }
-
+//------------------------------------------------------------------------------------------------------------
 /*
 https://stackoverflow.com/questions/52329604/how-to-get-the-file-desciptor-of-a-symbolic-link
 https://man7.org/linux/man-pages/man7/symlink.7.html
 */
 FUNC_WRAPPERFI(PX::open,       open       ) { CALL_IFEXISTR(open,openat,(args...),(PX::AT_FDCWD, args...)) }
 FUNC_WRAPPERFI(PX::pipe2,      pipe       ) {return SAPI::pipe2(args...);}
-
+//------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERFI(PX::getdentsGD, getdents    )
 {
  size_t len = GetParFromPk<2>(args...);
@@ -257,7 +258,7 @@ FUNC_WRAPPERFI(PX::dup3,       dup        )
   }
    else return SAPI::dup3(args...);
 }
-
+//------------------------------------------------------------------------------------------------------------
 //FUNC_WRAPPER(PX::stat,       stat       ) {return SAPI::stat(args...);}
 //FUNC_WRAPPER(PX::fstat,      fstat      ) {return SAPI::fstat(args...);}
 //---------------------------------------------------------------------------
@@ -305,7 +306,7 @@ static constexpr const uint32 NotCloneFlg = PX::O_CLOEXEC;
   if(fdarr)
    {
     uint32 flg = ((uint32)GetParFromPk<4>(args...) & NotCloneFlg);
-    for(;;)       // May be it is a bit clumsy format of defining fd list but it is extensible and consistent with argv and envp lists
+    for(;;)       // May be it is a bit clumsy format for defining fd list but it is extensible and consistent with argv and envp lists
      {
       int32 oldfd = *(fdarr++);
       if(oldfd < 0)break;
@@ -315,6 +316,7 @@ static constexpr const uint32 NotCloneFlg = PX::O_CLOEXEC;
 //      SAPI::close(oldfd);  // Other pipe`s end must be closed too. So, just always use CLOSEONEXEC  // Do not assume that it have CLOSEONEXEC. Should not left any excess pipe handles open or piping will not work as expected
      }
    }
+  // TODO: Inherit all EVARS and update them from the passed array (As default on Windows)
   ExecRes = NAPI::execve(GetParFromPk<0>(args...), GetParFromPk<1>(args...), GetParFromPk<2>(args...));  // Should not return on success    // Is it possible to just drop last argument?
 //#if defined(CPU_X86) && defined(ARCH_X64)   // On ARM32 the stack is corrupted too!
   NAPI::exit(ExecRes + (int)*padd);    // Exit the child thread only  // Resume parent on exit  // NOTE: Child enters here and overwrites parent`s return address from 'clone' and skips return value assignment from 'clone'
@@ -324,7 +326,7 @@ static constexpr const uint32 NotCloneFlg = PX::O_CLOEXEC;
  }
  return pid;
 }
-//---------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------
 // sysdeps/unix/sysv/linux/createthread.c)        pthread_create
 // If CLONE_THREAD is set, the child is placed in the same thread group as the calling process.
 // CLONE_SYSVSEM is set, then the child and the calling process share a single list of System V semaphore adjustment (semadj) values
@@ -355,114 +357,25 @@ FUNC_WRAPPERNI(PX::thread,       thread       )
  auto   ThProc  = GetParFromPk<0>(args...);
  vptr   ThData  = GetParFromPk<1>(args...);
  if(!ThProc)return PXERR(ENOEXEC);     // Nothing to execute
- size_t DatSize = AlignP2Frwd(GetParFromPk<2>(args...), 16);
- size_t StkSize = AlignP2Frwd(GetParFromPk<3>(args...), MEMPAGESIZE);   // NOTE: As StkSize is aligned to a page size, there will be at least one page wasted for ThreadContext struct (Assume it always available for some thread local data?)
- if(!StkSize)StkSize = 0x10000;  // 64K should be optimal
- size_t TlsSize = AlignP2Frwd(GetParFromPk<4>(args...), 16);   // Slots is at least of pointer size
- size_t FStkLen = AlignP2Frwd(DatSize+StkSize+TlsSize+sizeof(NTHD::SThCtx), MEMPAGESIZE);
+ size_t DatSize = GetParFromPk<2>(args...);
+ size_t StkSize = GetParFromPk<3>(args...);   // NOTE: As StkSize is aligned to a page size, there will be at least one page wasted for ThreadContext struct (Assume it always available for some thread local data?)
+ size_t TlsSize = GetParFromPk<4>(args...);   // Slots is at least of pointer size
 
-// Find/alloc a new thread rec
- uint8* StkPtr = nullptr;
- if(!fwsinf.ThreadInfo)    // Alloc first thread list page
-  {
-   DBGMSG("Allocating first thread list page");
-   vptr NewPage = NPTM::NAPI::mmap(nullptr, MEMPAGESIZE+FStkLen, PX::PROT_READ|PX::PROT_WRITE, PX::MAP_PRIVATE|PX::MAP_ANONYMOUS, -1, 0);  // Allocate together with a new rec stack
-   if(uint err=MMERR(NewPage);err)return -err;
-   DBGMSG("XXXXXX %p: %p",NewPage,*(vptr*)NewPage);
-  // memset(NewPage, 0, MEMPAGESIZE);
-   fwsinf.ThreadInfo = (NTHD::SThInf*)NewPage;
-   StkPtr = ((uint8*)NewPage + MEMPAGESIZE);
-  }
- NTHD::SThInf** PNewPagePtr = nullptr;
- NTHD::SThCtx** PRecPtr     = fwsinf.ThreadInfo->GetUnusedRec(&PNewPagePtr);
- DBGMSG("XXXXXX PRecPtr: %p",PRecPtr);
- if(!PRecPtr)
-  {
-   DBGMSG("Allocating another thread list page");
-   vptr NewPage = NPTM::NAPI::mmap(nullptr, MEMPAGESIZE, PX::PROT_READ|PX::PROT_WRITE, PX::MAP_PRIVATE|PX::MAP_ANONYMOUS, -1, 0);    // Allocate together with a new rec stack
-   if(uint err=MMERR(NewPage);err)return -err;
-  // memset(NewPage, 0, MEMPAGESIZE);
-   StkPtr  = ((uint8*)NewPage + MEMPAGESIZE);
-   PRecPtr = fwsinf.ThreadInfo->SetNewPageAndGetRec(NewPage, PNewPagePtr);
-  }
- NTHD::SThCtx* ThRec = NTHD::ReadRecPtr(PRecPtr);
- uint OldID   = -1;
- sint OldStat = NTHD::THD_MAX_STATUS;  // Reset (If this code stays after a thread exits - the exit was not normal)
- if(ThRec)   // Already allocated
-  {
-   DBGMSG("Reusing the thread rec: %p",ThRec);
-   OldID   = ThRec->LastThrdID;
-   OldStat = ThRec->ExitCode;    // Preserve last thread info
-   if(ThRec->StkSize < FStkLen)
-    {
-     StkPtr = (uint8*)NPTM::NAPI::mmap(nullptr, FStkLen, PX::PROT_READ|PX::PROT_WRITE, PX::MAP_PRIVATE|PX::MAP_ANONYMOUS, -1, 0);   // TODO: mrealloc
-     if(uint err=MMERR(StkPtr);err)return -err;
-     NPTM::NAPI::munmap(ThRec->StkBase, ThRec->StkSize);   // Unmap old stack
-    }
-    else
-     {
-      StkPtr  = (uint8*)ThRec->StkBase;
-      FStkLen = ThRec->StkSize;
-     }
-  }
-  else if(!StkPtr)StkPtr = (uint8*)NPTM::NAPI::mmap(nullptr, FStkLen, PX::PROT_READ|PX::PROT_WRITE, PX::MAP_PRIVATE|PX::MAP_ANONYMOUS, -1, 0);  // May be already allocated with a thread rec page
- if(uint err=MMERR(StkPtr);err)return -err;
-
- NTHD::SThCtx* ThrFrame = (NTHD::SThCtx*)&StkPtr[StkSize];  // Since StkSize is page-aligned, ThrFrame is also page aligned. It is possible to find it by scanning the stack forward by pages from any addr on that stack. Is it faster than scanning thread list?  (Need to place main thread`s ctx on stack too)
- vptr DataPtr = &StkPtr[StkSize+sizeof(NTHD::SThCtx)];
- vptr TlsPtr  = &StkPtr[StkSize+DatSize+sizeof(NTHD::SThCtx)];
- size_t* StkFrame = (size_t*)&StkPtr[StkSize];      // Decreasing stack pointer only!      // NOTE: Keep the stack aligned to 16
- if(ThData && DatSize)memcpy(DataPtr, ThData, DatSize);    // User data is right at the bottom
-
- ThrFrame->Self       = ThrFrame;   // For checks
- ThrFrame->SelfPtr    = (vptr*)PRecPtr;    // Need thread id to init  (Assigned in STC::ThProcCall)
- ThrFrame->TlsBase    = TlsPtr;
- ThrFrame->TlsSize    = TlsSize;
- ThrFrame->StkBase    = StkPtr;     // For unmapping
- ThrFrame->StkSize    = FStkLen;    // StkSize; ??? // Need full size for unmap  // Can a thread unmap its own stack before calling 'exit'?
- ThrFrame->GroupID    = NAPI::getpgrp();   // pid
- ThrFrame->ThreadID   = 0;  // Will be written to by 'clone'  // And reset at its termination by the system
- ThrFrame->ProcesssID = NAPI::getpid();
- ThrFrame->LastThrdID = OldID;
- ThrFrame->ThreadProc = (vptr)ThProc;
- ThrFrame->ThreadData = DataPtr;
- ThrFrame->ThDataSize = DatSize;
- ThrFrame->ExitCode   = OldStat;
- //ThrFrame->EntryCtr   = 0;   // Unentered  // Later, any entered thread with zero TID will be considered dead and for reuse
- ThrFrame->Flags      = 0;   
- NTHD::WriteRecPtr(PRecPtr, ThrFrame);   // Update the pointer
-
- struct STC    // Not sure about lambdas to be static and without any stack dependancy
-  {
-   _noret static void _ninline _fcall ThProcCall(void)       // Static, no inlining, args in registers
-    {
-     NTHD::SThCtx* ThrFrame = (NTHD::SThCtx*)AlignP2Frwd((size_t)GETSTKFRAME(), 16);   // Should be same ptr or something is pushed
-     DBGMSG("hello thread: ThrFrame=%p, GroupID=%i, ProcesssID=%i, ThreadID=%i: %p",ThrFrame,ThrFrame->GroupID,ThrFrame->ProcesssID,ThrFrame->ThreadID,GetThreadByID(ThrFrame->ThreadID));
-     sint res = PXERR(EFAULT);
-     if(ThrFrame == ThrFrame->Self)
-      {
-//       ThrFrame->EntryCtr++;    // Entered, TID is not zero
-       res = ((NTHD::PThreadProc)ThrFrame->ThreadProc)(ThrFrame);
-       ThrFrame->LastThrdID = ThrFrame->ThreadID;
-       ThrFrame->ExitCode   = res;
-       NTHD::ReleaseRec((NTHD::SThCtx**)(ThrFrame->SelfPtr));     // TODO: Remove from mem rec. For now: Keep the stack memory to be reused by another new thread (Cannot deallocate stack without ASM, the compiler won`t store 'res' in a register and will touch the stack for some other useless reasons anyway)
-      }
-     NAPI::exit(res);  // Any ABI preserved registers are not important at this point  ThProc(nullptr,0)
-    }
-  };
-
+ size_t* StkFrame = nullptr;
+ NTHD::SThCtx* ThrFrame = InitThreadRec((vptr)ThProc, ThData, StkSize, TlsSize, DatSize, &StkFrame);
+ if(uint err=MMERR(ThrFrame);err)return -err;
  if constexpr (IsCpuX86)
   {
    if constexpr (IsArchX32)    // NOTE: must match with syscall stub which uses 'popad' on exit: EDI, ESI, EBP, EBX, EDX, ECX, EAX    // ESP is not loaded(ignored) from stack and just incremented
     {                 // Stack: clone_args, clone_ret_addr, pushad_8regs
-     StkFrame[-1] = (size_t)&STC::ThProcCall;      // Just return there, no args needed
+     StkFrame[-1] = (size_t)&ThProcCallStub;      // Just return there, no args needed
      for(uint idx=2;idx <= 9;idx++)StkFrame[-idx] = (size_t)ThrFrame;     // All popped registers(including EBP) will point to the thread desc (And stack will be considered above it)
-     StkFrame -= 9;      // Number of registers to 'popd'  // 8 regs and ret addr
+     StkFrame    -= 9;      // Number of registers to 'popd'  // 8 regs and ret addr
     }
    else
     {
-     StkFrame[-1] = (size_t)&STC::ThProcCall;      // Just return there, no args needed
-     StkFrame -= 1;    // Ret addr
+     StkFrame[-1] = (size_t)&ThProcCallStub;      // Just return there, no args needed
+     StkFrame    -= 1;    // Ret addr
     }
   }
  else {} // ???
@@ -479,8 +392,8 @@ FUNC_WRAPPERNI(PX::thread,       thread       )
   }
  return pid;  // Not in a new thread - return an error code
 }
-//---------------------------------------------------------------------------
-FUNC_WRAPPERNI(PX::thread_sleep,      thread_sleep     )     // Sleep self  (Until timeout or a signal)
+//------------------------------------------------------------------------------------------------------------
+FUNC_WRAPPERNI(PX::thread_sleep,      thread_sleep     )     // Sleep self  (Until timeout or a signal)      // sys_pause ?
 {
  uint64 time = GetParFromPk<0>(args...);
  NTHD::SThCtx* tinf = GetThreadSelf();
@@ -494,9 +407,8 @@ FUNC_WRAPPERNI(PX::thread_sleep,      thread_sleep     )     // Sleep self  (Unt
  sint32 res = NAPI::futex((uint32*)&tinf->ThreadID, PX::FUTEX_WAIT|PX::FUTEX_PRIVATE_FLAG, tinf->ThreadID, tsp);
  if(res == -PX::ENOSYS)res = NAPI::futex((uint32*)&tinf->ThreadID, PX::FUTEX_WAIT, tinf->ThreadID, tsp);
  return res;
- return 0;
 }
-//---------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------
 // Doing this from another thread so we must find its context by its ID
 //
 FUNC_WRAPPERNI(PX::thread_wait,       thread_wait      )
@@ -512,10 +424,11 @@ FUNC_WRAPPERNI(PX::thread_wait,       thread_wait      )
    // TODO: fill TS
   }
  DBGMSG("Waiting for: %u",tinf->ThreadID);
+// Returns 0 if the caller was woken up. callers should always conservatively assume that a return value of 0 can mean a spurious wake-up (Why?)
  sint32 res = NAPI::futex((uint32*)&tinf->ThreadID, PX::FUTEX_WAIT, tinf->ThreadID, tsp);   // Will not work with FUTEX_PRIVATE_FLAG - infinite waiting (Why?)  // FUTEX_CLOCK_REALTIME ???
  return res;
 }
-//---------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------
 /*
  Only a parent process can wait and that is not the one that spawned the thread with CLONE_THREAD
 */
@@ -535,15 +448,20 @@ FUNC_WRAPPERNI(PX::thread_status,   thread_status      )     // Get the thread r
  DBGMSG("Status: %08X",ThCtx->ExitCode);
  return ThCtx->ExitCode;
 }
-//---------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERNI(PX::thread_exit,       thread_exit      )
 {
  sint status = GetParFromPk<0>(args...);   // If this var is on stack, the stack may become deallocated (probably - Even marked records should be checked for zero TID)
  NTHD::SThCtx* tinf = GetThreadSelf();
- if(tinf && tinf->SelfPtr){tinf->LastThrdID = tinf->ThreadID; tinf->ExitCode = status; NTHD::ReleaseRec((NTHD::SThCtx**)tinf->SelfPtr); }
+ if(tinf && tinf->SelfPtr)
+  {
+   tinf->LastThrdID = tinf->ThreadID; 
+   tinf->ExitCode   = status; 
+   NTHD::ReleaseRec((NTHD::SThCtx**)tinf->SelfPtr); 
+ }
  return NAPI::exit(status);
 }
-//---------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------------------------
 };
 //============================================================================================================
 

@@ -19,34 +19,44 @@ struct NPTM    // Can`t be 'struct' if we want that stubs go in the real executa
 
 // Anything that may have a different set of system API is put here
 #if    defined(PLT_EFI)     // SYS_WINDOWS
+#pragma message(">>> Platform is EFI")
 // TODO
 #elif  defined(PLT_UBOOT)   // SYS_LINUX
+#pragma message(">>> Platform is UBOOT")
 #include "PlatUBT/Impl.hpp"
 #elif  defined(PLT_WEBASM)
+#pragma message(">>> Platform is WASM")
 // TODO
 #elif  defined(PLT_LIN_USR)    // Put BSD support here(similair startup, ELF format)?
-
+#pragma message(">>> Platform is Linux USR")
 #include "PlatLIN/User/Impl.hpp"
 
 #elif  defined(PLT_LIN_KRN)
-
+#pragma message(">>> Platform is Linux KRN")
+// TODO
 #elif  defined(PLT_BSD_USR)    // TODO: Try to support as mush BSD variants as possible?
-
+#pragma message(">>> Platform is BSD USR")
+// TODO
 #elif  defined(PLT_BSD_KRN)
+#pragma message(">>> Platform is BSD KRN")
 // TODO
 #elif  defined(PLT_MAC_USR)    // Put BSD support here(similair syscalls)?    // Share some code with BSD or redeclare everything?
-
+#pragma message(">>> Platform is MacOS USR")
 #include "PlatMAC/PlatDef.hpp"
 #include "StartInfo.hpp"
 #include "PlatMAC/User/Impl.hpp"
 
 #elif  defined(PLT_MAC_KRN)
+#pragma message(">>> Platform is MacOS KRN")
 // TODO
 #elif  defined(PLT_WIN_USR)
-
+#pragma message(">>> Platform is Windows USR")
 #include "PlatWIN/User/Impl.hpp"
 
 #elif  defined(PLT_WIN_KRN)
+#pragma message(">>> Platform is MacOS KRN")
+// TODO
+#elif  defined(PLT_PLUGIN)  // SystemV ABI with a host app   // -mabi=sysv  // __attribute__((sysv_abi))
 // TODO
 #endif
 

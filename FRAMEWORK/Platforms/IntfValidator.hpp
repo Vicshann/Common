@@ -33,7 +33,7 @@ INTF_VALIDATE(GetThreadByID,   NTHD::SThCtx*,    uint)
 INTF_VALIDATE(GetThreadByAddr, NTHD::SThCtx*,    vptr)
 //INTF_VALIDATE(GetNextThread,   NTHD::SThCtx*,    ???)
 
-
+INTF_VALIDATE(InitStartupInfo,   sint,  vptr, vptr, vptr, vptr)
 
 
 

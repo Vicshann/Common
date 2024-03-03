@@ -50,7 +50,7 @@ TODO: 1) Encryption (With custom/build key)
 class CMiniIni       // template<typename DS>   // DS may be a std::array
 {
 enum EType  {etNone=0, etComment=0x01, etName=0x02, etValue=0x04, etSection=0x08, etMaxType=etSection};    // Order is important
-enum EFlag  {efNone=0, efMultiline=0x01};
+enum EFlag  {efNone=0, efMultiline=0x80, efCachedBool=0x02, efCBoolVal=0x01, efCacheMask=0x0F};
 public:
 enum EFlags {
   efUseFirstMrk      = 0x01,   // Use first found markers instead of statistic when parsing a file
@@ -172,63 +172,8 @@ struct SRecHdr   // All records are aligned to 8  (8 byte SRecHdr should be fast
 static_assert((sizeof(SRecHdr)==sizeof(uint32))||(sizeof(SRecHdr)==sizeof(uint64)));
 
 //===============================================================
-struct SBaseRec
+static int ParseStrAsBool(const achar* Str, uint Len) 
 {
- friend class CMiniIni;   // Does not give us ability to init this object as POD if its members are pritected or private
-//protected:
- CMiniIni* Owner   = nullptr;
- uint32    Offset  = 0;      // May become invalid if the Owner is modified from another Rec
- uint32    PrvOffs = 0;      // TODO: Calculate?
-
-protected:
- SRecHdr* GetThisRec(void) const {return (SRecHdr*)&this->Owner->GetBufPtr()[this->Offset];}
- SRecHdr* GetPrevRec(void) const {return (SRecHdr*)&this->Owner->GetBufPtr()[this->PrvOffs];}      // Useful?
- SRecHdr* GetNextRec(void) const {return (SRecHdr*)&this->Owner->GetBufPtr()[this->Offset + this->GetThisRec()->ASize];}
-
-public:
- bool IsValid(void) const {return (bool)this->Owner;}
- bool Remove(void) {bool res = this->Owner->RemoveRec(this); this->Owner = nullptr; this->PrvOffs = this->Offset = 0; return res;}
-};
-
-//===============================================================
-template<typename T> struct SToolRec: public SBaseRec
-{
-// Index: 0 = on the same line, +N a line below, -N a line above
- const achar* GetComment(sint cmntidx, uint* ValLen) {return Owner->GetComment(this, cmntidx, ValLen);}
- void SetComment(sint cmntidx, achar* src, uint srcsize=0) {return Owner->SetComment(this, cmntidx, src, srcsize);}
-
-};
-
-public:
-//===============================================================
-struct SCmtRec: public SToolRec<SCmtRec>     // Contains functions for section manipulations
-{
-
-};
-//===============================================================
-struct SValRec: public SToolRec<SValRec>     // Contains functions for Name/Value manipulations    // Offset points  to name
-{
-protected:
-
-public:
-    // GetValXX  // To be able to chain value requests from a section object
-//---------------------------------------
-const achar* GetName(uint& Size)     // Return of the size is mandatory(strings are not 0-terminated)
-{
- SRecHdr* rec = this->GetThisRec();
- Size = rec->DSize;
- return rec->Data;
-}
-//---------------------------------------
-const achar* GetValue(uint& Size, const achar* PrvLine=nullptr)    // Pointer to the data for fast read-only access
-{
- SRecHdr* rec = this->GetNextRec();
- return rec->NextLine(PrvLine, &Size);
-}
-//---------------------------------------
-bool AsBool(void)           // 1(Any nonzero number), on, [y]es, [t]rue, enabled
-{
- SRecHdr* rec  = this->GetNextRec();
  bool NegNum   = false;
  bool HexNum   = false;
  uint Size     = 0;
@@ -241,17 +186,17 @@ bool AsBool(void)           // 1(Any nonzero number), on, [y]es, [t]rue, enabled
  uint ctr_true = 0;
  uint ctr_enbl = 0;   // enable/enabled
 
- for(achar* CurPtr=rec->Data,*EndPtr=&rec->Data[rec->DSize];CurPtr < EndPtr;CurPtr++,Size++)
+ for(const achar* CurPtr=Str,*EndPtr=&Str[Len];CurPtr < EndPtr;CurPtr++,Size++)    // TODO: Cache the value - slow to parse
   {
    achar val = *CurPtr;
    bool IsWS = (val <= 0x20);
-   if(ctr_ws && !IsWS)return false;     // Should be a single token
-   if(IsWS){ctr_ws++; continue;}    // No whitespaces in the beginning, parser skips them    // TODO: Make sure that when editing
+   if(ctr_ws && !IsWS)return -1;     // Should be a single token
+   if(IsWS){ctr_ws++; continue;}     // No whitespaces in the beginning, parser skips them    // TODO: Make sure that when editing
    if(!Size)
     {
      if(val == '-'){NegNum=true; continue;}    // Sign is allowed as a first char
      if(val == '$'){HexNum=true; continue;}                                                       // $???
-     if(val == '0' && (rec->DSize > 1) && ((CurPtr[1] | 0x20) == 'x')){HexNum=true; CurPtr++; Size++; continue;}    // 0x???
+     if(val == '0' && (Len > 1) && ((CurPtr[1] | 0x20) == 'x')){HexNum=true; CurPtr++; Size++; continue;}    // 0x???
     }
    if((val <= '9') && (val >= '0'))
     {
@@ -260,8 +205,8 @@ bool AsBool(void)           // 1(Any nonzero number), on, [y]es, [t]rue, enabled
     }
    if(val == '.')continue;  // Ignore // TODO: Check floats?
    val |= 0x20;  // ASCII to lower case
-   if((val < 'a')||(val > 'z'))return false;  // Not a letter or a digit
-   if(HexNum){if(val > 'f')return false; ctr_hex++;}
+   if((val < 'a')||(val > 'z'))return -2;  // Not a letter or a digit
+   if(HexNum){if(val > 'f')return -3; ctr_hex++;}
    if(Size < 4)
     {
      if(Size < 1)   // 0
@@ -300,17 +245,81 @@ bool AsBool(void)           // 1(Any nonzero number), on, [y]es, [t]rue, enabled
   }
  if(ctr_let)
   {
-   if((2 == ctr_on)   && (ctr_let == ctr_on))return true;     // on
-   if((6 == ctr_enbl) && (ctr_let == ctr_enbl))return true;   // enable
-   if((7 == ctr_enbl) && (ctr_let == ctr_enbl))return true;   // enabled
-   if((1 == ctr_yes)  && (ctr_let == ctr_yes))return true;    // y
-   if((3 == ctr_yes)  && (ctr_let == ctr_yes))return true;    // yes
-   if((1 == ctr_true) && (ctr_let == ctr_true))return true;   // t
-   if((4 == ctr_true) && (ctr_let == ctr_true))return true;   // true
+   if((2 == ctr_on)   && (ctr_let == ctr_on))return 1;     // on
+   if((6 == ctr_enbl) && (ctr_let == ctr_enbl))return 1;   // enable
+   if((7 == ctr_enbl) && (ctr_let == ctr_enbl))return 1;   // enabled
+   if((1 == ctr_yes)  && (ctr_let == ctr_yes))return 1;    // y
+   if((3 == ctr_yes)  && (ctr_let == ctr_yes))return 1;    // yes
+   if((1 == ctr_true) && (ctr_let == ctr_true))return 1;   // t
+   if((4 == ctr_true) && (ctr_let == ctr_true))return 1;   // true
   }
- else if(ctr_num || ctr_hex)return true;    // Some nonzero number
+ else if(ctr_num || ctr_hex)return 1;    // Some nonzero number
+ return 0;
+}
+//===============================================================
+struct SBaseRec
+{
+ friend class CMiniIni;   // Does not give us ability to init this object as POD if its members are pritected or private
+//protected:
+ CMiniIni* Owner   = nullptr;
+ uint32    Offset  = 0;      // May become invalid if the Owner is modified from another Rec
+ uint32    PrvOffs = 0;      // TODO: Calculate?
 
- return false;
+protected:
+ SRecHdr* GetThisRec(void) const {return (SRecHdr*)&this->Owner->GetBufPtr()[this->Offset];}
+ SRecHdr* GetPrevRec(void) const {return (SRecHdr*)&this->Owner->GetBufPtr()[this->PrvOffs];}      // Useful?
+ SRecHdr* GetNextRec(void) const {return (SRecHdr*)&this->Owner->GetBufPtr()[this->Offset + this->GetThisRec()->ASize];}
+
+public:
+ bool IsValid(void) const {return (bool)this->Owner;}
+ bool Remove(void) {bool res = this->Owner->RemoveRec(this); this->Owner = nullptr; this->PrvOffs = this->Offset = 0; return res;}
+};
+
+//===============================================================
+template<typename T> struct SToolRec: public SBaseRec
+{
+// Index: 0 = on the same line, +N a line below, -N a line above
+ const achar* GetComment(sint cmntidx, uint* ValLen) {return Owner->GetComment(this, cmntidx, ValLen);}
+ void SetComment(sint cmntidx, achar* src, uint srcsize=0) {return Owner->SetComment(this, cmntidx, src, srcsize);}
+
+};
+
+public:
+//===============================================================
+struct SCmtRec: public SToolRec<SCmtRec>     // Contains functions for comment manipulations
+{
+
+};
+//===============================================================
+struct SValRec: public SToolRec<SValRec>     // Contains functions for Name/Value manipulations    // Offset points  to name
+{
+protected:
+
+public:
+    // GetValXX  // To be able to chain value requests from a section object
+//---------------------------------------
+const achar* GetName(uint& Size)     // Return of the size is mandatory(strings are not 0-terminated)
+{
+ SRecHdr* rec = this->GetThisRec();
+ Size = rec->DSize;
+ return rec->Data;
+}
+//---------------------------------------
+const achar* GetValue(uint& Size, const achar* PrvLine=nullptr)    // Pointer to the data for fast read-only access
+{
+ SRecHdr* rec = this->GetNextRec();
+ return rec->NextLine(PrvLine, &Size);
+}
+//---------------------------------------
+bool AsBool(void)           // 1(Any nonzero number), on, [y]es, [t]rue, enabled
+{
+ SRecHdr* rec = this->GetNextRec();
+ if(rec->Flags & efCachedBool)return rec->Flags & efCBoolVal;
+ bool res = ParseStrAsBool(rec->Data, rec->DSize) > 0;
+ rec->Flags |= efCachedBool;
+ rec->Flags &= ~efCBoolVal;
+ if(res)rec->Flags |= efCBoolVal;
+ return res;
 }
 //---------------------------------------
 sint64 AsInt(void)
@@ -648,7 +657,7 @@ uint AppendRecord(uint DstOffs, uint SrcOffs, const achar* SrcPtr, sint dlen, si
  if(ResOffs >= CurSize)this->Data.SetSize(ResOffs + (CurSize/4) + 8);    // NOTE: No separate Size/Prealloc in CArray yet
  SRecHdr* Rec = (SRecHdr*)&this->GetBufPtr()[DstOffs];
  Rec->Type  = type;
- Rec->Flags = 0;    // !!! TODO: Multiline
+ Rec->Flags = 0;    
  Rec->DSize = dlen+ExtrLen;    // NOTE: sizes are truncated to uint16
  Rec->FSize = flen+ExtrLen;
  Rec->ASize = alsize;
@@ -692,7 +701,7 @@ sint ParseIniData(const achar* SrcData, uint SrcSize)                    // Comm
  uint ExpctInlCmt = (this->Flags & efAllowInlineCmnt)?stExpCmnt:0;     // Allows inline comment parsing to be turned off
  for(;Offs <= SrcSize;Offs++)
   {
-   achar const* CurPtr = &SrcData[Offs];   //(Offs < SrcSize)?(&SrcData[Offs]):(&Nulls[0]);   // The source array may not contain final EOL or a terminating 0
+   achar const* CurPtr = &SrcData[Offs];  // Does it ok to not know if names in UTF-8 or not?  //(Offs < SrcSize)?(&SrcData[Offs]):(&Nulls[0]);   // The source array may not contain final EOL or a terminating 0
    achar fc = *CurPtr;
    if(fc > 0x20)    // Is whitespace?
     {
@@ -703,7 +712,7 @@ sint ParseIniData(const achar* SrcData, uint SrcSize)                    // Comm
        if((CtrLbWS > LstNameInd) && (fc != '['))Expect = stInValue|stInMultiline;      // Continue the multiline value     // Indented deeper and NOT a some nested section        // NOTE: Have to store prev rec at begining of a new rec to have full len
          else Expect &= ~stExpMultiline;      // Not a multiline value
       }
-     if((Expect & stExpSecBeg) && (fc == '['))       // Note: '[' and ']' are not part of the section name and in case of section detetion must be found again
+     if((Expect & stExpSecBeg) && (fc == '['))       // Note: '[' and ']' are not part of the section name and in case of section detection must be found again
       {
        Expect     = stExpSecEnd;
        FirstNonWS = FirstWS = -1;    // Reset to get the section name later

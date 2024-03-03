@@ -216,9 +216,11 @@ struct SSINF
 {
  vptr   ModBase;
  size_t ModSize;
+ achar  SysDrive[8];
  sint32 UTCOffs; // In seconds
  uint32 Flags;
- achar  SysDrive[8];
+ NTHD::SThCtx MainTh;    // Main(Init/Entry) thread // A thread from which the framework is initialized at main entry point for a module/app (For modules this is NOT the app`s process main thread)
+ NTHD::SThInf* ThreadInfo;  // For additional threads (Null if only entry thread is used)
 
 } static inline fwsinf = {};
 //------------------------------------------------------------------------------------------------------------
@@ -360,7 +362,7 @@ static const syschar* GetEnvVar(const achar* Name, uint* Size=nullptr)          
 }
 //------------------------------------------------------------------------------------------------------------
 // AppleInfo on MacOS
-static sint GetSysInfo(uint InfoID, void* DstBuf, size_t BufSize)
+static sint GetAuxInfo(uint InfoID, void* DstBuf, size_t BufSize)
 {
  //GetAuxVRec(size_t Type)
  return -1;
@@ -370,7 +372,7 @@ static _finline vptr   GetModuleBase(void){return fwsinf.ModBase;}
 static _finline size_t GetModuleSize(void){return fwsinf.ModSize;}
 //------------------------------------------------------------------------------------------------------------
 // Returns full path to current module and its name in UTF8
-static size_t _finline GetModulePath(achar* DstBuf, size_t BufSize=size_t(-1))
+static sint _finline GetModulePath(achar* DstBuf, size_t BufSize=size_t(-1))
 {
  sint aoffs = 0;
  return (size_t)GetCLArg(aoffs, DstBuf, BufSize);       // TODO TODO TODO !!!
@@ -382,7 +384,44 @@ static size_t _finline GetModulePath(achar* DstBuf, size_t BufSize=size_t(-1))
  return 0;
 }
 //------------------------------------------------------------------------------------------------------------
-static sint InitStartupInfo(void* StkFrame=nullptr, void* ArgA=nullptr, void* ArgB=nullptr, void* ArgC=nullptr)
+static NTHD::SThCtx* GetThreadSelf(void)     // Probably can find it faster by scanning stack pages forward and testing for SThCtx at beginning
+{
+ return GetThreadByAddr(GETSTKFRAME());
+}
+//------------------------------------------------------------------------------------------------------------
+static NTHD::SThCtx* GetThreadByID(uint id)
+{
+ if((id == (uint)-1)||(id == fwsinf.MainTh.ThreadID))return &fwsinf.MainTh;
+ if(!fwsinf.ThreadInfo)return nullptr; // No more threads
+ NTHD::SThCtx** ptr = fwsinf.ThreadInfo->FindThByTID(id);
+ if(!ptr)return nullptr;
+ return NTHD::ReadRecPtr(ptr);
+}
+//------------------------------------------------------------------------------------------------------------
+static NTHD::SThCtx* GetThreadByHandle(uint hnd)
+{
+ if((hnd == (uint)-1)||(hnd == fwsinf.MainTh.ThreadHndl))return &fwsinf.MainTh;
+ if(!fwsinf.ThreadInfo)return nullptr; // No more threads
+ NTHD::SThCtx** ptr = fwsinf.ThreadInfo->FindThByHandle(hnd);
+ if(!ptr)return nullptr;
+ return NTHD::ReadRecPtr(ptr);
+}
+//------------------------------------------------------------------------------------------------------------
+static NTHD::SThCtx* GetThreadByAddr(vptr addr)   // By an address on stack
+{
+ if(((uint8*)addr >= (uint8*)fwsinf.MainTh.StkBase)&&((uint8*)addr < ((uint8*)fwsinf.MainTh.StkBase + fwsinf.MainTh.StkSize)))return &fwsinf.MainTh;
+ if(!fwsinf.ThreadInfo)return nullptr; // No more threads
+ NTHD::SThCtx** ptr = fwsinf.ThreadInfo->FindThByStack(addr);
+ if(!ptr)return nullptr;
+ return NTHD::ReadRecPtr(ptr);
+}
+//------------------------------------------------------------------------------------------------------------
+/*static NTHD::SThCtx* GetNextThread(NTHD::SThCtx* th) // Get thread by index?   // Start from NULL    // Need to think
+{
+ return nullptr;
+}*/
+//------------------------------------------------------------------------------------------------------------
+static sint InitStartupInfo(vptr StkFrame=nullptr, vptr ArgA=nullptr, vptr ArgB=nullptr, vptr ArgC=nullptr)
 {
  DBGDBG("StkFrame=%p, ArgA=%p, ArgB=%p, ArgC=%p",StkFrame,ArgA,ArgB,ArgC);
  vptr AddrInTheMod = (vptr)&InitStartupInfo;

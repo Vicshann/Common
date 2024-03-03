@@ -1113,17 +1113,21 @@ static pid_t  PXCALL cloneB1(uint32 flags, PVOID newsp, PINT32 parent_tid, PVOID
 // Spawn a new process
 // Default format of siofd is {oldfd,newfd,...,-1}
 // NOTE: Values other than -1 can be used in the future to do some actions between vfork and execve in format {ACTIONID1,OPTVAL1,...OPTVALN,ACTIONID2,OPTVAL,ACTIONID3,-1}
+// Current working directory is inherited (Same as fork/vfork)
+// siofd - list of file descriptors to share (Last is -1) to make some descriptor of current process into expected descriptor of a new process (IO redirection)
+//  On Windows maps only STDIN, STDOUT, STDERR to PEB anything else just duplicates
 // See posix_spawn for actions that may be required
 static pid_t  PXCALL spawn(PCCHAR path, PPCHAR argv, PPCHAR envp, PINT32 siofd, uint32 flags);    // Improvised  // int siofd[3]{STDIN,STDOUT,STDERR} // Flags are additional flags for Clone, unused for now
 
 static pid_t  PXCALL thread(NTHD::PThreadProc Proc, PVOID Data, SIZE_T DatSize, SIZE_T StkSize, SIZE_T TlsSize, uint32 Flags);  // Improvised   // Actually allocates: PageAlign(Size+StkSize+TlsSize+ThreadRec)
 static sint   PXCALL thread_sleep(uint64 ns);     // nleepns???	  // -1 - wait infinitely  // Sleeps on its futex	 // -1 sleep until termination
-static sint   PXCALL thread_status(pid_t thid);
-static sint   PXCALL thread_kill(pid_t thid, sint status);
 static sint   PXCALL thread_exit(sint status);    // Allows to exit without returning from ThreadProc directly	   // Deallocate the thread`s stack memory?
-static sint   PXCALL thread_wait(pid_t thid, uint64 ns);   // -1 - wait infinitely
-static sint   PXCALL thread_affinity(pid_t thid, uint64 mask, uint32 from); 
-static sint   PXCALL thread_affinity(pid_t thid, size_t buf_len, PSIZE_T buf); 	 // Get
+static sint   PXCALL thread_status(pid_t thid);	  // Use after waiting for a thread to finish
+static sint   PXCALL thread_kill(pid_t thid, sint status);    // Terminates the thread
+static sint   PXCALL thread_wait(pid_t thid, uint64 ns);      // Wati for the thread termination  // -1 - wait infinitely
+static sint   PXCALL thread_alert(pid_t thid, uint32 code);   // Wakes the thread from any wait	(thread_sleep)	// Like pthread_cancel	 // Cancel IO?
+static sint   PXCALL thread_affinity_set(pid_t thid, uint64 mask, uint32 from); 
+static sint   PXCALL thread_affinity_get(pid_t thid, size_t buf_len, PSIZE_T buf); 
 // CPU affinity
 // Suspend/Resume
 // Terminate
@@ -1207,6 +1211,10 @@ enum EFutex
 // system call can return if the thread received a signal. In this case the error is EINTR.
 // for FUTEX_WAIT, timeout is interpreted as a relative value.  This differs from other futex operations, where timeout is interpreted as an absolute value.
 // https://man7.org/linux/man-pages/man2/futex.2.html
+// 
+// Note that a wake-up can also be caused by common futex usage patterns in unrelated code that happened to have previously used the
+//   futex word's memory location (e.g., typical futex-based implementations of Pthreads mutexes can cause this under some conditions).  Therefore, callers should always
+//   conservatively assume that a return value of 0 can mean a spurious wake-up, and use the futex word's value (i.e., the user-space synchronization scheme) to decide whether to continue to block or not.
 //
 static sint32 PXCALL futexGD(PUINT32 uaddr, int op, uint32 val, const PTiSp timeout);	  // Minimal operation
 static sint32 PXCALL futex(PUINT32 uaddr, int op, uint32 val, const PTiSp timeout, PUINT32 uaddr2, uint32 val3);    // Linux   // timespec may be uint32_t val2 (see op)     // Returns long
