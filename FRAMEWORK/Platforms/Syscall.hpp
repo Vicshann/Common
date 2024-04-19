@@ -112,6 +112,9 @@ enum class ESysCNum: int { //                       x86_32  x86_64  arm_32  arm_
                            clone =            DSC<  120,    56,     120,    220,    -1        >::V,   // Linux specific   // Thread: CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_PARENT | CLONE_THREAD | CLONE_IO   // BSD?: https://reviews.freebsd.org/D31473
                            execve =           DSC<  11,     59,     11,     221,    59        >::V,   // Can it be emulated?
                            ptrace =           DSC<  26,     101,    26,     117,    26        >::V,   // Not quite portable
+
+                        process_vm_readv =    DSC<  347,    310,    376,     270,    -2       >::V,  
+                        process_vm_writev =   DSC<  348,    311,    377,     271,    -2       >::V,  
 // kill, tkill, tgkill
 // syslog
 // sigaction
@@ -146,6 +149,8 @@ enum class ESysCNum: int { //                       x86_32  x86_64  arm_32  arm_
                            mmap =             DSC<  90,     9,      -1,     222,    197       >::V,   // Not present on arm32. Ignore it on any x32 system, use mmap2 instead   // BSD: new mmap (freebsd6, November 2005)
                            mmap2 =            DSC<  192,    -1,     192,    -1,     71        >::V,   // x32 only   // BSD: old, unimplemented on MacOS
                            munmap =           DSC<  91,     11,     91,     215,    73        >::V,
+                           msync =            DSC<  144,    26,     144,    227,    -2        >::V,
+
 // mremap    // Linux-specific               
                            madvise =          DSC<  219,    28,     220,    233,    75        >::V,
                            mprotect =         DSC<  125,    10,     125,    226,    74        >::V,
@@ -191,8 +196,10 @@ enum class ESysCNum: int { //                       x86_32  x86_64  arm_32  arm_
                            access =           DSC<  33,     21,     33,     -1,     33        >::V,   // Not present on arm64, use faccessat instead
                            faccessat =        DSC<  307,    269,    334,    48,     -1        >::V,   // P2008, for Arm64 only   
                            getdents =         DSC<  220,    217,    217,    61,     -1        >::V,   // getdents64
-                           getdirentries =    DSC<  -1,     -1,     -1,     -1,     196       >::V,   // BSD/XNU getdirentries32  BSD:[freebsd11] // Current: __sys_getdirentries (554: Ver >= 1200031)  // 32bit is ok - inode is not important for now
-// fcntl                                     
+                           getdirentries =    DSC<  -1,     -1,     -1,     -1,     196       >::V,   // BSD/XNU getdirentries32  BSD:[freebsd11] // Current: __sys_getdirentries (554: Ver >= 1200031)  // 32bit is ok - inode is not important for now                          
+                           truncate =         DSC<  193,    76,     92,     45,     -1        >::V,   // truncate64 on x32   // BSD?
+                           ftruncate =        DSC<  194,    77,     93,     46,     -1        >::V,   // ftruncate on x32    // BSD?
+
 // Disabling this *stat* mess ('fstat' (for file descriptors) and 'fstatat'(for file names) will be enough)
 //                           stat =             DSC<  106,    4,      106,    -1,     188       >::V,   // Use fstatat on arm64 instead   // Do not use on x32 - 32bit sizes
 //                           stat64 =           DSC<  195,    -1,     195,    -1,     -1        >::V,   // x32 only  // BSD: old stat, unimplemented on MacOS, was 38
@@ -203,6 +210,7 @@ enum class ESysCNum: int { //                       x86_32  x86_64  arm_32  arm_
                            flock =            DSC<  143,    73,     143,    32,     -2        >::V,
                            fsync =            DSC<  118,    74,     118,    82,     -2        >::V,
                            fdatasync =        DSC<  148,    75,     148,    83,     -2        >::V,
+                           ioctl =            DSC<  54,     16,     54,     29,     -1        >::V,   // BSD?
                            fcntl =            DSC<  55,     72,     55,     25,     -2        >::V,
                            dup3 =             DSC<  330,    292,    358,    24,     -2        >::V,   // was added to Linux in version 2.6.27
                            dup =              DSC<  41,     32,     41,     23,     -2        >::V,

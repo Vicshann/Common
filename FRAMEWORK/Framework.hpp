@@ -4,6 +4,7 @@
 #ifndef _FRAMEWORK_    // These macro are used to check which header file included
 #define _FRAMEWORK_    // Now we just use __has_include 	- a preprocessor operator to check whether an inclusion is possible. // C++17  // __has_include requires include search directories to be passed to the compiler
 
+// Try to keep the code as simple and readable as possible. Not so future generations will appreciate that ;)
 /*
  Some useful links:
    https://graphics.stanford.edu/~seander/bithacks.html
@@ -51,14 +52,23 @@
 // NOTE: It is impossible to put a 'namespace' inside of a 'class'
 namespace NFWK      // Must be a namespace because we are adding some namespaces and configs in it
 {
-// NOTE: None of these files should include anything ( Unless it is a collection? )
-// NOTE: Moving out of namespace should be done in the same file if required
+// NOTE: Keep it consistent with AppMain.cpp
 #if __has_include ("AppCfg.hpp")
 #include "AppCfg.hpp"
+#elif __has_include ("SRC/AppCfg.hpp")
+#include "SRC/AppCfg.hpp"
 #elif __has_include ("../AppCfg.hpp")
 #include "../AppCfg.hpp"
+#elif __has_include ("../SRC/AppCfg.hpp")
+#include "../SRC/AppCfg.hpp"
 #elif __has_include ("../../AppCfg.hpp")
 #include "../../AppCfg.hpp"
+#elif __has_include ("../../SRC/AppCfg.hpp")
+#include "../../SRC/AppCfg.hpp"
+#elif __has_include ("../../../AppCfg.hpp")
+#include "../../../AppCfg.hpp"
+#elif __has_include ("../../../SRC/AppCfg.hpp")
+#include "../../../SRC/AppCfg.hpp"
 #else
 #include "Platforms/DefaultCfg.hpp"
 #pragma message(">>> No AppCfg.hpp is found - using default config!")
@@ -110,7 +120,10 @@ namespace NCRYPT     // https://github.com/abbbaf/Compile-time-hash-functions
 
 //--- Extra
 #include "StrLocalizer.hpp"
-#include "StrIntern.hpp"    // StrStorage.hpp ???
+//#include "StrIntern.hpp"    // StrStorage.hpp ???
+//#include "Parsers/ByteJam_long.hpp"      // uint16 * 3 max per bit
+//#include "Parsers/ByteJam_short.hpp"   // uint32 per bit
+#include "Parsers/ByteJam.hpp"
 #include "Parsers/Tokenizer.hpp"
 //---
 

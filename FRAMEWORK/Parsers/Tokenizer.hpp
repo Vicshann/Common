@@ -1,60 +1,54 @@
 
 /*
-                             -------- --------
-                           / |File  | |Extra |
-                          /  |Token |+|Info  | File1
-                         /   |Stream| |Stream|
-                        /    -------- --------
-                       /
- --------    ---------       -------- --------
- |String|    |Lixical|       |File  | |Extra |
- |      |----|       | ----- |Token |+|Info  | File2
- |Intern|    |List   |       |Stream| |Stream|
- --------    ---------       -------- --------
-                       \
-                        \    -------- --------
-                         \   |File  | |Extra |
-                          \  |Token |+|Info  | FileN
-                           \ |Stream| |Stream|
-                             -------- --------
-
  https://en.wikipedia.org/wiki/Argument-dependent_name_lookup
  https://probablydance.com/2015/02/16/ideas-for-a-programming-language-part-3-no-shadow-worlds/
  https://www.utf8-chartable.de/
  https://en.wikipedia.org/wiki/List_of_Unicode_characters
  https://en.wikipedia.org/wiki/UTF-32
  https://en.wikipedia.org/wiki/Plane_(Unicode)#Basic_Multilingual_Plane
+ https://stackoverflow.com/questions/36668466/bitfields-and-alignment
 
  NOTE: This is a context-free parser
  A complete AST building tool in a thousand lines of code, i hope:)
+ NOTE: A state machine + utility flags are used
+ TODO: Store numeric strings alongside their positive AND negative representations
 */
 
 struct CTokenizer
 {
 
-enum ETokenFlags {   // Tokenizer flags, not a token flags  // Token flags or range flags?   // Only 8 bits for token flags!   // This is for Range/Token records, not the token stream itself
-  tfNone        = 0, 
-  tfWhtspc      = 0x0001,   // This range is a whitespace
-  tfIgnore      = 0x0002,   // Ignore the char range, like ' in numbers. Do not change the state?
-  tfNoTerm      = 0x0004,   // The char range is a part of a token but cannot be last in it
-  tfBadToken    = 0x0008,   // Treat unspecified chars as an error instead of fallback to state 0
-  tfScopeOpn    = 0x0010,   // Both flags mean that same symbols wil open and close their scope (i.e.: ' " )   They will use a separate scope stack ???          //rfScopeOpn + rfScopeCse for counted scopes like ''' or '"'   // Note Do not allow scope close if it is not opened
-  tfScopeCse    = 0x0020,   // Can we have nested scopes of same char?  NO!: "1 "2 "3 "?[We want to close the last one]    // So, the flat only: "O "C "O "C
-  tfNumeric     = 0x0040,   // No lexing. Store in a separate list with associated struct of converted values to do conversion only once
-  tfTknTerm     = 0x0080,   // This token terminates/separates an expression (i.e. ';')
-  tfTknRSplit   = 0x0100,   // Split current token when encountered // Will become part of a next token, not the current one (Not same as tfTknTerm?)
-  tfTknLSplit   = 0x0200,   // Split current token when encountered // Will become part of the current token
-  tfRawString   = 0x0400,   // A string with no escape processing
-  tfEscString   = 0x0800,   // An escaped string
-  tfComment     = 0x1000,
-  tfLSplitOnSDZ = 0x2000,   // Split if scope depth of GroupID becomes zero after tfScopeCse (Does tfTknLSplit)
-  tfBRstIfSplit = 0x4000,   // Reset current state to base if split
-  fScpTknMirror = 0x8000,   // This token is a mirrored when used as a scope marker (Store the token to compare on closing the scope)  // Format: [Prefix]anything[Postfix] Prefix/Postfix is controlled by ranges and 'anything' is stored on scope stack to compare on close   // C++: R "delimiter( raw_characters )delimiter"     // Delimiter is optional and it can be a character except () / or whitespaces
- // tfSLComment = 0x0400,   // A single-line comment string
- // tfMLComment = 0x0800,   // A multi-line comment string
+enum EToolFlags {   // Tokenizer flags, not a token flags  // Token flags or range flags?   // Only 8 bits for token flags!   // This is for Range/Token records, not the token stream itself     // TODO: Sort the flags
+  tfNone          = 0, 
+  tfWhtspc        = 0x00000001,   // This range is a whitespace
+  tfIgnore        = 0x00000002,   // Ignore the char range, like ' in numbers. Do not change the state?
+  tfNoTerm        = 0x00000004,   // The char range is a part of a token but cannot be last in it
+  tfBadToken      = 0x00000008,   // Treat unspecified chars as an error instead of fallback to state 0
+  tfScopeOpn      = 0x00000010,   // Both flags mean that same symbols wil open and close their scope (i.e.: ' " )   They will use a separate scope stack ???          //rfScopeOpn + rfScopeCse for counted scopes like ''' or '"'   // Note Do not allow scope close if it is not opened
+  tfScopeCse      = 0x00000020,   // Can we have nested scopes of same char?  NO!: "1 "2 "3 "?[We want to close the last one]    // So, the flat only: "O "C "O "C
+  tfNumeric       = 0x00000040,   // No lexing. Store in a separate list with associated struct of converted values to do conversion only once
+  tfTknTerm       = 0x00000080,   // This token terminates/separates an expression (i.e. ';')    // <<<TODO: Remove to type flags ( have meaning only for an AST walker )
+// Not transferable to token records
+  tfTknRSplit     = 0x00000100,   // Split current token when encountered // Will become part of a next token, not the current one (Not same as tfTknTerm?)
+  tfTknLSplit     = 0x00000200,   // Split current token when encountered // Will become part of the current token
+  tfRawString     = 0x00000400,   // A string with no escape processing
+  tfEscString     = 0x00000800,   // An escaped string
+  tfComment       = 0x00001000,   // <<<TODO: Remove to type flags (Looks like no special processing is required)
+  tfLSplitOnSDZ   = 0x00002000,   // Split if scope depth of GroupID becomes zero after tfScopeCse (Does tfTknLSplit)
+  tfBRstIfSplit   = 0x00004000,   // Reset current state to base if split
+  fScpTknMirror   = 0x00008000,   // This token is a mirrored when used as a scope marker (Store the token to compare on closing the scope)  // Format: [Prefix]anything[Postfix] Prefix/Postfix is controlled by ranges and 'anything' is stored on scope stack to compare on close   // C++: R "delimiter( raw_characters )delimiter"     // Delimiter is optional and it can be a character except () / or whitespaces
+  tfTknMemStore   = 0x00010000,   // Remember token accumulated before the current char (type flags accumulation will continue)
+  tfTknMemSplit   = 0x00020000,   // Split at a remembered token
+  tfScpMrkBegin   = 0x00040000,   // Next char will start a scope marker
+  tfScpMrkEnd     = 0x00080000,   // This char ends a scope marker(Not becoming a part of it if not marked with tfScpMrkBegin too)
+  tfMemSplitOnSDZ = 0x00100000,   // Split a remembered token if scope depth of GroupID becomes zero after tfScopeCse
+  tfOChStateOnSDZ = 0x00200000,   // Only change state if scope depth of GroupID becomes zero after tfScopeCse
+  tfAddTkTypeLeft = 0x00400000,   // Add current char`s type flags to a previous token if splitting (Useful to skip expression separators like ';' and avoid wasting memory for them)
+  tfParseEscape   = 0x00800000,   // Parse some predefined escape sequences starting from a next char
+  tfCharReplace   = 0x01000000,   // Replace the current char
 };
 
-
+// NOTE: For interpreting/code generation it is better to rearrange some expressions. To avoid memory moving just store with each token index of a next token, relative to current one.
+//      And beginning of expression will have index of first token in the expression
 struct STkn      // There will be great amount of this records, preferable in a contiguous memory for CPU cache sake
 {
  uint16 StrIdx;  // Index of the token SStr in CStrIn
@@ -64,27 +58,39 @@ struct STkn      // There will be great amount of this records, preferable in a 
  uint8  Flags;   // ??? (i.e. to disable the token)  //ScopeFirst, ScopeLast    // Created automatically from ETokenFlags
 };
 
-struct SPos      // Optional. Associated with stream of STkn, must have same indexes  // Indeed, part of 'struct-of-arrays' concept but only because it may be optional and useful only for error reporting or an IDE  // Text related info for error reporting  (Move to optional array?)   // Moved out of STkn to make it more compack in cache (altough having some cache misses when writing but that happens only once)
+struct SPos      // Indeed, part of 'struct-of-arrays' concept but only because it may be optional and useful only for error reporting or an IDE  // Text related info for error reporting  (Move to optional array?)   // Moved out of STkn to make it more compack in cache (altough having some cache misses when writing but that happens only once)
 {
-#ifdef _DEBUG
  uint32 Offset;  // Useful for debugging       // Ignore in release - takes too much memory
-#endif
+ uint32 Pos;     // Position on the line       
  uint16 Line;    // Line of a source file      // One token stream per file
- uint16 Pos;     // Position on the line       // NOTE: Limited to 64K text size if everything is in one line  // https://stackoverflow.com/questions/36668466/bitfields-and-alignment
+ uint16 Size;    // Size of the token
 
-_finline SPos(void){this->Set(0, 0, 0);}
+_finline SPos(void){this->Set(0, 0, 0, 0);}
 _finline SPos(const SPos* Pos){this->Set(Pos);}
-_finline SPos(uint Line, uint Pos, uint Offs){this->Set(Line, Pos, Offs);}
+_finline SPos(uint Line, uint Pos, uint Offs, uint Len){this->Set(Line, Pos, Offs, Len);}
 
 void _finline Set(const SPos* Pos){*this = *Pos;}
-void _finline Set(uint line, uint pos, uint offs)
+void _finline Set(uint line, uint pos, uint offs, uint len)
 {
- this->Line   = (decltype(this->Line))line;
+ this->Offset = (decltype(this->Offset))offs;       // Let the C++ typesystem hack itself      // Since when implicit casting to smaller types became an error?
  this->Pos    = (decltype(this->Pos))pos;
-#ifdef _DEBUG
- this->Offset = (decltype(this->Offset))offs;
-#endif
+ this->Line   = (decltype(this->Line))line;
+ this->Size   = (decltype(this->Pos))len;
 }
+};
+
+struct STknInf
+{
+ SPos   Pos;
+ uint32 Type;  // Accumulated, Srt/Clr controlled
+ uint32 Group; // Last one will be used
+ uint32 Flags; // Last one will be used
+};
+
+struct SScpMrk
+{
+ uint32 Offs;
+ sint32 Size;
 };
 
 /*
@@ -150,6 +156,7 @@ enum ETLErrors     // And warnings: tlw*
  tleWrongScpClse,     // Closing a scope that was not opened at this depth level   // Wrong brace type
  tleUnclosedScpAtEOF, // There are some unclosed scopes at EOF
  tleChrCantBeLast,    // The char is forbidden to be last in the token
+ tleScpMrkMismatch,   // Scope marker mismatch
 };
 
 struct SErrCtx
@@ -200,8 +207,9 @@ struct SRange
 {
  uint8  First;    
  uint8  Last;
- uint8  State;      // Max 256 states, 64K memory(Allocated by 4K)
- uint8  Group;      // Useful for Scopes (Max 256 scope types)
+ uint8  Repl;       // Replace with this value if required
+ uint8  State;      // Max 256 states(Max uint8 value 00-FF), 64K memory(Allocated by 4K)
+ uint32 Group;      // Useful for Scopes (Max 256 scope types)   // Actual group value is uint8, higher bytes are arbitrary
  uint32 Flags;      // ETokenFlags  //By default all unassigned char ranges cause fallback to state 0. Invalid char ranges must be defined to break parsing if necessary 
  uint32 TypeSet;    // Set accumumulated token flags for the Lexer (Low part)
  uint32 TypeClr;    // Clear accumumulated token flags for the Lexer (Low part)
@@ -269,14 +277,13 @@ struct SScopeLst
 
 struct SScope
 {
-// uint32 TknIndex;  // Index of the Scope opening token
- SPos   Pos;       // 4/8 bytes
- uint16 Unused;
- uint8  GroupId;
- uint8  Flags;     // From ETokenFlags
+ SPos    Pos;       // 4/8 bytes
+ SScpMrk Mrk;
+ uint8   GroupId;
+ uint8   Flags;     // From ETokenFlags
 };
 
- uint NextPosInFIFO;
+ uint NextPosInFIFO;            // If ScopeArr could be an undeallocating allocator this would be unnecessary
  CArr<SScope> ScopeArr;         // Used as stack for nestable scopes
  uint8 DepthState[MaxGroups];   // Max depth is 256 for each scope type  // States of a flat scope markers (Like ' or ")  // TODO: Use bits to merk the states (Will take 32 bytes instead of 256)    // 1-Opened scope, 0-Closed scope // Transitions: 0->1, 1->0;  1->1 or 0->0 is an error
 //------------------------------------------------------
@@ -286,7 +293,7 @@ SScopeLst(void)
  memset(&DepthState,0,sizeof(DepthState));
 }
 //------------------------------------------------------
-sint Upd(uint8 GroupId, uint8 Flags, uint Line, uint Pos, uint Offs, SPos* ScOpnPos=nullptr)
+sint Upd(const achar* TxtPtr, uint8 GroupId, uint8 Flags, const SScpMrk& ScpMrk, SPos&& TknPos, SPos* ScOpnPos=nullptr)
 {
  uint8* DepthPtr = &this->DepthState[GroupId];
  if((Flags & (tfScopeOpn|tfScopeCse)) == (tfScopeOpn|tfScopeCse))   // Flat scope Open or Close
@@ -300,7 +307,8 @@ sint Upd(uint8 GroupId, uint8 Flags, uint Line, uint Pos, uint Offs, SPos* ScOpn
    (*DepthPtr)++;
    if(this->NextPosInFIFO > this->ScopeArr.Count())this->ScopeArr.Append(nullptr);  // Allocate an additional FIFO entry 
    SScope* Last  = this->ScopeArr.Get(this->NextPosInFIFO-1);
-   Last->Pos.Set(Line, Pos, Offs);
+   Last->Pos.Set(&TknPos);
+   Last->Mrk     = ScpMrk;      // May be incorrect, checked on tfScopeCse (Markers must match if one of them is valid)
    Last->GroupId = GroupId;
    Last->Flags   = Flags;
    return *DepthPtr;
@@ -313,6 +321,15 @@ sint Upd(uint8 GroupId, uint8 Flags, uint Line, uint Pos, uint Offs, SPos* ScOpn
     {
      if(ScOpnPos)ScOpnPos->Set(&Last->Pos); // Useful for the error context 
      return -tleWrongScpClse;
+    }
+   if(ScpMrk.Size != Last->Mrk.Size)return -tleScpMrkMismatch;   // Marker mismatch error
+   if(ScpMrk.Size)   // Have some marker
+    {
+     const achar* MrkA = &TxtPtr[ScpMrk.Offs];
+     const achar* MrkB = &TxtPtr[Last->Mrk.Offs];
+     const achar* EndA = &MrkA[ScpMrk.Size];
+     for(;MrkA < EndA;MrkA++,MrkB++)
+        if(*MrkA != *MrkB)return -tleScpMrkMismatch;   // Should be able to continue a raw string if this encountered
     }
    this->NextPosInFIFO--;
    if(!*DepthPtr)return -tleUnexpScpClse;   // The depth counter is 0!
@@ -335,7 +352,7 @@ struct STokenLst           // Parsed from a file
 //------------------------------------------------------
 // Need NoLex flag?
 //
-sint Add(uint8 CurState, uint8 Group, uint32 Type, uint32 Flags, uint TknLen, const achar* TknVal, SPos&& TknPos, SPos& PrvPos) //     uint16 StrIdx, sint LexIdx, sint ExtIdx, uint8 slflg, uint32 AbsPos, uint16 SrcLin, uint16 SrcPos)
+sint Add(uint8 CurState, uint32 Group, uint32 Type, uint32 Flags, uint TknLen, const achar* TknVal, SPos&& TknPos, SPos& PrvPos) //     uint16 StrIdx, sint LexIdx, sint ExtIdx, uint8 slflg, uint32 AbsPos, uint16 SrcLin, uint16 SrcPos)
 {
 /* STkn tkn;
  if(slflg & tfScopeBeg)this->LastScope++;
@@ -364,7 +381,10 @@ sint Add(uint8 CurState, uint8 Group, uint32 Type, uint32 Flags, uint TknLen, co
 //============================================================================================================
 SRangeLst Ranges;    
 SScopeLst Scopes; 
-STokenLst Tokens;
+STokenLst Tokens; 
+
+STknInf   CurTkn;
+STknInf   MemTkn;
 
 // Parsing context
 uint8  ChrLen;  // Size of current UTF-8 char
@@ -372,13 +392,7 @@ uint32 LineNum;  // Line number
 uint32 LineNxt;  // Next position on the line
 uint32 LinePos;  // Position on the line
 // Reset on each call to 'Parse'?
-uint   TknLine;  //= LineNum;  // Line on which the current token is
-uint   TknLPos;  //= LinePos;  // Position of current token on the line
-uint   TknSize;  //= 0;
-uint   TknOffs;  //= uint(CurPtr-BegPtr);  // Absolute offset in Data
-uint   TknType;  //= 0;  // Bit mask
-uint8  TknGroup; //= 0;  // Last one will be used
-uint8  TknFlags; //= 0;  // Last one will be used
+
 
 uint32 ParseFlg;      // TODO: Optionally split on change state to base (R or L ?)     // And split to group change to < or > or both
 const achar* BegPtr;
@@ -386,39 +400,41 @@ const achar* EndPtr;
 const achar* CurPtr;
 
 // TODO: Remember last up to 256(?) states for error reporting (With position of state changes) as a circular buffer and a pointer in it
-achar TokenBuf[MaxTokenLen];        // Allocate?  // One page?
+achar TokenBuf[MaxTokenLen];        // Allocate?  // One page?   // Useful only to store tokens without skipped chars?   or with replaced chars
 //------------------------------------------------------------------------------------------------------------
-void ResetToken(void)
+void ResetCurrToken(void)
 {
- TknSize = TknType = TknGroup = TknFlags = 0;         // Reset the token
- TknLine = LineNum;
- TknLPos = LinePos;
- TknOffs = uint(CurPtr-BegPtr);
+ this->CurTkn.Type = this->CurTkn.Group = this->CurTkn.Flags = 0;       // Reset the token
+ this->CurTkn.Pos.Set(LineNum,LinePos,uint(CurPtr-BegPtr),0);
+ memset(&this->MemTkn,0,sizeof(STknInf));     // Not related now
 }
 //------------------------------------------------------------------------------------------------------------
-void UpdateToken(uint8 Chr, SRangeLst::SRange* Rng)
+void UpdateCurrToken(uint8 Chr, SRangeLst::SRange* Rng)
 {
- TknGroup = Rng->Group;
- TknFlags = Rng->Flags;
- TknType &= ~Rng->TypeClr;  // First clear the flags
- TknType |= Rng->TypeSet;   // then set them
- if(!(Rng->Flags & tfIgnore))TokenBuf[TknSize++] = Chr;   // Accumulate a token 
+ this->CurTkn.Group = Rng->Group;
+ this->CurTkn.Flags = Rng->Flags;
+ this->CurTkn.Type &= ~Rng->TypeClr;  // First clear the flags
+ this->CurTkn.Type |= Rng->TypeSet;   // then set them
+ if(!(Rng->Flags & tfIgnore))TokenBuf[this->CurTkn.Pos.Size++] = (Rng->Flags & tfCharReplace)?(Rng->Repl):(Chr);   // Accumulate a token       // Is the 'replace' feature just useless slowdown?     // TODO: Grow the TokenBuf if necessary! (Strings and comments may overflow it)
 }
 //------------------------------------------------------------------------------------------------------------
-sint ProcessToken(uint8 CurState, SPos& PrvPos)
+sint ProcessToken(uint8 CurState, STknInf& Token, SPos& PrvPos)
 {
 // DBGMSG("Token: '%.*s'",TknLen, TknVal);
- if(!TknSize){this->ResetToken(); return 0;}
+ if(!Token.Pos.Size)return 0;
 
- PrvPos.Set(TknLine,TknLPos,TknOffs);
- if(TknFlags & tfNoTerm)
-  return -tleChrCantBeLast;         // A last char brought this flag and it is not allowed to be last
+ PrvPos.Set(&Token.Pos);
+ if(Token.Flags & tfNoTerm)return -tleChrCantBeLast;         // A last char brought this flag and it is not allowed to be last
 
- if((TknFlags & tfWhtspc) && !(this->ParseFlg & pfKeepWhtspc)){this->ResetToken(); return 0;}  // Ignore whitespaces
- DBGMSG("Token %u: '%.*s'",CurState, TknSize, &TokenBuf);
+ if((Token.Flags & tfWhtspc) && !(this->ParseFlg & pfKeepWhtspc))return 0;  // Ignore whitespaces
+ DBGMSG("Token %2u: '%.*s'",CurState, Token.Pos.Size, &TokenBuf);
  //if(Flags & (tfScopeOpn|tfScopeCse))
-
- this->ResetToken(); 
+ // TODO: Store the to!!!!!!!!!!!!!
+ return 0;
+}
+//------------------------------------------------------------------------------------------------------------
+sint ProcessEscapeSeq(void)  // TODO: !!!!!
+{
  return 0;
 }
 
@@ -433,19 +449,12 @@ sint Init(const achar* Data, uint Size, uint Flags=0)
  this->LineNum  = 0;  // Line number
  this->LineNxt  = 0;  // Next position on the line
  this->LinePos  = 0;  // Position on the line
-
- this->TknLine  = 0;
- this->TknLPos  = 0;
- this->TknSize  = 0;
- this->TknOffs  = 0;
- this->TknType  = 0;
- this->TknGroup = 0;
- this->TknFlags = 0;
-
  this->ParseFlg = Flags;
+
  // TODO: Clear some lists
  if(((this->EndPtr - this->BegPtr) >= 3) && (this->BegPtr[0] == 0xEF) && (this->BegPtr[1] == 0xBB) && (this->BegPtr[2] == 0xBF))this->BegPtr += 3;   // Skip UTF-8 BOM
  if(this->EndPtr <= this->BegPtr)return -1;
+ this->ResetCurrToken();
  return 0;
 }
 //------------------------------------------------------------------------------------------------------------
@@ -454,9 +463,9 @@ sint Init(const achar* Data, uint Size, uint Flags=0)
 // Can add additionally 3 nonbase target states
 // Check return value explicitly as -1 in case of an error if using multiple target states
 //
-sint AddRange(uint32 TgtState, uint8 First, uint8 Last, uint8 NextState, uint8 Group=0, uint32 TypeSet=0, uint32 TypeClr=0, uint32 Flags=0)
+sint AddRange(uint64 TgtState, uint16 First, uint8 Last, uint8 NextState, uint32 Group=0, uint32 TypeSet=0, uint32 TypeClr=0, uint32 Flags=0)    // NOTE: Replacement char is shifted <<8 in First
 {
- SRangeLst::SRange rng{.First=First, .Last=Last, .State=NextState, .Group=Group, .Flags=Flags, .TypeSet=TypeSet, .TypeClr=TypeClr};
+ SRangeLst::SRange rng{.First=(uint8)First, .Last=Last, .Repl=uint8(First>>8), .State=NextState, .Group=Group, .Flags=Flags, .TypeSet=TypeSet, .TypeClr=TypeClr};
  uint32 status = 0;
  do
   {
@@ -474,18 +483,19 @@ sint AddRange(uint32 TgtState, uint8 First, uint8 Last, uint8 NextState, uint8 G
 //------------------------------------------------------------------------------------------------------------
 // NOTE: ErrPos and ErrLine are counted from 0
 //  Can continue to parse a next token(An error may break in a middle of current token, a warning will not)
-// NOTE: In case of an error it is possible to extract expected char ranges from current state
+// NOTE: In case of an error it is possible to extract expected char ranges from the current state
+// NOTE: An error position reporting may be slightly broken
 //
 sint Parse(SErrCtx* ErrCtx=nullptr)  // TODO: Continuable  // TODO: Break on warnings too
 {
- SPos   PrvPos;     // For error reporting
- uint8  State = 0;  // Initial state is always 0  // Must reset on each call to 'Parse' ?
+ SPos    MemPos;   
+ SPos    PrvPos;       // For error reporting
+ SScpMrk smrk = {};    // For an associated scope marker 
+ uint8   State = 0;    // Initial state is always 0  // Must reset on each call to 'Parse' ?
  uint PrvSplitFlg = 0;
- for(;CurPtr < EndPtr;)        // Skip BOM if any?
+ for(;CurPtr < EndPtr;)       
   {
    uint8 Val = *CurPtr;   // Have to decode UTF-8 to know exact token position on a line if there are some UTF-8 chars on it     // TODO: No need to check for NULL char?
-//    if(Val == '/')
-//      Val = Val;
    if(Val == '\n')        // '\r' does not matter
     {
      LineNum++;
@@ -494,7 +504,7 @@ sint Parse(SErrCtx* ErrCtx=nullptr)  // TODO: Continuable  // TODO: Break on war
     }
    else if(!ChrLen)
     {
-     ChrLen = NUTF::GetCharSize(Val);
+     ChrLen = NUTF::GetCharSize(Val);    // High bits of a first determine size of UTF-8 char in bytes? ??? Check to replace table access with shift
      LineNxt++;   // Next position on the line
     }  
 
@@ -504,7 +514,7 @@ sint Parse(SErrCtx* ErrCtx=nullptr)  // TODO: Continuable  // TODO: Break on war
     {
      if(!State)   // Nowhere to fallback, already in state 0 (All usable ASCII ranges must be defined in state 0)
       {
-       if(ErrCtx)ErrCtx->Set(tleUnexpChar, State, 1, (TokenBuf[TknSize] = Val, &TokenBuf[TknSize]), SPos{LineNum,LinePos,uint(CurPtr-BegPtr)}, SPos{TknLine,TknLPos,TknOffs});  
+       if(ErrCtx)ErrCtx->Set(tleUnexpChar, State, 1, (TokenBuf[this->CurTkn.Pos.Size] = Val, &TokenBuf[this->CurTkn.Pos.Size]), SPos{LineNum,LinePos,uint(CurPtr-BegPtr),1}, SPos{&this->CurTkn.Pos});  
        return -tleUnexpChar;
       } 
      State     = 0;              // Rng->State (An invalid rec is empty and its state is 0 too)
@@ -514,67 +524,106 @@ sint Parse(SErrCtx* ErrCtx=nullptr)  // TODO: Continuable  // TODO: Break on war
 // We have some valid range in Rng now         // !!! Need support for single chars splitted
    if(Rng->Flags & tfBadToken)    // This range in this state is marked as inappropriate at this point (Saves the Lexer from processing some bad number pieces like '0b1010120101;' which would be just split as '0b10101','20101;' otherwise - just add range 2-9 as bad for binary numbers, and 'a-z' too, probably)
     {
-     if(ErrCtx)ErrCtx->Set(tleBadChar, State, 1, (TokenBuf[TknSize] = Val, &TokenBuf[TknSize]), SPos{LineNum,LinePos,uint(CurPtr-BegPtr)}, SPos{TknLine,TknLPos,TknOffs});  
+     if(ErrCtx)ErrCtx->Set(tleBadChar, State, 1, (TokenBuf[this->CurTkn.Pos.Size] = Val, &TokenBuf[this->CurTkn.Pos.Size]), SPos{LineNum,LinePos,uint(CurPtr-BegPtr),1}, SPos{&this->CurTkn.Pos});  
      return -tleBadChar;
     }
 
-   if(Rng->Flags & (tfScopeOpn|tfScopeCse))   // Can do scoping even in the middle of a token
+   if(Rng->Flags & tfParseEscape)this->ProcessEscapeSeq();  // TODO: What the args should be?
+
+   SplitFlg |= Rng->Flags;          // RSplit first stores current token then inits a new one; LSplit stores adds the char, stores the token and then inits a new token  // LSplit is for scopes and usually set manually so should have higher priority
+   uint8 NxtState = Rng->State;
+   if(SplitFlg & tfScpMrkBegin)smrk.Offs = uint32(CurPtr-BegPtr) + 1;     // Starting from a next char      // Begin a marker, like R"marker(test)marker" 
+   if(SplitFlg & tfScpMrkEnd)smrk.Size = uint32(CurPtr-BegPtr) - smrk.Offs;     // it is incorrect to set tfScpMrkEnd and tfScpMrkBegin on a same char    // Usually raw strings will be used without markers, like R"(test)"
+
+   if(SplitFlg & (tfScopeOpn|tfScopeCse))   // Can do scoping even in the middle of a token (Scope closing does not imply splitting)    // TODO: Apply only to an fully accumulated token  // How? We need splitting to be done for that
     {
-     if(sint res=this->Scopes.Upd(Rng->Group, Rng->Flags, LineNum, LinePos, uint(CurPtr-BegPtr), &PrvPos);res < 0)
+     sint res = this->Scopes.Upd(this->BegPtr, Rng->Group, Rng->Flags, smrk, SPos{LineNum, LinePos, uint(CurPtr-BegPtr), this->CurTkn.Pos.Size}, &PrvPos);
+     if((res < 0) && !(res == -tleScpMrkMismatch))  //  !((res == -tleScpMrkMismatch)&&(SplitFlg & tfRawString)))    // At this point a last token char is not yet appended and even CurTkn may be a last token  // Mismatched raw string close marker, should continue 
       {
-       if(ErrCtx)
+       if(ErrCtx)       // NOTE: only scope closing may return an error    
         {
-         if(Rng->Flags & tfTknRSplit){this->ProcessToken(State, PrvPos); this->UpdateToken(Val, Rng);}   // Store last token to update the error position
-         ErrCtx->Set(res, State, TknSize, TokenBuf, SPos{LineNum,LinePos,uint(CurPtr-BegPtr)}, SPos{PrvPos});
+         if(SplitFlg & tfTknRSplit){this->ProcessToken(State, this->CurTkn, PrvPos); this->UpdateCurrToken(Val, Rng);}   // Store last token to update the error position
+         ErrCtx->Set(res, State, this->CurTkn.Pos.Size, TokenBuf, SPos{LineNum,LinePos,uint(CurPtr-BegPtr),this->CurTkn.Pos.Size}, SPos{PrvPos});
         }
        return res;    // Scoping error
       }
-       else if(!res && (Rng->Flags & (tfScopeCse|tfLSplitOnSDZ)) == (tfScopeCse|tfLSplitOnSDZ))
-       SplitFlg |= tfTknLSplit;    // LSplit
+       else if(SplitFlg & tfScopeCse)  //if(!res && (SplitFlg & (tfScopeCse|tfLSplitOnSDZ)) == (tfScopeCse|tfLSplitOnSDZ))SplitFlg |= tfTknLSplit;     // LSplit
+        {
+         if(!res)
+          {
+           if(SplitFlg & tfLSplitOnSDZ)SplitFlg |= tfTknLSplit;     // LSplit
+           if(SplitFlg & tfMemSplitOnSDZ)SplitFlg |= tfTknMemSplit;  
+          }
+           else if(SplitFlg & tfOChStateOnSDZ)NxtState = State;   // Keep the current state
+        }
+//     if(smrk.Size && (SplitFlg & tfScopeCse))smrk.Offs = smrk.Size = 0;   // Reset scope marker ?      // @@@@@@@@@@@ TODO: Flag to merge current token`s state with an accumutated token (Use add termination flags to it instead of storing ';')
     }
 
-   SplitFlg |= Rng->Flags;          // RSplit first stores current token then inits a new one; LSplit stores adds the char, stores the token and then inits a new token  // LSplit is for scopes and usually set manually so should have higher priority
-   if((SplitFlg & (tfTknLSplit|tfTknRSplit)) == (tfTknLSplit|tfTknRSplit))  // Magic combination to force next char to start a new token
+   if((SplitFlg & tfTknMemSplit) && this->MemTkn.Pos.Size)     // Split a remembered token   // NOTE: Must be done before any other 'ProcessToken'  // And after scope processing (Because it may remove tfTknMemSplit as a hack)
     {
-     PrvSplitFlg = tfTknRSplit;     // Split at next char
-     SplitFlg  &= ~tfTknLSplit;
-    }
-     else PrvSplitFlg = 0;
-   bool LSplit = SplitFlg & tfTknLSplit;
-   if(LSplit)       // The current char will be last char of current token
-    {
-     this->UpdateToken(Val, Rng);
-     if(sint res=this->ProcessToken(State, PrvPos);res < 0)     // Check size before the call?
+     if(sint res=this->ProcessToken(State, this->MemTkn, PrvPos);res < 0)     // Check size before the call?
       {
-       if(ErrCtx)ErrCtx->Set(-res, State, TknSize, TokenBuf, SPos{LineNum,LinePos,uint(CurPtr-BegPtr)}, SPos{PrvPos});
+       if(ErrCtx)ErrCtx->Set(-res, State, this->MemTkn.Pos.Size, TokenBuf, SPos{this->MemTkn.Pos}, SPos{this->CurTkn.Pos});   // Is this correct pos?
        return res;
       }
+     MemPos.Size = this->CurTkn.Pos.Size - this->MemTkn.Pos.Size;
+     this->CurTkn.Pos.Set(&MemPos);
+     memmove(&TokenBuf, &TokenBuf[this->MemTkn.Pos.Size], MemPos.Size);    // Move rest of the token to match with CurTkn
+     memset(&this->MemTkn,0,sizeof(this->MemTkn));
+     memset(&MemPos,0,sizeof(MemPos));  // Required?
+    }
+
+   if((SplitFlg & (tfTknLSplit|tfTknRSplit)) == (tfTknLSplit|tfTknRSplit))  // Magic combination to force a next char to start a new token
+    {
+     PrvSplitFlg =  tfTknRSplit;    // Split at next char
+     SplitFlg   &= ~tfTknLSplit;
+    }
+     else PrvSplitFlg = 0;
+
+   bool LSplit = SplitFlg & tfTknLSplit;
+   if(LSplit)       // The current char will be last char of the current token
+    {
+     this->UpdateCurrToken(Val, Rng);
+     if(sint res=this->ProcessToken(State, this->CurTkn, PrvPos);res < 0)     // Check size before the call?
+      {
+       if(ErrCtx)ErrCtx->Set(-res, State, this->CurTkn.Pos.Size, TokenBuf, SPos{LineNum,LinePos,uint(CurPtr-BegPtr),this->CurTkn.Pos.Size}, SPos{PrvPos});
+       return res;
+      }
+       else this->ResetCurrToken();
     }
    else if(SplitFlg & tfTknRSplit)       // Store the accumulated token  // The current char will start a new token
     {
-     if(sint res=this->ProcessToken(State, PrvPos);res < 0)     // Check size before the call?
+     if(SplitFlg & tfAddTkTypeLeft)      // Append type flags of current char(which will start a new token) to a previous token before processing it   // TODO: Test it
       {
-       if(ErrCtx)ErrCtx->Set(-res, State, TknSize, TokenBuf, SPos{LineNum,LinePos,uint(CurPtr-BegPtr)}, SPos{PrvPos});
+       this->CurTkn.Type &= ~Rng->TypeClr;  // First clear the flags
+       this->CurTkn.Type |= Rng->TypeSet;   // then set them
+      }
+     if(sint res=this->ProcessToken(State, this->CurTkn, PrvPos);res < 0)     // Check size before the call?
+      {
+       if(ErrCtx)ErrCtx->Set(-res, State, this->CurTkn.Pos.Size, TokenBuf, SPos{LineNum,LinePos,uint(CurPtr-BegPtr),this->CurTkn.Pos.Size}, SPos{PrvPos});
        return res;
       }
+       else this->ResetCurrToken();
     }
    if(!LSplit)  // Just update the current token
     {
-     this->UpdateToken(Val, Rng);
+     if(SplitFlg & tfTknMemStore){this->MemTkn = this->CurTkn; MemPos.Set(LineNum,LinePos,uint(CurPtr-BegPtr),0);}   // The current char will not be a part of the remembered token   // Is here the best place for this?
+     this->UpdateCurrToken(Val, Rng);
     }
-   if((SplitFlg & tfBRstIfSplit) && (SplitFlg & (tfTknLSplit|tfTknRSplit)))State = 0;
-     else State = Rng->State; 
+   if((SplitFlg & tfBRstIfSplit) && (SplitFlg & (tfTknLSplit|tfTknRSplit)))State = 0;   // Reset to base state
+     else State = NxtState; 
 
    LinePos = LineNxt;
    CurPtr++;
    ChrLen--;
   }
 
- if(sint res=this->ProcessToken(State, PrvPos);res < 0)
+ if(sint res=this->ProcessToken(State, this->CurTkn, PrvPos);res < 0)  // Process a last token
   {
-   if(ErrCtx)ErrCtx->Set(-res, State, TknSize, TokenBuf, SPos{LineNum,LinePos,uint(CurPtr-BegPtr)}, SPos{PrvPos});
+   if(ErrCtx)ErrCtx->Set(-res, State, this->CurTkn.Pos.Size, TokenBuf, SPos{LineNum,LinePos,uint(CurPtr-BegPtr),this->CurTkn.Pos.Size}, SPos{PrvPos});
    return res;
   }
+   else this->ResetCurrToken();
 
  if(this->Scopes.NextPosInFIFO)    // Check any unclosed scopes
   {
@@ -591,39 +640,4 @@ sint Parse(SErrCtx* ErrCtx=nullptr)  // TODO: Continuable  // TODO: Break on war
 }
 //------------------------------------------------------------------------------------------------------------
 
-};    // TODO: arbitrary reverse token brace: A sequense opens a scope and same sequence in reverse must close it (Useful for raw strings)
-
-/*
-  0  NUL (null)                      32  SPACE     64  @         96  `
-  1  SOH (start of heading)          33  !         65  A         97  a
-  2  STX (start of text)             34  "         66  B         98  b
-  3  ETX (end of text)               35  #         67  C         99  c
-  4  EOT (end of transmission)       36  $         68  D        100  d
-  5  ENQ (enquiry)                   37  %         69  E        101  e
-  6  ACK (acknowledge)               38  &         70  F        102  f
-  7  BEL (bell)                      39  '         71  G        103  g
-  8  BS  (backspace)                 40  (         72  H        104  h
-  9  TAB (horizontal tab)            41  )         73  I        105  i
- 10  LF  (NL line feed, new line)    42  *         74  J        106  j
- 11  VT  (vertical tab)              43  +         75  K        107  k
- 12  FF  (NP form feed, new page)    44  ,         76  L        108  l
- 13  CR  (carriage return)           45  -         77  M        109  m
- 14  SO  (shift out)                 46  .         78  N        110  n
- 15  SI  (shift in)                  47  /         79  O        111  o
- 16  DLE (data link escape)          48  0         80  P        112  p
- 17  DC1 (device control 1)          49  1         81  Q        113  q
- 18  DC2 (device control 2)          50  2         82  R        114  r
- 19  DC3 (device control 3)          51  3         83  S        115  s
- 20  DC4 (device control 4)          52  4         84  T        116  t
- 21  NAK (negative acknowledge)      53  5         85  U        117  u
- 22  SYN (synchronous idle)          54  6         86  V        118  v
- 23  ETB (end of trans. block)       55  7         87  W        119  w
- 24  CAN (cancel)                    56  8         88  X        120  x
- 25  EM  (end of medium)             57  9         89  Y        121  y
- 26  SUB (substitute)                58  :         90  Z        122  z
- 27  ESC (escape)                    59  ;         91  [        123  {
- 28  FS  (file separator)            60  <         92  \        124  |
- 29  GS  (group separator)           61  =         93  ]        125  }
- 30  RS  (record separator)          62  >         94  ^        126  ~
- 31  US  (unit separator)            63  ?         95  _        127  DEL
- */
+};   

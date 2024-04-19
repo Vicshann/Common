@@ -412,7 +412,10 @@ bool SameAt(UINT pos, const char* str, UINT len=0)    // Slow comparision(not a 
  UINT idx = 0;
  if(len > (this->Length() + pos))return false;   // The String does not fit!
  //  LPSTR From = (LPSTR)&this->Data[pos];     // For testing only!
- for(UINT end=this->Length();pos < end;pos++,idx++){if(this->Data[pos] != str[idx])return !(str[idx]);}  // (str[idx] == Zero) means a Full Match
+ for(UINT end=this->Length();pos < end;pos++,idx++){
+   if(this->Data[pos] != str[idx])return !(str[idx]);
+	 else if(!str[idx])return true;
+   }  // (str[idx] == Zero) means a Full Match	 
  return !(str[idx]);  // If Zero, then Full Match
 }
 //----------------------
@@ -425,7 +428,10 @@ int Pos(const char* str, int from=0, UINT len=0, int Maxoffs=0)
    if((from >= (int)this->Length())||(len > this->Length()))return -1;   // Out of the string   // Incorrect with Maxoffs
    for(int idx=from;idx >= Maxoffs;idx--){if(this->SameAt(idx,str,len))return idx;}  
   }
-   else for(int end=Maxoffs?Maxoffs:this->Length(),idx=from;(idx+(int)len) <= end;idx++){if(this->SameAt(idx,str,len))return idx;}
+   else for(int end=Maxoffs?Maxoffs:this->Length(),idx=from;(idx+(int)len) <= end;idx++)
+   {
+    if(this->SameAt(idx,str,len))return idx;
+   }
  return -1;
 }
 //---------------------

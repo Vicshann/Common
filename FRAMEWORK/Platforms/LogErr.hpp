@@ -224,9 +224,10 @@ _ninline static sint _fcall LogProc(const achar* Message, void** ArgList, uint32
     }
 
  if((LogMode & lmProc) && Ctx->pCallback)Ctx->pCallback(MPtr, MSize, LogFlag|LogMode|LogLvl, Ctx);    // pLogProc(MPtr, MSize, LogLvl);
-/* if(LogMode & lmFile)
+ if(LogMode & lmFile)    // TODO: Scatter write   // TODO: Log update flag
   {
-   if(!hLogFile)  // NOTE: Without FILE_APPEND_DATA offsets must be specified to NtWriteFile
+   NPTM::NAPI::write(Ctx->FileHandle, MPtr, MSize);   
+  /* if(!hLogFile)  // NOTE: Without FILE_APPEND_DATA offsets must be specified to NtWriteFile
     {          // (LogMode & lmFileUpd)?FILE_APPEND_DATA:FILE_WRITE_DATA       //           //  LogMode |= lmFileUpd;
      Status = NCMN::NNTDLL::FileCreateSync(LogFilePath, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ|FILE_SHARE_WRITE, (LogMode & lmFileUpd)?FILE_OPEN_IF:FILE_OVERWRITE_IF, FILE_NON_DIRECTORY_FILE, &hLogFile);
     }
@@ -236,8 +237,8 @@ _ninline static sint _fcall LogProc(const achar* Message, void** ArgList, uint32
      LARGE_INTEGER offset = {};
      IO_STATUS_BLOCK iosb = {};
      Status = NtWriteFile(hLogFile, NULL, NULL, NULL, &iosb, MPtr, MSize, &offset, NULL);
-    }
-  }*/
+    } */
+  }
  if(LogMode & lmCons)
   {
    NPTM::NAPI::write(Ctx->ConsHandle, MPtr, MSize);

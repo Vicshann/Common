@@ -276,7 +276,7 @@ enum EPathType {ptUnknown=0,ptAbsolute=1,ptSysRootRel=2,ptCurrDirRel=3};
 
 template<typename T> static EPathType GetPathTypeNt(T Src)
 {
- if(Src[1] == ':')return ptAbsolute;   // 'C:\'
+ if((Src[0] == ':')||(Src[1] == ':'))return ptAbsolute;   // 'C:\'    // First ':' is a hack to open object symlinksdirectly
  if((Src[0] == '/') || (Src[0] == '\\'))return ptSysRootRel;  // \MyHomeFolder
  //if((Src[0] == '.') && ((Src[1] == '/') || (Src[1] == '\\')))return ptCurrDirRel;    // .\MyDrkDir
  return ptCurrDirRel;  //ptUnknown;
@@ -293,12 +293,14 @@ static _finline size_t CalcFilePathBufSize(const achar* Path, uint& plen, EPathT
  return (plen*4)+ExtraLen;
 }
 //------------------------------------------------------------------------------------
-static _finline void InitFileObjectAttributes(const achar* Path, uint plen, EPathType ptype, uint32 ObjAttributes, NT::UNICODE_STRING* buf_ustr, wchar* buf_path, NT::OBJECT_ATTRIBUTES* oattr, NT::HANDLE RootDir=0)
+// Volume symlinks are \GLOBAL??\C:      
+static void InitFileObjectAttributes(const achar* Path, uint plen, EPathType ptype, uint32 ObjAttributes, NT::UNICODE_STRING* buf_ustr, wchar* buf_path, NT::OBJECT_ATTRIBUTES* oattr, NT::HANDLE RootDir=0)
 {
  uint DstLen = NSTR::StrCopy(buf_path, L"\\GLOBAL??\\");     // Windows XP?
+ if(*Path == ':'){Path++;plen--;}     // To open symlink directly
  NT::UNICODE_STRING* CurrDir = &NT::NtCurrentTeb()->ProcessEnvironmentBlock->ProcessParameters->CurrentDirectory.DosPath;
- if(ptype == NTX::ptSysRootRel)DstLen += NSTR::StrCopy(&buf_path[DstLen], (wchar*)&fwsinf.SysDrive);
- else if(ptype == NTX::ptCurrDirRel)DstLen += NSTR::StrCopy(&buf_path[DstLen], (wchar*)CurrDir->Buffer);
+ if(ptype == NTX::ptSysRootRel)DstLen += NSTR::StrCopy(&buf_path[DstLen], (wchar*)&fwsinf.SysDrive);        // Add system drive path
+ else if(ptype == NTX::ptCurrDirRel)DstLen += NSTR::StrCopy(&buf_path[DstLen], (wchar*)CurrDir->Buffer);    // Add path to current directory
  DstLen += NUTF::Utf8To16(&buf_path[DstLen], Path, plen);
  buf_path[DstLen] = 0;
  DstLen  = NTX::NormalizePathNt(buf_path);
@@ -531,7 +533,7 @@ static NTSTATUS DoBeep(HANDLE hBeep, DWORD Freq, DWORD Duration)
  return NtDeviceIoControlFile(hBeep, 0, 0, 0, &iost, 0x00010000, &param, sizeof(param), 0, 0);
 } */
 //------------------------------------------------------------------------------------
-typedef void (_scall *PNT_THREAD_PROC)(PVOID Data, SIZE_T Size);   // Param may be on stack in x32 or not  // Exit with NtTerminateThread  // stdcall on X86-X32
+typedef void (_scall *PNT_THREAD_PROC)(vptr Data, size_t Size);   // Param may be on stack in x32 or not  // Exit with NtTerminateThread  // stdcall on X86-X32
 
 // http://rsdn.org/forum/winapi/164784.hot
 // CreateRemoteThread requires PROCESS_VM_WRITE but that is too much to ask for a stealth thread injection
@@ -731,40 +733,40 @@ static inline bool IsCurrentProcessThread(HANDLE hThread)
 //   EAX  RCX = ThreadProc
 //   EBX  RDX = ThreadParam
 // 
-static bool ChangeNewSuspThProcAddr(HANDLE hThread, PVOID NewThProc, PVOID* Param, bool Native=false)
+static bool ChangeNewSuspThProcAddr(NT::HANDLE hThread, NT::PVOID NewThProc, NT::PVOID* Param, bool Native=false)
 {
- CONTEXT ctx;
- ctx.ContextFlags = CONTEXT_INTEGER;   // CONTEXT_CONTROL - no check if IP is at RtlUserThreadStart
- if(Native)ctx.ContextFlags |= CONTEXT_CONTROL;
- if(NTSTATUS stat = NtGetContextThread(hThread, &ctx)){DBGMSG("Failed to get CONTEXT: %08X",stat); return false;}
-#ifdef _AMD64_ 
+ NT::CONTEXT ctx;
+ ctx.ContextFlags = NT::CONTEXT_INTEGER;   // CONTEXT_CONTROL - no check if IP is at RtlUserThreadStart
+ if(Native)ctx.ContextFlags |= NT::CONTEXT_CONTROL;
+// if(NT::NTSTATUS stat = NtGetContextThread(hThread, &ctx)){DBGMSG("Failed to get CONTEXT: %08X",stat); return false;}
+#ifdef ARCH_X64 
  if(NewThProc)
   {
-   if(Native)ctx.Rip = (DWORD64)NewThProc;
-     else ctx.Rcx = (DWORD64)NewThProc;
+   if(Native)ctx.Rip = (uint64)NewThProc;
+     else ctx.Rcx = (uint64)NewThProc;
   }
  if(Param)
   {
-   DWORD64 Prv;
-   if(Native){Prv = ctx.Rcx; ctx.Rcx = (DWORD64)*Param;}
-    else {Prv = ctx.Rdx; ctx.Rdx = (DWORD64)*Param;}  
-   *Param  = (PVOID)Prv;
+   uint64 Prv;
+   if(Native){Prv = ctx.Rcx; ctx.Rcx = (uint64)*Param;}
+    else {Prv = ctx.Rdx; ctx.Rdx = (uint64)*Param;}  
+   *Param  = (vptr)Prv;
   }
 #else
  if(NewThProc)
   {
-   if(Native)ctx.Eip = (DWORD)NewThProc;    // Doesn`t work for x32!!!!!!!!!!!!!!!!!!!
-     else ctx.Eax = (DWORD)NewThProc;
+   if(Native)ctx.Eip = (uint32)NewThProc;    // Doesn`t work for x32!!!!!!!!!!!!!!!!!!!
+     else ctx.Eax = (uint32)NewThProc;
   }
  if(Param)
   {
-   DWORD Prv;
-   if(Native){Prv = ctx.Ecx; ctx.Ecx = (DWORD)*Param;} 
-     else {Prv = ctx.Ebx; ctx.Ebx = (DWORD)*Param;}       
-   *Param  = (PVOID)Prv;
+   uint32 Prv;
+   if(Native){Prv = ctx.Ecx; ctx.Ecx = (uint32)*Param;} 
+     else {Prv = ctx.Ebx; ctx.Ebx = (uint32)*Param;}       
+   *Param  = (vptr)Prv;
   }
 #endif
- if(NTSTATUS stat = NtSetContextThread(hThread, &ctx)){DBGMSG("Failed to set CONTEXT: %08X",stat); return false;}
+// if(NT::NTSTATUS stat = NtSetContextThread(hThread, &ctx)){DBGMSG("Failed to set CONTEXT: %08X",stat); return false;}
  DBGMSG("NewThProc=%p, Param=%p", NewThProc,Param?*Param:0);
  return true;
 } 
@@ -1052,22 +1054,25 @@ static uint32 MemProtPXtoNT(uint32 prot)
    if(prot & PX::PROT_WRITE)
     {
      if(prot & PX::PROT_READ)PageProt |= NT::PAGE_EXECUTE_READWRITE;
-       else PageProt |= NT::PAGE_EXECUTE_WRITECOPY;
+       else PageProt |= NT::PAGE_EXECUTE_WRITECOPY;        // Windows Server 2003 and Windows XP:  This value is not supported.
     }
-   else if(prot & PX::PROT_READ)PageProt |= NT::PAGE_EXECUTE_READ;
-   else PageProt |= NT::PAGE_EXECUTE;
+   else 
+    {
+     if(prot & PX::PROT_READ)PageProt |= NT::PAGE_EXECUTE_READ;
+       else PageProt |= NT::PAGE_EXECUTE;
+    }
   }
  else   // Use ordinary R/W group of flags
   {
    if(prot & PX::PROT_WRITE)
     {
      if(prot & PX::PROT_READ)PageProt |= NT::PAGE_READWRITE;
-       else PageProt |= NT::PAGE_WRITECOPY;
+       else PageProt |= NT::PAGE_WRITECOPY;         
     }
    else
     {
      if(prot & PX::PROT_READ)PageProt |= NT::PAGE_READONLY;
-      else PageProt |= NT::PAGE_NOACCESS;
+       else PageProt |= NT::PAGE_NOACCESS;
     }
   }
  return PageProt;

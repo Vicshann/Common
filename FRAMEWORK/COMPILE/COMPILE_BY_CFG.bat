@@ -9,7 +9,7 @@ cd %CLANGDIR%/bin
 rem Use . to skip args
 if [%APP_NAME%]==[] set APP_NAME=app
 if [%APP_EXT%]==[] set APP_EXT=
-if not [%APP_MODE%]==[] set APP_MODE=-D%APP_EXT%
+if not [%APP_MODE%]==[] set APP_MODE=-D%APP_MODE%
 
 set OUTPATH=%SRCPATH%../../../BUILD/%BUILD_NAME%
 
@@ -21,4 +21,4 @@ rem TODO - Check if build path is valid and find it deeper if not
 
 clang.exe -o "%OUTPATH%/%APP_NAME%%APP_EXT%" --config "%SRCPATH%CFG/%BUILD_NAME%.cfg" %APP_MODE% "%SRCPATH%../AppMain.cpp"
 
-pause
+rem pause

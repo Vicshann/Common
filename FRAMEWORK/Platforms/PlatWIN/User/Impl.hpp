@@ -27,7 +27,7 @@ DECL_SYSCALL(WPROCID(HashNtDll,"NtFlushBuffersFile"),         NT::NtFlushBuffers
 DECL_SYSCALL(WPROCID(HashNtDll,"NtQueryAttributesFile"),      NT::NtQueryAttributesFile,      NtQueryAttributesFile      )   // Uses a file name
 DECL_SYSCALL(WPROCID(HashNtDll,"NtQueryInformationFile"),     NT::NtQueryInformationFile,     NtQueryInformationFile     )   // Uses a file handle
 DECL_SYSCALL(WPROCID(HashNtDll,"NtQueryDirectoryFile"),       NT::NtQueryDirectoryFile,       NtQueryDirectoryFile       )
-DECL_SYSCALL(WPROCID(HashNtDll,"NtSetInformationFile"),       NT::NtSetInformationFile,       NtSetInformationFile       )
+DECL_SYSCALL(WPROCID(HashNtDll,"NtSetInformationFile"),       NT::NtSetInformationFile,       NtSetInformationFile       )   // NtSetInformationFile supports file information classes not supported by SetFileInformationByHandle (FileDispositionInformationEx: FILE_DISPOSITION_POSIX_SEMANTICS [posix stype delete])
 DECL_SYSCALL(WPROCID(HashNtDll,"NtMapViewOfSection"),         NT::NtMapViewOfSection,         NtMapViewOfSection         )
 DECL_SYSCALL(WPROCID(HashNtDll,"NtUnmapViewOfSection"),       NT::NtUnmapViewOfSection,       NtUnmapViewOfSection       )
 DECL_SYSCALL(WPROCID(HashNtDll,"NtCreateSection"),            NT::NtCreateSection,            NtCreateSection            )
@@ -53,6 +53,9 @@ DECL_SYSCALL(WPROCID(HashNtDll,"NtWaitForSingleObject"),      NT::NtWaitForSingl
 
 DECL_SYSCALL(WPROCID(HashNtDll,"NtLoadDriver"),               NT::NtLoadDriver,               NtLoadDriver               )
 DECL_SYSCALL(WPROCID(HashNtDll,"NtUnloadDriver"),             NT::NtUnloadDriver,             NtUnloadDriver             )   // Should be last
+
+DECL_SYSCALL(WPROCID(HashNtDll,"NtFsControlFile"),            NT::NtFsControlFile,            NtFsControlFile            )   // FSCTL_XXX
+DECL_SYSCALL(WPROCID(HashNtDll,"NtDeviceIoControlFile"),      NT::NtDeviceIoControlFile,      NtDeviceIoControlFile      )   // IOCTL_XXX  
 
 } static constexpr inline SysApi alignas(16);   // Declared to know exact address(?), its size is ALWAYS 1   // Volatile? (static volatile constexpr inline)
 //============================================================================================================
@@ -116,54 +119,90 @@ FUNC_WRAPPERNI(PX::mmapGD,     mmap       )
 {
  const vptr   addr     = (vptr)GetParFromPk<0>(args...);
  const size_t length   = GetParFromPk<1>(args...);
- const uint32 prot     = GetParFromPk<2>(args...);
+       uint32 prot     = GetParFromPk<2>(args...);
  const uint   flags    = GetParFromPk<3>(args...);
- const NT::HANDLE  fd  = GetParFromPk<4>(args...);    // TODO: File mappings
- const uint64 pgoffset = GetParFromPk<5>(args...);
+       NT::HANDLE  fd  = GetParFromPk<4>(args...);    // TODO: File mappings
+       sint64 pgoffset = GetParFromPk<5>(args...);    // Actually should be aligned to 64K for compatibility woth Windows (Enforce on Linux?)
 
- if(!(flags & (PX::MAP_PRIVATE|PX::MAP_SHARED)))return vptr(-PX::EINVAL);   // One of MAP_SHARED or MAP_PRIVATE must be specified.
+ if(!(flags & (PX::MAP_PRIVATE|PX::MAP_SHARED)))return vptr(-PX::EINVAL);   // One of MAP_SHARED or MAP_PRIVATE must be specified.   // MAP_SHARED: Write changes back to a mapped file (It must be opened as writable)
  if((flags & (PX::MAP_PRIVATE|PX::MAP_SHARED)) == (PX::MAP_PRIVATE|PX::MAP_SHARED))return vptr(-PX::EINVAL);  // ???
+ if(pgoffset & ~MEMPAGESIZE)return vptr(-PX::EINVAL);  // offset must be a multiple of the page size as returned by sysconf(_SC_PAGE_SIZE)  // TODO: Check if it actually reports an error
+ if((flags & PX::MAP_ANONYMOUS)&&(fd != NT::NtInvalidHandle))return vptr(-PX::EINVAL);    // For portability
+ if(!length)return vptr(-PX::EINVAL);     // Only Windows accepts 0 for entire file mappings
 
  vptr   RegionBase  = addr;         // Rounded <<<
- size_t RegionSize  = AlignP2Frwd(length, MEMGRANSIZE);       // Rounded >>>
- uint32 AllocType   = 0;    // MEM_COMMIT
- uint32 AllocProt   = NTX::MemProtPXtoNT(prot);
  NT::NTSTATUS res   = 0;
-
- if(flags & PX::MAP_NOCACHE)AllocProt |= NT::PAGE_NOCACHE;   // ???
- if((flags & PX::MAP_ANONYMOUS) && (flags & PX::MAP_PRIVATE))   // Allocate simple private virtual memory
+ if((flags & PX::MAP_ANONYMOUS) && (flags & PX::MAP_PRIVATE))   // Allocate simple private virtual memory      // MAP_ANONYMOUS: No file is used    // MAP_PRIVATE: Changes are privaqte
   {
-/*   size_t RegResSize = AlignP2Frwd(length, MEMGRANSIZE);
-   size_t RegComSize = AlignP2Frwd(length, MEMPAGESIZE);
-   if(addr)   // Either we want memory at specific address or we commiting in a previously reserved area (which is not exposed by mmap)
-    {
-     AllocType |= MEM_RESERVE;  // Attempting to commit a specific address range by specifying MEM_COMMIT without MEM_RESERVE and a non-NULL lpAddress fails unless the entire range has already been reserved.
-
-     // ???
-    }
-     else  // If the address is NULL then we can only RESERVE+COMMIT
-      {
-       if(RegResSize != RegComSize)    // TODO: Just commit the entire RegResSize? (Will cause memory waste in Working Set)
-        {
-         res = SAPI::NtAllocateVirtualMemory(NT::NtCurrentProcess, &RegionBase, 0, &RegResSize, MEM_RESERVE, AllocProt);
-         if(!res)res = SAPI::NtAllocateVirtualMemory(NT::NtCurrentProcess, &RegionBase, 0, &RegComSize, MEM_COMMIT, AllocProt);
-        }
-         else res = SAPI::NtAllocateVirtualMemory(NT::NtCurrentProcess, &RegionBase, 0, &RegionSize, MEM_RESERVE|MEM_COMMIT, AllocProt);  // The size is already 64k aligned, no holes
-      } */
-   res = SAPI::NtAllocateVirtualMemory(NT::NtCurrentProcess, &RegionBase, 0, &RegionSize, NT::MEM_RESERVE, AllocProt);  // First reserve with 64k granularity to avoid memory holes (allowed to fail if already has been done)
-   if(res)RegionBase = addr;     // Reset the base and size
+   size_t RegionSize  = AlignP2Frwd(length, MEMGRANSIZE);       // Rounded >>>
+   uint32 AllocProt   = NTX::MemProtPXtoNT(prot);
+   if(flags & PX::MAP_NOCACHE)AllocProt |= NT::PAGE_NOCACHE;   // ???
+   res = SAPI::NtAllocateVirtualMemory(NT::NtCurrentProcess, &RegionBase, 0, &RegionSize, NT::MEM_RESERVE, AllocProt);  // First reserve with 64k granularity to avoid memory holes (allowed to fail if already has been done)    (Will cause memory waste in Working Set?)
+   if(res)return (vptr)-NTX::NTStatusToLinuxErr(res);   // What actual error codes could be?   (If already reserved?)
+   RegionBase = addr;     // Reset the base and size
    RegionSize = length;   // Now 4k alignment is OK
-   res = SAPI::NtAllocateVirtualMemory(NT::NtCurrentProcess, &RegionBase, 0, &RegionSize, NT::MEM_COMMIT,  AllocProt);  // Then commit with 4k granularity (page size)
+   res = SAPI::NtAllocateVirtualMemory(NT::NtCurrentProcess, &RegionBase, 0, &RegionSize, NT::MEM_COMMIT, AllocProt);  // Then commit with 4k granularity (page size)
    if(!res)return RegionBase;
    return (vptr)-NTX::NTStatusToLinuxErr(res);    // ???        // GetMMapErrFromPtr
   }
+  
+ NT::HANDLE hSec = NT::NtInvalidHandle;
+ NT::OBJECT_ATTRIBUTES oattr;        
 
- //
- // TODO: Shared memory
- //
- return 0;
+ oattr.Length = sizeof(NT::OBJECT_ATTRIBUTES);
+ oattr.RootDirectory = 0;//NT::NtInvalidHandle;
+ oattr.ObjectName = nullptr;        // Unnamed 
+ oattr.Attributes = 0;       
+ oattr.SecurityDescriptor = nullptr;         
+ oattr.SecurityQualityOfService = nullptr;
+
+ if(prot & PX::PROT_WRITE)    // Hints for MemProtPXtoNT
+  {
+   if(flags & PX::MAP_SHARED)prot |= PX::PROT_READ;  // To avoid copy-on-write for the mapping
+     else prot &= ~PX::PROT_READ;     // To ensure copy-on-write for the mapping
+  }
+ uint32 AllocProt = NTX::MemProtPXtoNT(prot);
+ if(flags & PX::MAP_NOCACHE)AllocProt |= NT::PAGE_NOCACHE;    // ???
+ sint64 RegionSize;
+ if(fd == NT::NtInvalidHandle){RegionSize = AlignP2Frwd(length, MEMGRANSIZE); fd = 0;}  // Unused fd for NtCreateSection is 0 (STATUS_OBJECT_TYPE_MISMATCH if -1)
+  else RegionSize = length;
+
+ uint32 SecRights = NT::SYNCHRONIZE|NT::SECTION_QUERY|NT::STANDARD_RIGHTS_REQUIRED;        // NOTE: Untested
+ if(prot & PX::PROT_EXEC)SecRights |= NT::GENERIC_EXECUTE|NT::SECTION_MAP_EXECUTE;
+ if(prot & PX::PROT_READ)SecRights |= NT::GENERIC_READ|NT::SECTION_MAP_READ;
+ if(prot & PX::PROT_WRITE)SecRights |= NT::GENERIC_WRITE|NT::SECTION_MAP_WRITE|NT::SECTION_EXTEND_SIZE;
+
+ uint32 SecAttrs = NT::SEC_COMMIT;
+ if(flags & PX::MAP_HUGETLB)SecAttrs |= NT::SEC_LARGE_PAGES;
+ if(flags & PX::MAP_NOCACHE)SecAttrs |= NT::SEC_NOCACHE;
+
+ res = SAPI::NtCreateSection(&hSec,       // TODO: Call shm_open with SHM_ANON
+   SecRights,
+   &oattr,
+   &RegionSize,  // rounds this value up to the nearest multiple of PAGE_SIZE
+   AllocProt,
+   SecAttrs,
+   fd);           // The handle may be 0 to create a memory section, or a file handle to create a file mapping or a section handle from some named section create/open syscall (In this case the call will fail and it is OK)
+ if(res) 
+  {
+   if(res != NT::STATUS_OBJECT_TYPE_MISMATCH)return (vptr)-NTX::NTStatusToLinuxErr(res);    // Allow to fail if a section handle is passed instead of a file handle (From shmget)
+   hSec = fd;
+  }
+ RegionSize = length;
+ res = SAPI::NtMapViewOfSection(hSec,
+   NT::NtCurrentProcess,
+   &RegionBase, // the specified virtual address rounded down to the next 64-kilobyte address boundary
+   0,           // ZeroBits
+   RegionSize,  // CommitSize is meaningful only for page-file backed sections and is rounded up to the nearest multiple of PAGE_SIZE.
+   &pgoffset,   // If this pointer is not NULL, the offset is rounded down to the next allocation-granularity size boundary
+   (NT::PSIZE_T)&RegionSize, // If the initial value of this variable is zero, ZwMapViewOfSection maps a view of the section that starts at SectionOffset and continues to the end of the section. Otherwise, the initial value specifies the view's size, in bytes. ZwMapViewOfSection always rounds this value up to the nearest multiple of PAGE_SIZE before mapping the view.
+   ((flags & PX::MAP_ANONYMOUS)&&(flags & PX::MAP_SHARED))?(NT::ViewShare):(NT::ViewUnmap),   // Can share with child processes
+   0,
+   AllocProt);
+ SAPI::NtClose(hSec);    // The section handle is not needed anymore and should no t be leaked
+ if(res)return (vptr)-NTX::NTStatusToLinuxErr(res);  
+ return RegionBase; 
 }
-
 /*
  The address addr must be a multiple of the page size (but length need not be)
  If the MEM_RELEASE flag is set in the FreeType parameter, BaseAddress must be the base address returned by ZwAllocateVirtualMemory when the region was reserved.
@@ -171,7 +210,6 @@ FUNC_WRAPPERNI(PX::mmapGD,     mmap       )
      ZwFreeVirtualMemory frees the entire region that was reserved in the initial allocation call to ZwAllocateVirtualMemory.
  ZwFreeVirtualMemory does not fail if you attempt to release pages that are in different states, some reserved and some committed
  NOTE: Ideally we must RELEASE only if the Size covers the entire region (But we have to use QueryVirtualMemory to know that)
-
 */
 //------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERNI(PX::munmap,     munmap     )                // ZwUnmapViewOfSectionEx
@@ -184,6 +222,8 @@ FUNC_WRAPPERNI(PX::munmap,     munmap     )                // ZwUnmapViewOfSecti
 
  NT::NTSTATUS res = SAPI::NtFreeVirtualMemory(NT::NtCurrentProcess, &RegionBase, &RegionSize, NT::MEM_RELEASE);   // Releases the entire region but only if addr is the same base address that came from mmap (in most cases this is what you do)
  if(!res)return PX::NOERROR;  // The entire allocated region is free now   // TODO: Check returned error, detect shared/private mappings and do UnmapViewOfSection for the addr instead of NtFreeVirtualMemory
+ if(res == NT::STATUS_UNABLE_TO_DELETE_SECTION){res = SAPI::NtUnmapViewOfSection(NT::NtCurrentProcess, RegionBase); if(!res)return PX::NOERROR;}  // This region is mapped  // NOTE: The entire region will e unmapped
+
  RegionBase = addr;
  RegionSize = length;
  res = SAPI::NtFreeVirtualMemory(NT::NtCurrentProcess, &RegionBase, &RegionSize, NT::MEM_DECOMMIT);   // Addr is not region base addr, try at least to decommit some pages (Don`t even try to base your memory manager on this behaviour!)
@@ -267,6 +307,33 @@ FUNC_WRAPPERNI(PX::lseekGD,    lseek      )
  NT::NTSTATUS res = SAPI::NtSetInformationFile(hnd, &iosb, &Pos, sizeof(Pos), NT::FilePositionInformation);
  if(res)return -NTX::NTStatusToLinuxErr(res);
  return offset;
+}
+//------------------------------------------------------------------------------------------------------------
+FUNC_WRAPPERNI(PX::ftruncate,     ftruncate     ) 
+{
+ NT::IO_STATUS_BLOCK iosb = {};
+ NT::FILE_END_OF_FILE_INFORMATION End;
+
+ const NT::HANDLE hnd = (NT::HANDLE)GetParFromPk<0>(args...);
+ uint64 Len = GetParFromPk<1>(args...);
+
+ End.EndOfFile = Len;
+ NT::NTSTATUS res = SAPI::NtSetInformationFile(hnd, &iosb, &End, sizeof(End), NT::FileEndOfFileInformation);
+ if(res)return -NTX::NTStatusToLinuxErr(res);
+ return 0;
+}
+//------------------------------------------------------------------------------------------------------------
+FUNC_WRAPPERNI(PX::truncate,     truncate       ) 
+{
+ NT::IO_STATUS_BLOCK iosb = {};
+ NT::HANDLE FileHandle = 0;
+ const achar* path = GetParFromPk<0>(args...);
+ uint64 Len = GetParFromPk<1>(args...);
+ NT::NTSTATUS res = NTX::OpenFileObject(&FileHandle, path, NT::SYNCHRONIZE|NT::FILE_WRITE_ATTRIBUTES|NT::FILE_WRITE_DATA, 0, NT::FILE_ATTRIBUTE_NORMAL, NT::FILE_SHARE_READ|NT::FILE_SHARE_WRITE|NT::FILE_SHARE_DELETE, NT::FILE_OPEN, NT::FILE_SYNCHRONOUS_IO_NONALERT, &iosb);
+ if(res)return -NTX::NTStatusToLinuxErr(res);  // Can the handle be open? (Status > 0)
+ int rs = NAPI::ftruncate((PX::fdsc_t)FileHandle, Len);
+ SAPI::NtClose(FileHandle);
+ return rs;
 }
 //------------------------------------------------------------------------------------------------------------
 // Complicated
@@ -601,7 +668,36 @@ FUNC_WRAPPERNI(PX::fsync,      fsync      ) {return 0;}
 FUNC_WRAPPERNI(PX::fdatasync,  fdatasync  ) {return 0;}
 
 FUNC_WRAPPERNI(PX::dup3,       dup        ) {return 0;}
-
+//------------------------------------------------------------------------------------------------------------
+FUNC_WRAPPERNI(PX::fcntl,      fcntl      )    // NtFsControlFile?    // F_DUPFD ? F_NOTIFY ?
+{
+ NT::IO_STATUS_BLOCK iosb = {};
+ PX::fdsc_t fd = GetParFromPk<0>(args...);    
+ uint32   code = GetParFromPk<1>(args...);
+ PX::PVOID Ptr = GetParFromPk<2>(args...);
+ PX::PVOID Len = GetParFromPk<3>(args...);
+ NT::ULONG Size = (Len)?(*(uint32*)Len):(0);
+ NT::NTSTATUS res = SAPI::NtFsControlFile((NT::HANDLE)fd, (NT::HANDLE)0, nullptr, nullptr, &iosb, code, Ptr, Size, Ptr, Size);
+ if(res)return -NTX::NTStatusToLinuxErr(res);
+ if(Len)*(uint32*)Len = iosb.Information;
+ // TODO: Determine by the control code what and where to take from IO_STATUS_BLOCK
+ return 0;
+}
+//------------------------------------------------------------------------------------------------------------
+FUNC_WRAPPERNI(PX::ioctl,      ioctl      )    // NtDeviceIoControlFile   // Just some average implementation
+{
+ NT::IO_STATUS_BLOCK iosb = {};
+ PX::fdsc_t fd = GetParFromPk<0>(args...);    
+ uint32   code = GetParFromPk<1>(args...);
+ PX::PVOID Ptr = GetParFromPk<2>(args...);
+ PX::PVOID Len = GetParFromPk<3>(args...);
+ NT::ULONG Size = (Len)?(*(uint32*)Len):(0);
+ NT::NTSTATUS res = SAPI::NtDeviceIoControlFile((NT::HANDLE)fd, (NT::HANDLE)0, nullptr, nullptr, &iosb, code, Ptr, Size, Ptr, Size);
+ if(res)return -NTX::NTStatusToLinuxErr(res);
+ if(Len)*(uint32*)Len = iosb.Information;
+ // TODO: Determine by the control code what and where to take from IO_STATUS_BLOCK
+ return 0;
+} 
 //------------------------------------------------------------------------------------------------------------
 // https://learn.microsoft.com/ru-ru/archive/blogs/wsl/pico-process-overview
 // NOTE Will work only for those processes which are ready to behave like on Linux (No manifest, activation context, Fusion/SxS, ...)
@@ -611,7 +707,7 @@ FUNC_WRAPPERNI(PX::spawn,      spawn      )
  return 0;
 }
 //------------------------------------------------------------------------------------------------------------
-FUNC_WRAPPERNI(PX::thread,     thread     ) 
+FUNC_WRAPPERNI(NTHD::thread,     thread   ) 
 {
  auto   ThProc  = GetParFromPk<0>(args...);
  vptr   ThData  = GetParFromPk<1>(args...);
@@ -626,13 +722,13 @@ FUNC_WRAPPERNI(PX::thread,     thread     )
 
  NT::PVOID  StackBase = ThrFrame->StkBase;
  NT::SIZE_T StackSize = ThrFrame->StkOffs;    // Allowed to be not aligned to PAGESIZE if the stack is already allocated
- NT::NTSTATUS res = NTX::NativeCreateThread(NAPI::ThProcCallStub, ThrFrame, 0, NT::NtCurrentProcess, false, &StackBase, &StackSize, (NT::PHANDLE)&ThrFrame->ThreadHndl, (NT::PULONG)&ThrFrame->ThreadID);
+ NT::NTSTATUS res = NTX::NativeCreateThread(NPTM::ThProcCallStub, ThrFrame, 0, NT::NtCurrentProcess, false, &StackBase, &StackSize, (NT::PHANDLE)&ThrFrame->ThreadHndl, (NT::PULONG)&ThrFrame->ThreadID);
  DBGMSG("NativeCreateThread: %08X",res);
  return (uint)ThrFrame->ThreadHndl;    // Use handle instead of ID (Must be closed)   // GetExitCodeThread have problems with return codes(STILL_ACTIVE)
 }
 //------------------------------------------------------------------------------------------------------------
-FUNC_WRAPPERNI(PX::thread_sleep,      thread_sleep     ) {return 0;} 
-FUNC_WRAPPERNI(PX::thread_wait,       thread_wait      ) 
+FUNC_WRAPPERNI(NTHD::thread_sleep,      thread_sleep     ) {return 0;} 
+FUNC_WRAPPERNI(NTHD::thread_wait,       thread_wait      ) 
 {
  uint64 time = GetParFromPk<1>(args...);
  NTHD::SThCtx* tinf = GetThreadByHandle(GetParFromPk<0>(args...));
@@ -647,24 +743,25 @@ if((res != NT::STATUS_INVALID_HANDLE) && (tinf->ThreadHndl == (uint)hndl))SAPI::
 return -NTX::NTStatusToLinuxErr(res);
 }    
 //------------------------------------------------------------------------------------------------------------
-FUNC_WRAPPERNI(PX::thread_status,     thread_status    ) 
+FUNC_WRAPPERNI(NTHD::thread_status,     thread_status    ) 
 {
  uint hnd = GetParFromPk<0>(args...);
  NTHD::SThCtx* ThCtx = nullptr;
- if(hnd != fwsinf.MainTh.ThreadID)
+ NTHD::STDesc* ThDsc = NPTM::GetThDesc();
+ if(hnd != ThDsc->MainTh.ThreadID)
   {
-   if(!fwsinf.ThreadInfo)return PXERR(ENOMEM); // No more threads
-   NTHD::SThCtx** ptr = fwsinf.ThreadInfo->FindOldThreadByHandle(hnd);
+   if(!ThDsc->ThreadInfo)return PXERR(ENOMEM); // No more threads
+   NTHD::SThCtx** ptr = ThDsc->ThreadInfo->FindOldThreadByHandle(hnd);
    if(!ptr)return PXERR(ENOENT);
    ThCtx = NTHD::ReadRecPtr(ptr);
   }
-   else ThCtx = &fwsinf.MainTh;
+   else ThCtx = &ThDsc->MainTh;
  if(!ThCtx)return PXERR(EBADF);
  DBGMSG("Status: %08X",ThCtx->ExitCode);
  return ThCtx->ExitCode;
 }
 //------------------------------------------------------------------------------------------------------------
-FUNC_WRAPPERNI(PX::thread_exit,       thread_exit      ) 
+FUNC_WRAPPERNI(NTHD::thread_exit,       thread_exit      ) 
 {
  sint status = GetParFromPk<0>(args...);   // If this var is on stack, the stack may become deallocated (probably - Even marked records should be checked for zero TID)
  NTHD::SThCtx* tinf = GetThreadSelf();
@@ -682,10 +779,10 @@ FUNC_WRAPPERNI(PX::thread_exit,       thread_exit      )
  return NAPI::exit(status);
 }    
 //------------------------------------------------------------------------------------------------------------
-FUNC_WRAPPERNI(PX::thread_kill, thread_kill ) {return 0;}
-FUNC_WRAPPERNI(PX::thread_alert, thread_alert ) {return 0;}
-FUNC_WRAPPERNI(PX::thread_affinity_set, thread_affinity_set ) {return 0;}
-FUNC_WRAPPERNI(PX::thread_affinity_get, thread_affinity_get ) {return 0;}
+FUNC_WRAPPERNI(NTHD::thread_kill, thread_kill ) {return 0;}
+FUNC_WRAPPERNI(NTHD::thread_alert, thread_alert ) {return 0;}
+FUNC_WRAPPERNI(NTHD::thread_affinity_set, thread_affinity_set ) {return 0;}
+FUNC_WRAPPERNI(NTHD::thread_affinity_get, thread_affinity_get ) {return 0;}
 //------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERNI(PX::gettimeofday,  gettimeofday  )
 {
@@ -770,9 +867,9 @@ sint Initialize(void* StkFrame=nullptr, vptr ArgA=nullptr, vptr ArgB=nullptr, vp
  InitSyscalls();
  InitStartupInfo(StkFrame, ArgA, ArgB, ArgC);
  SetErrorHandlers();
-
+                         
  IFDBG{DbgLogStartupInfo();}
- if(NTHD::SThCtx* MainTh=&fwsinf.MainTh; !MainTh->Self)
+ if(NTHD::SThCtx* MainTh=&NPTM::GetThDesc()->MainTh; !MainTh->Self)
   {
    MainTh->Self       = MainTh;     // For checks
    MainTh->SelfPtr    = nullptr;    // Not owned

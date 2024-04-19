@@ -53,8 +53,8 @@ template<typename T> constexpr _finline static T GetFileExt(T FullPath, uint Len
  sint LastDel = -1;
  uint ctr = 0;
  for(sint val=FullPath[ctr];val && (ctr < Length);ctr++,val=FullPath[ctr]){if(val=='.')LastDel=ctr;}
- if(LastDel < 0)LastDel = ctr;  // Point at the end if no ext
- return &FullPath[LastDel];    // Return points to '.' or end of name (For an ext to be added without any checks)
+ if(LastDel < 0)LastDel = ctr-1;  // Point at the end if no ext
+ return &FullPath[LastDel+1];     // Return points to ext after '.' or end of name (For an ext to be added without any checks)
 }
 //---------------------------------------------------------------------------
 _finline static uint SizeOfWStrAsUtf8(const wchar* str, uint size=uint(-1), uint term=uint(0))

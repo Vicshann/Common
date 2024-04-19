@@ -3,7 +3,7 @@
 
 // TODO: Probably some generic flags
 
-// This class is expected to be on stack in entry point proc or in dynamic memory
+// This class is expected to be on stack in an entry point proc or in dynamic memory
 class CApplication   // Interface
 {
 public:

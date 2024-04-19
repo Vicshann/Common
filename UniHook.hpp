@@ -20,6 +20,9 @@
 
 // TODO: If hooking a function that is imported by this module, update ImportRecord to point to OrigProc
 // https://software.intel.com/sites/landingpage/IntrinsicsGuide/#techs=SSE2
+// http://forum.madshi.net/viewtopic.php?t=28896
+//   {push ProcAddr; ret} = exception 0xC0000409 on x64
+// is guaranteed to generate a branch misprediction, costing you 50 cycles or thereabouts, instead of 1 or 0 for a correctly predicted branch
 //---------------------------------------------------------------------------
 #define ADDROFFSET(addr,offset) ((addr)+(offset))
 

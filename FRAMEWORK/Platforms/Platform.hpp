@@ -12,10 +12,14 @@ struct NPTM    // Can`t be 'struct' if we want that stubs go in the real executa
 #include "ModFmtMachO.hpp"
 #include "ModFmtELF.hpp"
 #include "ModFmtPE.hpp"
-#include "Threads.hpp"     // Thread definitions for "StartInfo.hpp"
 #include "NtDll.hpp"
 #include "POSIX.hpp"
 #include "TZif.hpp"
+#include "CLArgs.hpp"
+#include "EnvVars.hpp"
+#include "Threads.hpp"     // Thread definitions for "StartInfo.hpp"
+#include "MemUtils.hpp" 
+#include "FileUtils.hpp"
 
 // Anything that may have a different set of system API is put here
 #if    defined(PLT_EFI)     // SYS_WINDOWS
@@ -30,6 +34,7 @@ struct NPTM    // Can`t be 'struct' if we want that stubs go in the real executa
 #elif  defined(PLT_LIN_USR)    // Put BSD support here(similair startup, ELF format)?
 #pragma message(">>> Platform is Linux USR")
 #include "PlatLIN/User/Impl.hpp"
+#include "ProcFS.hpp"
 
 #elif  defined(PLT_LIN_KRN)
 #pragma message(">>> Platform is Linux KRN")
@@ -52,6 +57,8 @@ struct NPTM    // Can`t be 'struct' if we want that stubs go in the real executa
 #elif  defined(PLT_WIN_USR)
 #pragma message(">>> Platform is Windows USR")
 #include "PlatWIN/User/Impl.hpp"
+#include "PlatWIN/MiscUtils.hpp"
+//#include "ProcFS.hpp"     // <<< DBG
 
 #elif  defined(PLT_WIN_KRN)
 #pragma message(">>> Platform is MacOS KRN")
@@ -77,9 +84,10 @@ PVOID _fastcall AllocMemHL(PVOID Mem, SIZE_T Size, SIZE_T AllocSize, SIZE_T Rese
 bool  _fastcall FreeMemHL(PVOID Mem, SIZE_T Size=0);
 }*/
 #ifdef DBGBUILD
-#include "IntfValidator.hpp"
+#include "APIValidator.hpp"
 #endif
 };
+
 //------------------------------------------------------------------------------------------------------------
 #include "LibC.hpp"  // Defined outside to keep it defined in namespace
 //------------------------------------------------------------------------------------------------------------

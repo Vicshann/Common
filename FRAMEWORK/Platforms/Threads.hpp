@@ -44,8 +44,6 @@ struct SThCtx
  vptr   MMPtrs[THD_MAX_MMGRS];      // For thread local memory managers (mempool)
 };
 
-using PThreadProc = ssize_t (_scall *)(SThCtx*);
-
 //struct SThPage   // For each 32768 threads id
 //{
 // SThCtx* ThRecs[THD_MAX_PAGELEN / sizeof(SThCtx*)];    // 32768/8 = 4096 (One page, usually)    // For now this memory is not released (Reallocated if a new thread with same ID requires larger stack)
@@ -282,6 +280,27 @@ static _finline void ReleaseRec(SThCtx** rec)
  *(size_t*)rec &= (size_t)~1;   // TODO: InterlockedOr  ???
 }
 //------------------------------------------------------------------------------------------------------------
+struct STDesc
+{
+ NTHD::SThCtx  MainTh;      // Main(Init/Entry) thread // A thread from which the framework is initialized at main entry point for a module/app (For modules this is NOT the app`s process main thread)
+ NTHD::SThInf* ThreadInfo;  // For additional threads (Null if only an entry thread is used)
+};
+
+using PThreadProc = ssize_t (PXCALL *)(SThCtx*);	 
+
+static PX::pid_t  PXCALL thread(PThreadProc Proc, PX::PVOID Data, PX::SIZE_T DatSize, PX::SIZE_T StkSize, PX::SIZE_T TlsSize, uint32 Flags);  // Improvised   // Actually allocates: PageAlign(Size+StkSize+TlsSize+ThreadRec)
+static sint       PXCALL thread_sleep(uint64 ns);                     // nleepns???   // -1 - wait infinitely  // Sleeps on its futex	 // -1 sleep until termination
+static sint       PXCALL thread_exit(sint status);                    // Allows to exit without returning from ThreadProc directly	   // Deallocate the thread`s stack memory?
+static sint       PXCALL thread_status(PX::pid_t thid);	              // Use after waiting for a thread to finish
+static sint       PXCALL thread_kill(PX::pid_t thid, sint status);    // Terminates the thread
+static sint       PXCALL thread_wait(PX::pid_t thid, uint64 ns);      // Wati for the thread termination  // -1 - wait infinitely
+static sint       PXCALL thread_alert(PX::pid_t thid, uint32 code);   // Wakes the thread from any wait	(thread_sleep)	// Like pthread_cancel	 // Cancel IO?
+static sint       PXCALL thread_affinity_set(PX::pid_t thid, uint64 mask, uint32 from); 
+static sint       PXCALL thread_affinity_get(PX::pid_t thid, size_t buf_len, PX::PSIZE_T buf); 
+// CPU affinity
+// Suspend/Resume
+// Terminate
+// Exit?   (Not exit_group which terminates the entire app)
 
 /*
  For now, no stack memory is reused between threads with different IDs
@@ -298,3 +317,176 @@ static _finline void ReleaseRec(SThCtx** rec)
        /sys/devices/system/cpu/
 */
 };
+//============================================================================================================
+static NTHD::SThCtx* GetThreadSelf(void)     // Probably can find it faster by scanning stack pages forward and testing for SThCtx at beginning
+{
+ return GetThreadByAddr(GETSTKFRAME());
+}
+//------------------------------------------------------------------------------------------------------------
+static NTHD::SThCtx* GetThreadByID(uint id)
+{
+ NTHD::STDesc* ThDsc = NPTM::GetThDesc();
+ if((id == (uint)-1)||(id == ThDsc->MainTh.ThreadID))return &ThDsc->MainTh;
+ if(!ThDsc->ThreadInfo)return nullptr; // No more threads
+ NTHD::SThCtx** ptr = ThDsc->ThreadInfo->FindThByTID(id);
+ if(!ptr)return nullptr;
+ return NTHD::ReadRecPtr(ptr);
+}
+//------------------------------------------------------------------------------------------------------------
+static NTHD::SThCtx* GetThreadByHandle(uint hnd)
+{
+ NTHD::STDesc* ThDsc = NPTM::GetThDesc();
+ if((hnd == (uint)-1)||(hnd == ThDsc->MainTh.ThreadHndl))return &ThDsc->MainTh;
+ if(!ThDsc->ThreadInfo)return nullptr; // No more threads
+ NTHD::SThCtx** ptr = ThDsc->ThreadInfo->FindThByHandle(hnd);
+ if(!ptr)return nullptr;
+ return NTHD::ReadRecPtr(ptr);
+}
+//------------------------------------------------------------------------------------------------------------
+static NTHD::SThCtx* GetThreadByAddr(vptr addr)   // By an address on stack
+{
+ NTHD::STDesc* ThDsc = NPTM::GetThDesc();
+ if(((uint8*)addr >= (uint8*)ThDsc->MainTh.StkBase)&&((uint8*)addr < ((uint8*)ThDsc->MainTh.StkBase + ThDsc->MainTh.StkSize)))return &ThDsc->MainTh;
+ if(!ThDsc->ThreadInfo)return nullptr; // No more threads
+ NTHD::SThCtx** ptr = ThDsc->ThreadInfo->FindThByStack(addr);
+ if(!ptr)return nullptr;
+ return NTHD::ReadRecPtr(ptr);
+}
+//------------------------------------------------------------------------------------------------------------
+/*static NTHD::SThCtx* GetNextThread(NTHD::SThCtx* th) // Get thread by index?   // Start from NULL    // Need to think
+{
+ return nullptr;
+}*/
+//------------------------------------------------------------------------------------------------------------
+
+// What about kernel threads?
+private:
+//------------------------------------------------------------------------------------------------------------
+static NTHD::SThCtx* InitThreadRec(vptr ThProc, vptr ThData, size_t StkSize, size_t TlsSize, size_t DatSize, size_t** StkFrame)
+{
+ DatSize = AlignP2Frwd(DatSize, 16);
+ if(StkSize)StkSize = AlignP2Frwd(StkSize, MEMPAGESIZE);   // NOTE: As StkSize is aligned to a page size, there will be at least one page wasted for ThreadContext struct (Assume it always available for some thread local data?)
+   else StkSize = 0x10000;  // 64K should be optimal
+ TlsSize = AlignP2Frwd(TlsSize, 16);   // Slots is at least of pointer size
+ size_t FStkLen = AlignP2Frwd(DatSize+StkSize+TlsSize+sizeof(NTHD::SThCtx), MEMGRANSIZE);     // NOTE: MEMGRANSIZE may be more than MEMPAGESIZE (On windows)
+
+// Find/alloc a new thread rec                  / TODO: Init several pages if available
+ uint8* StkPtr = nullptr;
+ NTHD::STDesc* ThDsc = NPTM::GetThDesc();
+ if(!ThDsc->ThreadInfo)    // Alloc first thread list page
+  {
+   DBGMSG("Allocating first thread list page");
+#ifdef SYS_WINDOWS
+   vptr NewPage = NPTM::NAPI::mmap(nullptr, MEMPAGESIZE, PX::PROT_READ|PX::PROT_WRITE, PX::MAP_PRIVATE|PX::MAP_ANONYMOUS, -1, 0);  // Actually reserves entire 64K block  // Must be a separate allocation on Windows - cannot unmap partially
+   if(uint err=MMERR(NewPage);err)return (NTHD::SThCtx*)err;
+   ThDsc->ThreadInfo = (NTHD::SThInf*)NewPage;
+   NewPage = NPTM::NAPI::mmap(nullptr, FStkLen, PX::PROT_READ|PX::PROT_WRITE, PX::MAP_PRIVATE|PX::MAP_ANONYMOUS, -1, 0); 
+   if(uint err=MMERR(NewPage);err)return (NTHD::SThCtx*)err;
+   StkPtr  = (uint8*)NewPage;
+#else
+   vptr NewPage = NPTM::NAPI::mmap(nullptr, MEMPAGESIZE+FStkLen, PX::PROT_READ|PX::PROT_WRITE, PX::MAP_PRIVATE|PX::MAP_ANONYMOUS, -1, 0);  // Allocate together with a new rec stack  
+   if(uint err=MMERR(NewPage);err)return (NTHD::SThCtx*)err;
+   ThDsc->ThreadInfo = (NTHD::SThInf*)NewPage;
+   StkPtr = ((uint8*)NewPage + MEMPAGESIZE);
+#endif
+  }
+ NTHD::SThInf** PNewPagePtr = nullptr;
+ NTHD::SThCtx** PRecPtr     = ThDsc->ThreadInfo->GetUnusedRec(&PNewPagePtr);
+ if(!PRecPtr)         // NOTE: On Windows entire 64K is reserved and additional 4k pages are allocated from that
+  {
+   DBGMSG("Allocating another thread list page");
+#ifdef SYS_WINDOWS
+   vptr Addr = vptr(AlignP2Bkwd((size_t)PNewPagePtr, MEMPAGESIZE) + MEMPAGESIZE);  // Next page in the reserved 64K block  // PNewPagePtr is in the last page
+#else
+   vptr Addr = nullptr;
+#endif
+   vptr NewPage = NPTM::NAPI::mmap(Addr, MEMPAGESIZE, PX::PROT_READ|PX::PROT_WRITE, PX::MAP_PRIVATE|PX::MAP_ANONYMOUS, -1, 0);    // Allocate together with a new stack area stack
+   if(uint err=MMERR(NewPage);err)return (NTHD::SThCtx*)err;
+   StkPtr  = ((uint8*)NewPage + MEMPAGESIZE);
+   PRecPtr = ThDsc->ThreadInfo->SetNewPageAndGetRec(NewPage, PNewPagePtr);
+  }
+ NTHD::SThCtx* ThRec = NTHD::ReadRecPtr(PRecPtr);
+ uint OldID   = -1;
+ uint OldHnd  = -1;
+ sint OldStat = NTHD::THD_MAX_STATUS;  // Reset (If this code stays after a thread exits - the exit was not normal)
+ if(ThRec)   // Already allocated
+  {
+   DBGMSG("Reusing the thread rec: %p",ThRec);
+   OldID   = ThRec->LastThrdID;
+   OldHnd  = ThRec->LastThrdHnd;
+   OldStat = ThRec->ExitCode;    // Preserve last thread info
+   if(ThRec->StkSize < FStkLen)
+    {
+     StkPtr = (uint8*)NPTM::NAPI::mmap(nullptr, FStkLen, PX::PROT_READ|PX::PROT_WRITE, PX::MAP_PRIVATE|PX::MAP_ANONYMOUS, -1, 0);   // TODO: mrealloc
+     if(uint err=MMERR(StkPtr);err)return (NTHD::SThCtx*)err;
+     NPTM::NAPI::munmap(ThRec->StkBase, ThRec->StkSize);   // Unmap old stack
+    }
+    else
+     {
+      StkPtr  = (uint8*)ThRec->StkBase;
+      FStkLen = ThRec->StkSize;
+     }
+  }
+  else if(!StkPtr)StkPtr = (uint8*)NPTM::NAPI::mmap(nullptr, FStkLen, PX::PROT_READ|PX::PROT_WRITE, PX::MAP_PRIVATE|PX::MAP_ANONYMOUS, -1, 0);  // May be already allocated with a thread rec page
+ if(uint err=MMERR(StkPtr);err)return (NTHD::SThCtx*)err;
+
+ NTHD::SThCtx* ThrFrame = (NTHD::SThCtx*)&StkPtr[StkSize];  // Since StkSize is page-aligned, ThrFrame is also page aligned. It is possible to find it by scanning the stack forward by pages from any addr on that stack. Is it faster than scanning thread list?  (Need to place main thread`s ctx on stack too)
+ vptr DataPtr = &StkPtr[StkSize+sizeof(NTHD::SThCtx)];
+ vptr TlsPtr  = &StkPtr[StkSize+DatSize+sizeof(NTHD::SThCtx)];
+ *StkFrame    = (size_t*)&StkPtr[StkSize];      // Decreasing stack pointer only!      // NOTE: Keep the stack aligned to 16
+ if(ThData && DatSize)memcpy(DataPtr, ThData, DatSize);    // User data is right at the bottom
+
+ ThrFrame->Self        = ThrFrame;   // For checks
+ ThrFrame->SelfPtr     = (vptr*)PRecPtr;    // Need thread id to init  (Assigned in STC::ThProcCall)
+ ThrFrame->TlsBase     = TlsPtr;
+ ThrFrame->TlsSize     = TlsSize;
+ ThrFrame->StkBase     = StkPtr;     // For unmapping
+ ThrFrame->StkSize     = FStkLen;    // StkSize; ??? // Need full size for unmap  // Can a thread unmap its own stack before calling 'exit'?
+ ThrFrame->StkOffs     = StkSize;
+ ThrFrame->GroupID     = NAPI::getpgrp();   // pid
+ ThrFrame->ThreadID    = 0;  // Will be written to by 'clone'  // And reset at its termination by the system
+ ThrFrame->ProcesssID  = NAPI::getpid();
+ ThrFrame->LastThrdID  = OldID;
+ ThrFrame->LastThrdHnd = OldHnd;
+ ThrFrame->ThreadHndl  = 0;    // Set by system (Windows)
+ ThrFrame->ThreadProc  = (vptr)ThProc;
+ ThrFrame->ThreadData  = DataPtr;
+ ThrFrame->ThDataSize  = DatSize;
+ ThrFrame->ExitCode    = OldStat;
+ //ThrFrame->EntryCtr    = 0;   // Unentered  // Later, any entered thread with zero TID will be considered dead and for reuse
+ ThrFrame->Flags       = 0;   
+ NTHD::WriteRecPtr(PRecPtr, ThrFrame);   // Update the pointer
+ return ThrFrame;
+}
+//------------------------------------------------------------------------------------------------------------
+_noret static void _ninline 
+#ifdef SYS_WINDOWS
+_scall ThProcCallStub(NT::PVOID Data, NT::SIZE_T Size)       // Static, no inlining, args in registers   // TODO: Register it with Control Flow Guard somehow or NtCreateThread will fail in CFG enabled processes
+{
+ NTHD::SThCtx* ThrFrame = (NTHD::SThCtx*)Data;   // Should be same ptr or something is pushed
+#else
+_fcall ThProcCallStub(void)       // Static, no inlining, args in registers
+{
+ NTHD::SThCtx* ThrFrame = (NTHD::SThCtx*)AlignP2Frwd((size_t)GETSTKFRAME(), 16);   // Should be same ptr or something is pushed
+#endif
+ DBGMSG("hello thread: ThrFrame=%p, GroupID=%i, ProcesssID=%i, ThreadID=%i: %p",ThrFrame,ThrFrame->GroupID,ThrFrame->ProcesssID,ThrFrame->ThreadID,GetThreadByID(ThrFrame->ThreadID));
+ sint res = PXERR(EFAULT);
+ if(ThrFrame == ThrFrame->Self)
+  {
+//     ThrFrame->EntryCtr++;    // Entered, TID is not zero
+   res = ((NTHD::PThreadProc)ThrFrame->ThreadProc)(ThrFrame);
+   ThrFrame->LastThrdID  = ThrFrame->ThreadID;               // Is it OK that the exit point will belong to this module? May be it will be reqiured to create a thread in another module and unload this later (hot reloading?)
+   ThrFrame->LastThrdHnd = ThrFrame->ThreadHndl;    
+   ThrFrame->ExitCode    = res;
+#ifdef SYS_WINDOWS
+   NT::HANDLE hndl = ThrFrame->ThreadHndl;  // TODO: Memory barrier
+   ThrFrame->ThreadHndl  = 0;  // The system will not clear this for us  // Windows will not clear ThreadID either!
+   ThrFrame->ThreadID    = 0;
+   SAPI::NtClose(hndl);        // If we close this handle before TerminateThread then anyone who waits on the handle will get ABORT notification. GetExitCodeThread will not be returning the valid exit code yet but we do not use that anyway 
+#endif
+   NTHD::ReleaseRec((NTHD::SThCtx**)(ThrFrame->SelfPtr));     // TODO: Remove from mem rec. For now: Keep the stack memory to be reused by another new thread (Cannot deallocate stack without ASM, the compiler won`t store 'res' in a register and will touch the stack for some other useless reasons anyway)
+  }
+ NAPI::exit(res);  // Any ABI preserved registers are not important at this point  ThProc(nullptr,0)
+} 
+//------------------------------------------------------------------------------------------------------------
+public:

@@ -3,9 +3,10 @@
 template<typename T, int ATerm=-1> class CArr    // TODO: Allocator based?
 {
  using Self = CArr<T,ATerm>;
+ static constexpr const sint DescLen  = 16;
  static constexpr const sint SizeIdx  = -1;
  static constexpr const sint ASizeIdx = -2;
- static constexpr const sint BeginIdx = (16/sizeof(uint));   // 2 on x64, 4 on x32
+ static constexpr const sint BeginIdx = (DescLen/sizeof(uint));   // 2 on x64, 4 on x32
  T* AData;
 
 //----------------------------------------------------------
@@ -20,7 +21,7 @@ static bool DeAllocate(vptr Ptr)      // TODO: Use allocator
 //----------------------------------------------------------
 static vptr Allocate(uint Len)
 {
- uint  flen = AlignP2Frwd(Len + sizeof(vptr), NPTM::MEMPAGESIZE);
+ uint  flen = AlignP2Frwd(Len + DescLen, NPTM::MEMPAGESIZE);
  void* fdat = (void*)NPTM::NAPI::mmap(nullptr, flen, PX::PROT_READ|PX::PROT_WRITE, PX::MAP_PRIVATE|PX::MAP_ANONYMOUS, -1, 0);    // NOTE: No attempts to grow inplace!!!
  if(NPTM::GetMMapErrFromPtr(fdat)){ DBGERR("Error: Failed to allocate!"); return nullptr; }
  uint* Ptr  = &((uint*)fdat)[BeginIdx];
@@ -29,10 +30,10 @@ static vptr Allocate(uint Len)
  return Ptr;
 }
 //----------------------------------------------------------
-static vptr ReAllocate(uint Len, vptr OldPtr)  // TODO: Use allocator   // TODO: use mremap
+static vptr ReAllocate(uint Len, vptr OldPtr)  // TODO: Use allocator   // TODO: use mremap    
 {
  if(!OldPtr)return Allocate(Len);
- uint flen = AlignP2Frwd(Len + sizeof(vptr), NPTM::MEMPAGESIZE);
+ uint flen = AlignP2Frwd(Len + DescLen, NPTM::MEMPAGESIZE);
  if(flen <= ((uint*)OldPtr)[ASizeIdx])   // Fits in last allocation
   {
    ((uint*)OldPtr)[SizeIdx] = Len;
@@ -69,7 +70,7 @@ sint TakeFrom(Self& arr)
  return 0;
 }
 //----------------------------------------------------------
-sint Assign(void* Items, uint Cnt=1)     // Cnt is in Items
+sint Assign(const void* Items, uint Cnt=1)     // Cnt is in Items
 {
  uint NewLen = Cnt * sizeof(T);
  if(sint res=this->SetLength(NewLen);res < 0)return res;
@@ -77,17 +78,17 @@ sint Assign(void* Items, uint Cnt=1)     // Cnt is in Items
  return 0;
 }
 //----------------------------------------------------------
-sint Append(void* Items, uint Cnt=1)     // Cnt is in Items
+sint Append(const void* Items, uint Cnt=1)     // Cnt is in Items
 {
  uint OldSize = this->Size();
  uint NewLen  = Cnt * sizeof(T);
  if(sint res=this->SetLength(OldSize+NewLen);res < 0)return res;
  if(Items)memcpy(&((uint8*)this->AData)[OldSize], Items, NewLen);
- DBGMSG("DST=%p, SRC=%p, LEN=%08X",&((uint8*)this->AData)[OldSize], Items, NewLen);
+ //DBGTRC("DST=%p, SRC=%p, LEN=%08X",&((uint8*)this->AData)[OldSize], Items, NewLen);
  return 0;
 }
 //----------------------------------------------------------
-sint Insert(void* Items, uint Cnt, uint At)
+sint Insert(const void* Items, uint Cnt, uint At)
 {
  uint OldSize = this->Size();
  uint ExtLen  = Cnt * sizeof(T);

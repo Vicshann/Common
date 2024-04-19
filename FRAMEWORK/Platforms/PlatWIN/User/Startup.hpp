@@ -219,8 +219,7 @@ struct SSINF
  achar  SysDrive[8];
  sint32 UTCOffs; // In seconds
  uint32 Flags;
- NTHD::SThCtx MainTh;    // Main(Init/Entry) thread // A thread from which the framework is initialized at main entry point for a module/app (For modules this is NOT the app`s process main thread)
- NTHD::SThInf* ThreadInfo;  // For additional threads (Null if only entry thread is used)
+ NTHD::STDesc thd;
 
 } static inline fwsinf = {};
 //------------------------------------------------------------------------------------------------------------
@@ -229,6 +228,7 @@ static _finline const wchar* GetArgV(void){return NT::NtCurrentTeb()->ProcessEnv
 static _finline const wchar* GetEnvP(void){return NT::NtCurrentTeb()->ProcessEnvironmentBlock->ProcessParameters->Environment;}            // Block of null-terminated strings, last is 0
 static _finline bool IsInitialized(void){return  fwsinf.Flags & sfInitialized;}
 static _finline void UpdateTZOffsUTC(void){fwsinf.UTCOffs = sint32(-NTX::GetTimeZoneBias() / NDT::SECS_TO_FT_MULT);}   // Number of 100-ns intervals in a second
+static _finline NTHD::STDesc* GetThDesc(void){return &fwsinf.thd;}
 //------------------------------------------------------------------------------------------------------------
 
 public:
@@ -239,134 +239,6 @@ static _finline PX::fdsc_t GetStdErr(void) {return (PX::fdsc_t)NT::NtCurrentTeb(
 static _finline sint32 GetTZOffsUTC(void){return fwsinf.UTCOffs;}   // In seconds
 static _finline bool   IsLoadedByLdr(void) {return fwsinf.Flags & sfLoadedByLdr;}  // If loaded by loader then should return to the loader   // OnWindows, Any DLL that loaded by loader
 static _finline bool   IsDynamicLib(void) {return fwsinf.Flags & sfDynamicLib;}
-//------------------------------------------------------------------------------------------------------------
-// Copies a next param to user`s buffer
-// Set AOffs to 0 initially and expect it to be -1 when there are no more args
-//
-static sint GetCLArg(sint& AOffs, achar* DstBuf, uint DstCCnt=uint(-1))    // Enumerate and copy     // NOTE: Copying is inefficient!
-{
- wchar SFchB = '\"';
- wchar SFchE = '\"';
- const wchar* CLBase  = &GetArgV()[AOffs];
- const wchar* CmdLine = CLBase;
- if(DstBuf)*DstBuf = 0;
- while(*CmdLine && (*CmdLine <= 0x20))CmdLine++;  // Skip any spaces before
- if(!*CmdLine){AOffs=-1; return 0;}   // No more args
- if(*CmdLine == SFchB)CmdLine++;  // Skip opening quote
-   else SFchE = 0x20;             // No quotes, scan until a first space
- if(!DstBuf)return (sint)SizeOfWStrAsUtf8(CmdLine, uint(-1), SFchE) + 4;       // Calculate buffer size for current argument    // +Space for terminating 0
-
- uint SrcLen = uint(-1);      // TODO: Replace with MaxUint or MAX_UINT
- WStrToUtf8(DstBuf, CmdLine, DstCCnt, SrcLen, SFchE);
- wchar LastCh = CmdLine[SrcLen];
- if((LastCh != SFchE) && LastCh)  // Dst is full, find end of the argument
-  {
-   sint pos = NSTR::ChrOffset(&CmdLine[SrcLen], SFchE);
-   if(pos < 0){AOffs = -1; return (sint)DstCCnt;}  // No more args
-   SrcLen += (uint)pos;
-  }
- DstBuf[DstCCnt] = 0;
-
- CmdLine = &CmdLine[SrcLen];
- if(*CmdLine)CmdLine++; // Skip last Quote or Space
- while(*CmdLine && (*CmdLine <= 0x20))CmdLine++; // Skip any spaces after it to point at next argument
- if(*CmdLine)AOffs += CmdLine - CLBase;
-  else AOffs = -1;  // No more args
- return (sint)DstCCnt;
-}
-//------------------------------------------------------------------------------------------------------------
-static sint GetEnvVar(sint& AOffs, achar* DstBuf, uint DstCCnt=uint(-1))   // Enumerate and copy     // NOTE: Copying is inefficient!
-{
- uint SrcLen = 0;
- const syschar* evar = GetEnvVar(AOffs, &SrcLen);
- if(!evar)return 0;
- if(!DstBuf)return (sint)SizeOfWStrAsUtf8(evar, SrcLen, 0) + 4;       // Calculate buffer size for current name+value    // +Space for terminating 0
- WStrToUtf8(DstBuf, evar, DstCCnt, SrcLen, 0);
- return (sint)DstCCnt;
-}
-//------------------------------------------------------------------------------------------------------------
-static sint GetEnvVar(const achar* Name, achar* DstBuf, uint DstCCnt=uint(-1))   // Find by name and copy   // NOTE: Copying is inefficient!
-{
- sint AOffs = 0;
- uint  Size = 0;
- bool Unnamed = !Name || !*Name;
- syschar* evar = nullptr;
- while((evar=(syschar*)GetEnvVar(AOffs, &Size)))
-  {
-   sint spos = NSTR::ChrOffset(evar, '=');
-   if(spos < 0)continue;  // No separator!
-   if((!spos && Unnamed) || NSTR::IsStrEqualCS(Name, evar, (size_t)spos))
-    {
-     uint offs = uint(spos+1);
-     Size -= offs;
-     if(!DstBuf)return (sint)SizeOfWStrAsUtf8(&evar[offs], Size, 0) + 4;       // Calculate buffer size for current value    // +Space for terminating 0
-     WStrToUtf8(DstBuf, &evar[offs], DstCCnt, Size, 0);
-     return (sint)DstCCnt;
-    }
-  }
- return -1;
-}
-//------------------------------------------------------------------------------------------------------------
-static const syschar* GetCLArg(sint& AOffs, uint* Size=nullptr)       // Enumerate     // NOTE: Not null-terminated on Windows
-{
- wchar SFchB = '\"';
- wchar SFchE = '\"';
- const wchar* CLBase  = &GetArgV()[AOffs];
- const wchar* CmdLine = CLBase;
- while(*CmdLine && (*CmdLine <= 0x20))CmdLine++;  // Skip any spaces before
- if(!*CmdLine){AOffs=-1; return nullptr;}   // No more args
- if(*CmdLine == SFchB)CmdLine++;  // Skip opening quote
-   else SFchE = 0x20;             // No quotes, scan until a first space
-
- uint SrcLen = 0;
- while((CmdLine[SrcLen] ^ SFchE) && CmdLine[SrcLen])SrcLen++;   // Optimize?
-
- const wchar* EndPtr = &CmdLine[SrcLen];
- if(*EndPtr)EndPtr++; // Skip last Quote or Space
- while(*EndPtr && (*EndPtr <= 0x20))EndPtr++; // Skip any spaces after it to point at next argument
- if(*EndPtr)AOffs += EndPtr - CLBase;
-  else AOffs = -1;  // No more args
- if(Size)*Size = SrcLen;
- return CmdLine;
-}
-//------------------------------------------------------------------------------------------------------------
-static const syschar* GetEnvVar(sint& AOffs, uint* Size=nullptr)      // Enumerate
-{
- if(AOffs < 0)return nullptr;    // Already finished
- const wchar* vars = &GetEnvP()[AOffs];
- if(!*vars){AOffs = -1; return nullptr;}   // No EVars!
- uint VarLen = NSTR::StrLen(vars);
- if(Size)*Size = VarLen;
- VarLen += uint(AOffs + 1);
- if(vars[VarLen])AOffs = (sint)VarLen;
-  else AOffs = -1;      // End of the EVAR list
- return vars;
-}
-//------------------------------------------------------------------------------------------------------------
-static const syschar* GetEnvVar(const achar* Name, uint* Size=nullptr)          // Find by name     // (No Unicode support in names!)
-{
- sint AOffs = 0;
- bool Unnamed = !Name || !*Name;
- syschar* evar = nullptr;
- while((evar=(syschar*)GetEnvVar(AOffs, Size)))
-  {
-   sint spos = NSTR::ChrOffset(evar, '=');
-   if(spos < 0)continue;  // No separator!
-   if((!spos && Unnamed) || NSTR::IsStrEqualCS(Name, evar, (size_t)spos))
-    {
-     if(Size)*Size -= uint(spos+1);
-     return &evar[spos+1];
-    }
-  }
- return nullptr;
-}
-//------------------------------------------------------------------------------------------------------------
-// AppleInfo on MacOS
-static sint GetAuxInfo(uint InfoID, void* DstBuf, size_t BufSize)
-{
- //GetAuxVRec(size_t Type)
- return -1;
-}
 //------------------------------------------------------------------------------------------------------------
 static _finline vptr   GetModuleBase(void){return fwsinf.ModBase;}
 static _finline size_t GetModuleSize(void){return fwsinf.ModSize;}
@@ -383,43 +255,6 @@ static sint _finline GetModulePath(achar* DstBuf, size_t BufSize=size_t(-1))
 
  return 0;
 }
-//------------------------------------------------------------------------------------------------------------
-static NTHD::SThCtx* GetThreadSelf(void)     // Probably can find it faster by scanning stack pages forward and testing for SThCtx at beginning
-{
- return GetThreadByAddr(GETSTKFRAME());
-}
-//------------------------------------------------------------------------------------------------------------
-static NTHD::SThCtx* GetThreadByID(uint id)
-{
- if((id == (uint)-1)||(id == fwsinf.MainTh.ThreadID))return &fwsinf.MainTh;
- if(!fwsinf.ThreadInfo)return nullptr; // No more threads
- NTHD::SThCtx** ptr = fwsinf.ThreadInfo->FindThByTID(id);
- if(!ptr)return nullptr;
- return NTHD::ReadRecPtr(ptr);
-}
-//------------------------------------------------------------------------------------------------------------
-static NTHD::SThCtx* GetThreadByHandle(uint hnd)
-{
- if((hnd == (uint)-1)||(hnd == fwsinf.MainTh.ThreadHndl))return &fwsinf.MainTh;
- if(!fwsinf.ThreadInfo)return nullptr; // No more threads
- NTHD::SThCtx** ptr = fwsinf.ThreadInfo->FindThByHandle(hnd);
- if(!ptr)return nullptr;
- return NTHD::ReadRecPtr(ptr);
-}
-//------------------------------------------------------------------------------------------------------------
-static NTHD::SThCtx* GetThreadByAddr(vptr addr)   // By an address on stack
-{
- if(((uint8*)addr >= (uint8*)fwsinf.MainTh.StkBase)&&((uint8*)addr < ((uint8*)fwsinf.MainTh.StkBase + fwsinf.MainTh.StkSize)))return &fwsinf.MainTh;
- if(!fwsinf.ThreadInfo)return nullptr; // No more threads
- NTHD::SThCtx** ptr = fwsinf.ThreadInfo->FindThByStack(addr);
- if(!ptr)return nullptr;
- return NTHD::ReadRecPtr(ptr);
-}
-//------------------------------------------------------------------------------------------------------------
-/*static NTHD::SThCtx* GetNextThread(NTHD::SThCtx* th) // Get thread by index?   // Start from NULL    // Need to think
-{
- return nullptr;
-}*/
 //------------------------------------------------------------------------------------------------------------
 static sint InitStartupInfo(vptr StkFrame=nullptr, vptr ArgA=nullptr, vptr ArgB=nullptr, vptr ArgC=nullptr)
 {
@@ -458,7 +293,7 @@ static void DbgLogStartupInfo(void)
  LOGDBG("CArguments: ");
  for(uint idx=0;aoff >= 0;idx++)
   {
-   const syschar* val = NPTM::GetCLArg(aoff, &alen);
+   const syschar* val = NPTM::SkipCLArg(aoff, &alen);
    LOGDBG("  Arg %u: %.*ls",idx,alen,val);     // NOTE: Terminal should support UTF8
   }
  LOGDBG("EVariables: ");

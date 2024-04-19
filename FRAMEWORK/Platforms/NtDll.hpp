@@ -29,6 +29,7 @@ using USHORT    = uint16;
 using WCHAR     = wchar;
 using BOOLEAN   = BYTE;
 using NTSTATUS  = ULONG;
+using LONGLONG  = sint64;
 using ULONGLONG = uint64;
 using ULONG_PTR = SIZE_T;
 // All pointers must be aligned to PHT size to make a correct stack frame
@@ -52,6 +53,8 @@ using PLARGE_INTEGER  = SPTR<LARGE_INTEGER, PHT>;
 using PULARGE_INTEGER = SPTR<ULARGE_INTEGER, PHT>;
 
 
+SCVR HANDLE NtInvalidHandle  = ((HANDLE)(size_t)-1);
+
 SCVR HANDLE NtCurrentThread  = ((HANDLE)(size_t)-2);   // HANDLE had to be made SIZE_T instead of PVOID because such constants is forbidden to create
 SCVR HANDLE NtCurrentProcess = ((HANDLE)(size_t)-1);   // HACK: static constexpr const void* ptr = __builtin_constant_p( reinterpret_cast<const void*>(0x1) ) ? reinterpret_cast<const void*>(0x1) : reinterpret_cast<const void*>(0x1)  ;
 
@@ -60,7 +63,6 @@ static _finline bool NT_ERROR(NTSTATUS Status){return (Status >> 30) == 3;}  //#
 //============================================================================================================
 //                                          CORE FUNCTIONS
 //============================================================================================================
-
 enum EMFlags
 {
 // Memory protection flags
@@ -416,15 +418,21 @@ using PFILE_INFORMATION_CLASS = SPTR<FILE_INFORMATION_CLASS, PHT>;
 
 enum MEMORY_INFORMATION_CLASS
 {
- MemoryBasicInformation,          // MEMORY_BASIC_INFORMATION
- MemoryWorkingSetInformation,     // MEMORY_WORKING_SET_INFORMATION
- MemoryMappedFilenameInformation, // UNICODE_STRING
- MemoryRegionInformation,         // MEMORY_REGION_INFORMATION
- MemoryWorkingSetExInformation,   // MEMORY_WORKING_SET_EX_INFORMATION
- MemorySharedCommitInformation,   // MEMORY_SHARED_COMMIT_INFORMATION
- MemoryImageInformation,          // MEMORY_IMAGE_INFORMATION
+ MemoryBasicInformation,           // MEMORY_BASIC_INFORMATION
+ MemoryWorkingSetInformation,      // MEMORY_WORKING_SET_INFORMATION
+ MemoryMappedFilenameInformation,  // UNICODE_STRING
+ MemoryRegionInformation,          // MEMORY_REGION_INFORMATION
+ MemoryWorkingSetExInformation,    // MEMORY_WORKING_SET_EX_INFORMATION
+ MemorySharedCommitInformation,    // MEMORY_SHARED_COMMIT_INFORMATION
+ MemoryImageInformation,           // MEMORY_IMAGE_INFORMATION
  MemoryRegionInformationEx,
- MemoryPrivilegedBasicInformation
+ MemoryPrivilegedBasicInformation,
+ MemoryEnclaveImageInformation,    // MEMORY_ENCLAVE_IMAGE_INFORMATION // since REDSTONE3
+ MemoryBasicInformationCapped,     // 10
+ MemoryPhysicalContiguityInformation, // MEMORY_PHYSICAL_CONTIGUITY_INFORMATION // since 20H1
+ MemoryBadInformation,             // since WIN11
+ MemoryBadInformationAllProcesses, // since 22H1
+ MaxMemoryInfoClass
 };
 
 enum SECTION_INFORMATION_CLASS
@@ -435,6 +443,44 @@ enum SECTION_INFORMATION_CLASS
  SectionOriginalBaseInformation,  // PVOID BaseAddress
  SectionInternalImageInformation, // SECTION_INTERNAL_IMAGE_INFORMATION // since REDSTONE2
  MaxSectionInfoClass
+};
+
+struct MEMORY_REGION_INFORMATION
+{
+ PVOID AllocationBase;
+ ULONG AllocationProtect;
+ union
+ {
+  ULONG RegionType;
+  struct
+  {
+   ULONG Private : 1;
+   ULONG MappedDataFile : 1;
+   ULONG MappedImage : 1;
+   ULONG MappedPageFile : 1;
+   ULONG MappedPhysical : 1;
+   ULONG DirectMapped : 1;
+   ULONG Reserved : 26;
+  } s;
+ } u;
+ SIZE_T RegionSize;
+ SIZE_T CommitSize;
+};
+
+struct MEMORY_IMAGE_INFORMATION
+{
+ PVOID ImageBase;
+ SIZE_T SizeOfImage;
+ union
+ {
+  ULONG ImageFlags;
+  struct
+  {
+   ULONG ImagePartialMap : 1;
+   ULONG ImageNotExecutable : 1;
+   ULONG Reserved : 30;
+  };
+ };
 };
 
 // FILE_DIRECTORY_INFORMATION definition from Windows DDK. Used by NtQueryDirectoryFile, supported since Windows NT 4.0 (probably).
@@ -686,7 +732,7 @@ struct USER_STACK     // Same as INITIAL_TEB
  PVOID ExpandableStackBase;
  PVOID ExpandableStackLimit;
  PVOID ExpandableStackBottom;
-}; 
+};
 using PUSER_STACK = SPTR<USER_STACK, PHT>;
 
 struct INITIAL_TEB
@@ -883,11 +929,17 @@ static NTSTATUS _scall NtTerminateThread(HANDLE ThreadHandle, NTSTATUS ExitStatu
 static NTSTATUS _scall NtLoadDriver(PUNICODE_STRING DriverServiceName);
 static NTSTATUS _scall NtUnloadDriver(PUNICODE_STRING DriverServiceName);
 
+static NTSTATUS _scall NtFsControlFile(HANDLE FileHandle, HANDLE Event, PIO_APC_ROUTINE ApcRoutine, PVOID ApcContext, PIO_STATUS_BLOCK IoStatusBlock, ULONG FsControlCode, PVOID InputBuffer, ULONG InputBufferLength, PVOID OutputBuffer, ULONG OutputBufferLength);
+static NTSTATUS _scall NtDeviceIoControlFile(HANDLE FileHandle, HANDLE Event, PIO_APC_ROUTINE ApcRoutine, PVOID ApcContext, PIO_STATUS_BLOCK IoStatusBlock, ULONG IoControlCode, PVOID InputBuffer, ULONG InputBufferLength, PVOID OutputBuffer, ULONG OutputBufferLength);
+
 // Object manipulation
 
 // A temporary object has a name only as long as its handle count is greater than zero. When the handle count reaches zero, the system deletes the object name and appropriately adjusts the object's pointer count.
 static NTSTATUS _scall NtMakeTemporaryObject(HANDLE Handle);
 static NTSTATUS _scall NtMakePermanentObject(HANDLE Handle);
+
+//------------------------------------------------------------------------------------------------------------
+#include "NtIoCtrl.hpp"
 
 //------------------------------------------------------------------------------------------------------------
 //  Doubly linked list structure.  Can be used as either a list head, or as link words.
@@ -1032,21 +1084,21 @@ struct M128A
  sint64 High;
 };
 
-struct XMM_SAVE_AREA32 
+struct XMM_SAVE_AREA32
 {
- WORD   ControlWord;   
- WORD   StatusWord;    
- BYTE   TagWord;       
- BYTE   Reserved1;     
- WORD   ErrorOpcode;   
- DWORD  ErrorOffset;   
- WORD   ErrorSelector; 
- WORD   Reserved2;     
- DWORD  DataOffset;    
- WORD   DataSelector;  
- WORD   Reserved3;     
- DWORD  MxCsr;         
- DWORD  MxCsr_Mask;    
+ WORD   ControlWord;
+ WORD   StatusWord;
+ BYTE   TagWord;
+ BYTE   Reserved1;
+ WORD   ErrorOpcode;
+ DWORD  ErrorOffset;
+ WORD   ErrorSelector;
+ WORD   Reserved2;
+ DWORD  DataOffset;
+ WORD   DataSelector;
+ WORD   Reserved3;
+ DWORD  MxCsr;
+ DWORD  MxCsr_Mask;
  M128A  FloatRegisters[8];
  M128A  XmmRegisters[16];
  BYTE   Reserved4[96];
@@ -1095,7 +1147,7 @@ enum CONTEXT_FLAGS_X86X64
 struct alignas(16) CONTEXT_X86X32     // Aligned to 16 in case of WOW64
 {
  DWORD ContextFlags;
- 
+
 // This section is specified/returned if CONTEXT_DEBUG_REGISTERS is set in ContextFlags.  Note that CONTEXT_DEBUG_REGISTERS is NOT included in CONTEXT_FULL.
  DWORD   Dr0;
  DWORD   Dr1;
@@ -1103,16 +1155,16 @@ struct alignas(16) CONTEXT_X86X32     // Aligned to 16 in case of WOW64
  DWORD   Dr3;
  DWORD   Dr6;
  DWORD   Dr7;
- 
+
 // This section is specified/returned if the ContextFlags word contians the flag CONTEXT_FLOATING_POINT.
  FLOATING_SAVE_AREA FloatSave;
- 
+
 // This section is specified/returned if the ContextFlags word contians the flag CONTEXT_SEGMENTS.
  DWORD   SegGs;
  DWORD   SegFs;
  DWORD   SegEs;
  DWORD   SegDs;
- 
+
 // This section is specified/returned if the ContextFlags word contians the flag CONTEXT_INTEGER.
  DWORD   Edi;
  DWORD   Esi;
@@ -1120,20 +1172,20 @@ struct alignas(16) CONTEXT_X86X32     // Aligned to 16 in case of WOW64
  DWORD   Edx;
  DWORD   Ecx;
  DWORD   Eax;
- 
-// This section is specified/returned if the ContextFlags word contians the flag CONTEXT_CONTROL. 
+
+// This section is specified/returned if the ContextFlags word contians the flag CONTEXT_CONTROL.
  DWORD   Ebp;
  DWORD   Eip;
  DWORD   SegCs;              // MUST BE SANITIZED
  DWORD   EFlags;             // MUST BE SANITIZED
  DWORD   Esp;
  DWORD   SegSs;
- 
+
 // This section is specified/returned if the ContextFlags word contains the flag CONTEXT_EXTENDED_REGISTERS. The format and contexts are processor specific
  BYTE    ExtendedRegisters[512];   // MAXIMUM_SUPPORTED_EXTENSION
 };
 
-struct alignas(16) CONTEXT_X86X64 
+struct alignas(16) CONTEXT_X86X64
 {
 // Register parameter home addresses.  // N.B. These fields are for convience - they could be used to extend the context record in the future.
  QWORD P1Home;
@@ -1222,7 +1274,7 @@ struct alignas(16) CONTEXT_X86X64
  QWORD LastExceptionFromRip;
 };
 
-using CONTEXT    = TSW<IsArchX64, CONTEXT_X86X64, CONTEXT_X86X32>::T; 
+using CONTEXT    = TSW<IsArchX64, CONTEXT_X86X64, CONTEXT_X86X32>::T;
 using CONTEXT64  = CONTEXT_X86X64;
 using CONTEXT32  = CONTEXT_X86X32;
 
@@ -1233,24 +1285,24 @@ using PCONTEXT32 = SPTR<CONTEXT_X86X32, PHT>;
 #ifdef ARCH_X64
 enum CONTEXT_FLAGS
 {
- CONTEXT_CONTROL            = CONTEXT_A64_CONTROL, 
+ CONTEXT_CONTROL            = CONTEXT_A64_CONTROL,
  CONTEXT_INTEGER            = CONTEXT_A64_INTEGER,
- CONTEXT_SEGMENTS           = CONTEXT_A64_SEGMENTS, 
- CONTEXT_FLOATING_POINT     = CONTEXT_A64_FLOATING_POINT, 
- CONTEXT_DEBUG_REGISTERS    = CONTEXT_A64_DEBUG_REGISTERS, 
- CONTEXT_EXTENDED_REGISTERS = CONTEXT_A64_DEBUG_REGISTERS, 
+ CONTEXT_SEGMENTS           = CONTEXT_A64_SEGMENTS,
+ CONTEXT_FLOATING_POINT     = CONTEXT_A64_FLOATING_POINT,
+ CONTEXT_DEBUG_REGISTERS    = CONTEXT_A64_DEBUG_REGISTERS,
+ CONTEXT_EXTENDED_REGISTERS = CONTEXT_A64_DEBUG_REGISTERS,
  CONTEXT_FULL = CONTEXT_A64_FULL,
  CONTEXT_ALL  = CONTEXT_A64_ALL
 };
 #else
 enum CONTEXT_FLAGS
 {
- CONTEXT_CONTROL            = CONTEXT_X86_CONTROL, 
+ CONTEXT_CONTROL            = CONTEXT_X86_CONTROL,
  CONTEXT_INTEGER            = CONTEXT_X86_INTEGER,
- CONTEXT_SEGMENTS           = CONTEXT_X86_SEGMENTS, 
- CONTEXT_FLOATING_POINT     = CONTEXT_X86_FLOATING_POINT, 
- CONTEXT_DEBUG_REGISTERS    = CONTEXT_X86_DEBUG_REGISTERS, 
- CONTEXT_EXTENDED_REGISTERS = CONTEXT_X86_EXTENDED_REGISTERS, 
+ CONTEXT_SEGMENTS           = CONTEXT_X86_SEGMENTS,
+ CONTEXT_FLOATING_POINT     = CONTEXT_X86_FLOATING_POINT,
+ CONTEXT_DEBUG_REGISTERS    = CONTEXT_X86_DEBUG_REGISTERS,
+ CONTEXT_EXTENDED_REGISTERS = CONTEXT_X86_EXTENDED_REGISTERS,
  CONTEXT_FULL = CONTEXT_X86_FULL,
  CONTEXT_ALL  = CONTEXT_X86_ALL
 };
@@ -1271,6 +1323,18 @@ enum ECtxFlgARM    // Arm64  // Do not want to bother implementing boolean opera
  CONTEXT_ARM_DEBUG_REGISTERS = (CONTEXT_ARM | 0x00000008),
  CONTEXT_ARM_FULL            = (CONTEXT_ARM_CONTROL | CONTEXT_ARM_INTEGER),
  CONTEXT_ARM_ALL             = (CONTEXT_ARM_FULL | CONTEXT_ARM_FLOATING_POINT | CONTEXT_ARM_DEBUG_REGISTERS),
+};
+
+union ARM64_NT_NEON128
+{
+ struct {
+        ULONGLONG Low;
+        LONGLONG High;
+ } DUMMYSTRUCTNAME;
+    double D[2];
+    float  S[4];
+    WORD   H[8];
+    BYTE   B[16];
 };
 
 struct CONTEXT_ARM64    // _ARM64_NT_CONTEXT
@@ -1324,7 +1388,7 @@ struct CONTEXT_ARM64    // _ARM64_NT_CONTEXT
   QWORD            Wvr[ARM64_MAX_WATCHPOINTS];
 };
 
-using CONTEXT    = CONTEXT_ARM64; 
+using CONTEXT    = CONTEXT_ARM64;
 using CONTEXT64  = CONTEXT_ARM64;
 using CONTEXT32  = void;
 
@@ -1334,16 +1398,23 @@ using PCONTEXT32 = PVOID;    // Nonexistent
 
 enum CONTEXT_FLAGS
 {
- CONTEXT_CONTROL            = CONTEXT_ARM_CONTROL, 
+ CONTEXT_CONTROL            = CONTEXT_ARM_CONTROL,
  CONTEXT_INTEGER            = CONTEXT_ARM_INTEGER,
- CONTEXT_SEGMENTS           = 0, 
- CONTEXT_FLOATING_POINT     = CONTEXT_ARM_FLOATING_POINT, 
- CONTEXT_DEBUG_REGISTERS    = CONTEXT_ARM_DEBUG_REGISTERS, 
- CONTEXT_EXTENDED_REGISTERS = 0, 
+ CONTEXT_SEGMENTS           = 0,
+ CONTEXT_FLOATING_POINT     = CONTEXT_ARM_FLOATING_POINT,
+ CONTEXT_DEBUG_REGISTERS    = CONTEXT_ARM_DEBUG_REGISTERS,
+ CONTEXT_EXTENDED_REGISTERS = 0,
  CONTEXT_FULL = CONTEXT_ARM_FULL,
  CONTEXT_ALL  = CONTEXT_ARM_ALL
 };
 #endif
+//------------------------------------------------------------------------------------------------------------
+#if defined(ARCH_X32) && defined(CPU_ARM)
+using PCONTEXT   = void*;           // Linux will not compile without this
+#endif
+
+static NTSTATUS _scall NtGetContextThread(HANDLE ThreadHandle, PCONTEXT ThreadContext);
+static NTSTATUS _scall NtSetContextThread(HANDLE ThreadHandle, PCONTEXT ThreadContext);
 //------------------------------------------------------------------------------------------------------------
 SCVR uint FLS_MAXIMUM_AVAILABLE = 128;
 SCVR uint TLS_MINIMUM_AVAILABLE = 64;
@@ -1597,7 +1668,7 @@ struct TIB
 using PTIB = SPTR<TIB, PHT>;
 //------------------------------------------------------------------------------------------------------------
 // http://bytepointer.com/resources/tebpeb64.htm
-// https://redplait.blogspot.com/2011/09/w8-64bit-teb-peb.html 
+// https://redplait.blogspot.com/2011/09/w8-64bit-teb-peb.html
 // https://github.com/giampaolo/psutil/
 //      http://terminus.rewolf.pl/terminus/structures/ntdll/_PEB_x64.html
 //      http://terminus.rewolf.pl/terminus/structures/ntdll/_TEB64_x86.html
@@ -2052,6 +2123,16 @@ enum PROCESSINFOCLASS
     MaxProcessInfoClass
 };
 
+struct THREAD_BASIC_INFORMATION
+{
+    NTSTATUS  ExitStatus;
+    PVOID     TebBaseAddress;
+    CLIENT_ID ClientId;
+    ULONG_PTR AffinityMask;
+    KPRIORITY Priority;
+    LONG      BasePriority;
+};
+
 struct PROCESS_BASIC_INFORMATION
 {
  NTSTATUS  ExitStatus;
@@ -2132,7 +2213,7 @@ enum EThreadAccess     // Combines with EFMisc1
  THREAD_QUERY_INFORMATION         = 0x0040,
  THREAD_SET_THREAD_TOKEN          = 0x0080,
  THREAD_IMPERSONATE               = 0x0100,
- THREAD_DIRECT_IMPERSONATION      = 0x0200,                       
+ THREAD_DIRECT_IMPERSONATION      = 0x0200,
  THREAD_SET_LIMITED_INFORMATION   = 0x0400,
  THREAD_QUERY_LIMITED_INFORMATION = 0x0800,
  THREAD_ALL_ACCESS                = 0x1FFFFF,  // < Vista:  0x3FF
@@ -2234,7 +2315,7 @@ using NT32 = NNTDLL<uint32>;
 using NT64 = NNTDLL<uint64>;
 //============================================================================================================
 /*
- https://github.com/NetSPI/MonkeyWorks/   // C# NT definitions 
+ https://github.com/NetSPI/MonkeyWorks/   // C# NT definitions
 */
 
 

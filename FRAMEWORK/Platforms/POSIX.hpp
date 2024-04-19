@@ -7,6 +7,7 @@
 // https://man7.org/linux/man-pages/man2/syscalls.2.html
 // https://filippo.io/linux-syscall-table/
 // https://marcin.juszkiewicz.com.pl/download/tables/syscalls.html
+// NOTE!!: https://pkg.go.dev/syscall
 
 // Only most useful POSIX functions will go here for now
 // NOTE: We should be able to use these definitions to call X64 functions from X32 code if necessary (Windows only
@@ -65,7 +66,7 @@ template<uint vARM, uint vX86> struct ASV
  using PINT64   = SPTR<int64, PHT>;
  using PUINT8   = SPTR<uint8, PHT>;
  using mode_t   = int32;  //uint32;
- using fdsc_t   = int32;
+ using fdsc_t   = SSIZE_T;	// NOTE: Shouls be of a pointer size for platform compatibility
  using dev_t    = uint32;    // See makedev macro
  //using off_t    = int64;
  using pid_t    = SSIZE_T;   // Should be of size_t size to contain extra info on x64 if needed
@@ -349,8 +350,8 @@ static int PXCALL close(fdsc_t fd);
 
 struct iovec
 {
- PVOID  iov_base;   // base address
- SIZE_T iov_len;    // length
+ PVOID  base;   // base address
+ SIZE_T size;   // length
 };
 
 using PIOVec = SPTR<iovec,   PHT>;
@@ -380,10 +381,16 @@ enum ESeek
 // Negative return values are error codes
 static SSIZE_T PXCALL lseek(fdsc_t fd, SSIZE_T offset, ESeek whence);   // This definition is not good for X32, use INT64 (lseekGD) declaration and llseek wrapper on X32
 
-static int64 PXCALL lseekGD(fdsc_t fd, int64 offset, ESeek whence);   // Generic definition, wraps lseek(on x64) and llseek(on x32)
+static sint64 PXCALL lseekGD(fdsc_t fd, int64 offset, ESeek whence);   // Generic definition, wraps lseek(on x64) and llseek(on x32)
 
 // x32 only(Not present on x64)!
 static int PXCALL llseek(fdsc_t fd, uint32 offset_high, uint32 offset_low, PINT64 result, ESeek whence);
+
+// Truncate/enlarge a file (On Linux extended bytes read as 0)
+// 64bit offsets since Linuc 2.4
+static int PXCALL ftruncate(fdsc_t fd, int64 length);	  // ftruncate64 on x32	systems
+
+static int PXCALL truncate(const achar* path, int64 length);   // truncate64 on x32	systems	  // NOTE: There is no 'At' variant so better to avoid it for consistency
 
 // Attempts to create a directory named pathname.
 static int PXCALL mkdir(PCCHAR pathname, mode_t mode);
@@ -480,7 +487,9 @@ enum EDNotify  // Types of directory notifications that may be requested with fc
  DN_MULTISHOT  = 0x80000000    // Don't remove notifier
 };
 
-static int PXCALL fcntl(fdsc_t fd, int cmd, SIZE_T arg);  // for a directory change notification (lagacy, Linux only) : https://linux.die.net/man/7/inotify
+static int PXCALL fcntl(fdsc_t fd, uint32 cmd, PVOID ArgPtr, PVOID ArgLen);  // for a directory change notification (lagacy, Linux only) : https://linux.die.net/man/7/inotify
+
+static int PXCALL ioctl(fdsc_t fd, uint32 cmd, PVOID ArgPtr, PVOID ArgLen);	 //	ArgLen is added for consistency (Especially useful on Windows)	// Size of size fields is supposed to be stored in the code value itself, but assume it to be uint32 (which is size_t on x32)
 
 enum EFDLock
 {
@@ -898,6 +907,13 @@ enum EMadv
  MADV_HWPOISON    = DCV< 100, 0 >::V,      // Poison a page for testing.
 };
 
+enum EMSyFlg   // Flags for msync
+{
+ MS_ASYNC      = 0x0001,    // sync memory asynchronously
+ MS_INVALIDATE = 0x0002,    // invalidate mappings & caches
+ MS_SYNC       = 0x0004,    // synchronous memory sync
+};
+
 // Used to give advice or directions to the kernel about the address range beginning at address addr and with size length bytes In most cases, the goal of such advice is to improve system or application performance.
 static int PXCALL madvise(PVOID addr, SIZE_T length, EMadv advice);
 
@@ -905,6 +921,43 @@ static int PXCALL msync(PVOID addr, SIZE_T len, int flags);
 static int PXCALL mlock(PCVOID addr, SIZE_T len);
 static int PXCALL munlock(PCVOID addr, SIZE_T len);
 
+// added in Linux 3.2
+// The flags argument is currently unused and must be set to 0
+// In order to read from or write to another process, either the caller must have the capability CAP_SYS_PTRACE, or the real user ID, effective user ID, and saved set-user-ID of the remote process 
+//   must match the real user ID of the caller and the real group ID, effective group ID, and saved set-group-ID of the remote process must match the real group ID of the caller.
+static SSIZE_T PXCALL process_vm_readv(pid_t pid, const PIOVec local_iov,SIZE_T liovcnt, const PIOVec remote_iov, SIZE_T riovcnt, SIZE_T flags);
+static SSIZE_T PXCALL process_vm_writev(pid_t pid, const PIOVec local_iov, SIZE_T liovcnt, const PIOVec remote_iov, SIZE_T riovcnt, SIZE_T flags);
+
+// BEWARE: There will be Corner Cases!
+// https://stackoverflow.com/questions/21311080/linux-shared-memory-shmget-vs-mmap
+// If your OS has /dev/shm/ then shm_open is equivalent to opening a file in /dev/shm/.
+// On OSX you want mmap as the max shared memory with shmget is only 4mb across all processes sadly
+// msync
+// NOTE: mmap needs a file handle for a named/unnamed shared memory or it it only can do an inheritable shared memory which is not well compatible with Windows
+//  but there is a problem with munmap which does not require a file handle on Linux but would do so on Windows
+// FileMapping: FileHandle->SectionHandle
+// NOTE: Use shared memorry wrapper, not this compatibility hack
+// Windows: After a file mapping object is created, the size of the file must not exceed the size of the file mapping object; if it does, not all of the file contents are available for sharing (No resizing)
+// If an application specifies a size for the file mapping object that is larger than the size of the actual named file on disk and if the page protection allows write access 
+// (that is, the flProtect parameter specifies PAGE_READWRITE or PAGE_EXECUTE_READWRITE), 
+// then the file on disk is increased to match the specified size of the file mapping object. 
+// If the file is extended, the contents of the file between the old end of the file and the new end of the file are not guaranteed to be zero; the behavior is defined by the file system. 
+// If the file on disk cannot be increased, CreateFileMapping fails and GetLastError returns ERROR_DISK_FULL
+//  Means: NO MAPPED FILE GROWTH!
+//  On windows, shared memory objects is garbage collected and removed when there is no more references
+// 'shm_open' is just a wrapper for 'openat'  // Not even present in libc 2.28 on ARM64
+// shm_open(3) on Linux relies on tmpfs, usually mounted under /dev/shm. What shm_open() does is to convert the object name into a file path by prepending it with the mount point of the tmpfs filesystem. 
+// Some way to enumerate mount points to figure out where tmpfs is actually mounted?
+// https://nullprogram.com/blog/2016/04/10/		 // <<< Mapping Multiple Memory Views in User Space.mhtml
+// On POSIX systems (Linux, *BSD, OS X, etc.), the three key functions are shm_open(3), ftruncate(2), and mmap(2).
+// Windows: FILE_ATTRIBUTE_TEMPORARY	// causes file systems to avoid writing data back to mass storage if sufficient cache memory is available  // At least something if an actual file handle is required (For fread/fwrite ?)
+
+// NOTE: Some older kernels segfault executing memfd_create() rather than returning ENOSYS  (Appeared in kernel 3.17, not supported by WSL1)	 // https://benjamintoll.com/2022/08/21/on-memfd_create/
+static int memfd_create(PCCHAR name, uint32 flags);	   // NOTE: The name is not important and can be duplicate  // Most similair on Windows, Linux and BSD for named memory mappings. Requires extra checks and emulation
+
+// https://stackoverflow.com/questions/55704758/is-there-anything-like-shm-open-without-filename
+// Unnamed(Windows - no name), Linux(memfd_create, if available), BSD (mkstemp/shm_mkstemp/shm_open(SHM_ANON))
+static int memfd_openGD(PCCHAR name, uint32 flags, uint64 size);	   // Generic definition for a named shared memory object  // shm_open() + ftruncate()	 // fstat/NtQuerySection
 // =========================================== SOCKET ==================================
 enum ESockCall  // socketcall calls  (x86_32 only)
 {
@@ -1115,23 +1168,10 @@ static pid_t  PXCALL cloneB1(uint32 flags, PVOID newsp, PINT32 parent_tid, PVOID
 // NOTE: Values other than -1 can be used in the future to do some actions between vfork and execve in format {ACTIONID1,OPTVAL1,...OPTVALN,ACTIONID2,OPTVAL,ACTIONID3,-1}
 // Current working directory is inherited (Same as fork/vfork)
 // siofd - list of file descriptors to share (Last is -1) to make some descriptor of current process into expected descriptor of a new process (IO redirection)
-//  On Windows maps only STDIN, STDOUT, STDERR to PEB anything else just duplicates
+//  On Windows maps only STDIN, STDOUT, STDERR to PEB anything else just duplicated
 // See posix_spawn for actions that may be required
 static pid_t  PXCALL spawn(PCCHAR path, PPCHAR argv, PPCHAR envp, PINT32 siofd, uint32 flags);    // Improvised  // int siofd[3]{STDIN,STDOUT,STDERR} // Flags are additional flags for Clone, unused for now
 
-static pid_t  PXCALL thread(NTHD::PThreadProc Proc, PVOID Data, SIZE_T DatSize, SIZE_T StkSize, SIZE_T TlsSize, uint32 Flags);  // Improvised   // Actually allocates: PageAlign(Size+StkSize+TlsSize+ThreadRec)
-static sint   PXCALL thread_sleep(uint64 ns);     // nleepns???	  // -1 - wait infinitely  // Sleeps on its futex	 // -1 sleep until termination
-static sint   PXCALL thread_exit(sint status);    // Allows to exit without returning from ThreadProc directly	   // Deallocate the thread`s stack memory?
-static sint   PXCALL thread_status(pid_t thid);	  // Use after waiting for a thread to finish
-static sint   PXCALL thread_kill(pid_t thid, sint status);    // Terminates the thread
-static sint   PXCALL thread_wait(pid_t thid, uint64 ns);      // Wati for the thread termination  // -1 - wait infinitely
-static sint   PXCALL thread_alert(pid_t thid, uint32 code);   // Wakes the thread from any wait	(thread_sleep)	// Like pthread_cancel	 // Cancel IO?
-static sint   PXCALL thread_affinity_set(pid_t thid, uint64 mask, uint32 from); 
-static sint   PXCALL thread_affinity_get(pid_t thid, size_t buf_len, PSIZE_T buf); 
-// CPU affinity
-// Suspend/Resume
-// Terminate
-// Exit?   (Not exit_group which terminates the entire app)
 
 static constexpr const int  WNOHANG    = 1;   // Don't block waiting.
 static constexpr const int  WUNTRACED  = 2;   // Report status of stopped children.

@@ -162,7 +162,7 @@ static constexpr bool IsDbgBuild = false;
 #define _used
 //#pragma code_seg(".xtext")
 #pragma section(".xtxt",execute,read)       // 'execute' will be ignored for a data declared with _codesec if the section name is '.text', another '.text' section will be created, not executable
-#define _codesec _declspec(allocate(".xtxt"))         
+#define _codesec _declspec(allocate(".xtxt"))
 #define _codesecn(n) _declspec(allocate(".xtxt"))
 #pragma comment(linker,"/MERGE:.xtxt=.text")     // Without this SAPI struct won`t go into executable '.text' section
 #else   // CLANG/GCC
@@ -172,6 +172,7 @@ static constexpr bool IsDbgBuild = false;
 #define GETSTKFRAME() __builtin_frame_address(0)  // NOTE: MINGW implements _AddressOfReturnAddress() with it  // Anything except 0 will use a stack frame register according to specified ABI // TODO: Rework! // On ARM there is no RetAddr on stack  // Should not include address of some previous stack frame (from 'push rbp' at proc addr)
 #define GETRETADDR() __builtin_extract_return_addr(__builtin_return_address(0))
 //#define SETRETADDR(addr) (*(void**)__builtin_frame_address(0) = __builtin_frob_return_addr((void*)(addr)))  // ARM?
+// TODO: _oinline - inlining for obfuscation when enabled (_finline is for optimization)
 
 #define _fcompact __attribute__((flatten))         // Inlines everything inside the marked function
 #define _ninline __attribute__((noinline))
@@ -199,6 +200,14 @@ static constexpr bool IsDbgBuild = false;
 #define _SYSENTRY extern "C" __attribute__((force_align_arg_pointer))
 #else
 #define _SYSENTRY extern "C"
+#endif
+
+#ifdef SYS_LINUX
+#define MODERN_INIT __attribute__((constructor))   // Adds DT_INIT_ARRAY+DT_INIT_ARRAYSZ // Needed bacause MUSL may be compiled without DT_INIT support (NO_LEGACY_INITFINI)
+#define MODERN_FINI __attribute__((destructor))
+#else
+#define MODERN_INIT
+#define MODERN_FINI
 #endif
 
 #define _NOMANGL extern "C" __attribute__((internal_linkage))    // Removes mangling and marks as internal again (Not working with memset and others)
@@ -286,8 +295,8 @@ static constexpr bool IsDbgBuild = false;
 #define UNUSED(expr) do { (void)(expr); } while (0)
 
 // Interface validator macros
-#define INTF_VALIDATE(fname,rettype,args...) static_assert(SameTypes<typename RemovePtr<decltype(static_cast<rettype(*)(args)>(fname))>::T, rettype (args)>::V, "");    // This will work with overloaded functions, including func(void)
-//#define INTF_VALIDATE(fname,rettype,args...) static_assert(SameTypes<decltype(fname), rettype (args)>::V, "");
+#define API_VALIDATE(fname,rettype,args...) static_assert(SameTypes<typename RemovePtr<decltype(static_cast<rettype(*)(args)>(fname))>::T, rettype (args)>::V, "");    // This will work with overloaded functions, including func(void)
+//#define API_VALIDATE(fname,rettype,args...) static_assert(SameTypes<decltype(fname), rettype (args)>::V, "");
 
 
 // This helps to create a function wrapper without copying its declared signature (If signatures is changed frequently during redesign it is a big hassle to keep the interfaces in sync)
@@ -392,8 +401,8 @@ pointer	    64	    64	    64	    32	    32
  using sint64  = signed long long;   // __int64_t
 
 #ifdef ARCH_X64          // Not present on X32
- using uint128 = unsigned __int128; 
- using sint128 = __int128; 
+ using uint128 = unsigned __int128;
+ using sint128 = __int128;
 #else
 // using int128_t = int __attribute__((mode(TI)));   // !!! https://gcc.gnu.org/onlinedocs/gccint/Machine-Modes.html
 #endif
@@ -575,6 +584,11 @@ template<typename T> constexpr _finline static T     RelAddrToAddr(T CmdAddr, un
 template <typename T> constexpr _finline static T RotL(T Value, unsigned int Shift){constexpr unsigned int MaxBits = sizeof(T) * 8U; return T((Value << Shift) | (Value >> ((MaxBits - Shift)&(MaxBits-1))));}
 template <typename T> constexpr _finline static T RotR(T Value, unsigned int Shift){constexpr unsigned int MaxBits = sizeof(T) * 8U; return T((Value >> Shift) | (Value << ((MaxBits - Shift)&(MaxBits-1))));}
 
+template <typename T> constexpr _finline static T Min(T ValA, T ValB){return (ValA < ValB)?ValA:ValB;}
+template <typename T> constexpr _finline static T Max(T ValA, T ValB){return (ValA > ValB)?ValA:ValB;}
+
+template <typename T> constexpr _finline static T Abs(T Val){return (Val >= 0) ? Val : -Val;}
+
 template<typename N, typename M> constexpr _finline static M NumToPerc(N Num, M MaxVal){return M(((Num)*100)/(MaxVal));}               // NOTE: Can overflow!
 template<typename P, typename M> constexpr _finline static M PercToNum(P Per, M MaxVal){return M(((Per)*(MaxVal))/100);}               // NOTE: Can overflow!
 
@@ -601,12 +615,12 @@ template<typename T> constexpr _finline static int SizeOfP2Type(void)
    }
 }
 //------------------------------------------------------------------------------------------------------------
-/*template<typename ...TA> struct find_overload 
-{ 
-template<typename TObj, typename TR> using member_func_t = TR(TObj::*)(TA...); 
-template<typename TObj, typename TR> static constexpr auto get_address(member_func_t<TObj, TR> func) -> member_func_t<TObj, TR> { return func; } 
+/*template<typename ...TA> struct find_overload
+{
+template<typename TObj, typename TR> using member_func_t = TR(TObj::*)(TA...);
+template<typename TObj, typename TR> static constexpr auto get_address(member_func_t<TObj, TR> func) -> member_func_t<TObj, TR> { return func; }
 };*/
-template<typename... A, typename T, typename R> constexpr auto find_overload(R(T::*f)(A...)) { return f; } 
+template<typename... A, typename T, typename R> constexpr auto find_overload(R(T::*f)(A...)) { return f; }
 template<typename... A, typename R> constexpr auto find_overload(R(*f)(A...)) { return f; }
 //------------------------------------------------------------------------------------------------------------
 // Makes the pointer 'arbitrary', like it came from some malloc

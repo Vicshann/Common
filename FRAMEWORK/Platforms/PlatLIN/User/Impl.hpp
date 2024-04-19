@@ -25,7 +25,9 @@ DECL_SYSCALL(NSYSC::ESysCNum::fork,       PX::fork,       fork       )
 DECL_SYSCALL(NSYSC::ESysCNum::vfork,      PX::vfork,      vfork      )
 #endif
 DECL_SYSCALL(NSYSC::ESysCNum::execve,     PX::execve,     execve     )
-//DECL_SYSCALL(NSYSC::ESysCNum::ptrace,     PX::ptrace,     ptrace    );
+//DECL_SYSCALL(NSYSC::ESysCNum::ptrace,     PX::ptrace,     ptrace    )
+DECL_SYSCALL(NSYSC::ESysCNum::process_vm_readv,     PX::process_vm_readv,     process_vm_readv     )
+DECL_SYSCALL(NSYSC::ESysCNum::process_vm_writev,    PX::process_vm_writev,    process_vm_writev    )
 
 DECL_SYSCALL(NSYSC::ESysCNum::wait4,      PX::wait4,      wait4      )
 DECL_SYSCALL(NSYSC::ESysCNum::futex,      PX::futex,      futex      )
@@ -47,10 +49,14 @@ DECL_SYSCALL(NSYSC::ESysCNum::mmap,       PX::mmap,       mmap       )
 DECL_SYSCALL(NSYSC::ESysCNum::munmap,     PX::munmap,     munmap     )
 DECL_SYSCALL(NSYSC::ESysCNum::madvise,    PX::madvise,    madvise    )
 DECL_SYSCALL(NSYSC::ESysCNum::mprotect,   PX::mprotect,   mprotect   )
+DECL_SYSCALL(NSYSC::ESysCNum::msync,      PX::msync,      msync      )
 
+DECL_SYSCALL(NSYSC::ESysCNum::truncate,   PX::truncate,   truncate   )
+DECL_SYSCALL(NSYSC::ESysCNum::ftruncate,  PX::ftruncate,  ftruncate  )
 DECL_SYSCALL(NSYSC::ESysCNum::getdents,   PX::getdents64, getdents   )     // getdents64 on x32 and x64
 DECL_SYSCALL(NSYSC::ESysCNum::fstat,      PX::fstat,      fstat      )     // Struct?
 DECL_SYSCALL(NSYSC::ESysCNum::fcntl,      PX::fcntl,      fcntl      )     // Too specific to put in NAPI?
+DECL_SYSCALL(NSYSC::ESysCNum::ioctl,      PX::ioctl,      ioctl      )
 DECL_SYSCALL(NSYSC::ESysCNum::flock,      PX::flock,      flock      )
 DECL_SYSCALL(NSYSC::ESysCNum::fsync,      PX::fsync,      fsync      )
 DECL_SYSCALL(NSYSC::ESysCNum::fdatasync,  PX::fdatasync,  fdatasync  )
@@ -111,6 +117,9 @@ FUNC_WRAPPERFI(PX::cloneB0,    clone      ) { CALL_IFEXISTRPC(clone,clone,(IsArc
 FUNC_WRAPPERFI(PX::fork,       fork       ) { CALL_IFEXISTRN(fork,clone,NAPI,(args...),(PX::SIGCHLD, nullptr, nullptr, nullptr, nullptr)) }
 FUNC_WRAPPERFI(PX::vfork,      vfork      ) { CALL_IFEXISTRN(vfork,clone,NAPI,(args...),(PX::CLONE_VM | PX::CLONE_VFORK | PX::SIGCHLD, nullptr, nullptr, nullptr, nullptr)) }   // SIGCHLD makes the cloned process work like a "normal" unix child process
 FUNC_WRAPPERFI(PX::execve,     execve     ) {return SAPI::execve(args...);}
+
+FUNC_WRAPPERFI(PX::process_vm_readv,     process_vm_readv     ) {return SAPI::process_vm_readv(args...);}
+FUNC_WRAPPERFI(PX::process_vm_writev,    process_vm_writev    ) {return SAPI::process_vm_writev(args...);}
 //------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERNI(PX::gettimeofday,  gettimeofday  )     // TODO: Prefer VDSO
 {
@@ -153,6 +162,7 @@ FUNC_WRAPPERFI(PX::mmapGD,     mmap       ) { CALL_IFEXISTRPC(mmap,mmap2,(IsArch
 FUNC_WRAPPERFI(PX::munmap,     munmap     ) {return SAPI::munmap(args...);}
 FUNC_WRAPPERFI(PX::madvise,    madvise    ) {return SAPI::madvise(args...);}
 FUNC_WRAPPERFI(PX::mprotect,   mprotect   ) {return SAPI::mprotect(args...);}
+FUNC_WRAPPERFI(PX::msync,      msync      ) {return SAPI::msync(args...);}
 //------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERFI(PX::close,      close      ) {return SAPI::close(args...);}
 FUNC_WRAPPERFI(PX::read,       read       ) {return SAPI::read(args...);}
@@ -350,7 +360,7 @@ static constexpr const uint32 NotCloneFlg = PX::O_CLOEXEC;
 // User Data
 // TLS Block
 //
-FUNC_WRAPPERNI(PX::thread,       thread       )
+FUNC_WRAPPERNI(NTHD::thread,       thread       )
 {
  static constexpr const uint32 CloneFlg    = (PX::CLONE_VM | PX::CLONE_FS | PX::CLONE_FILES | PX::CLONE_SYSVSEM | PX::CLONE_SIGHAND | PX::CLONE_PARENT_SETTID | PX::CLONE_CHILD_CLEARTID | PX::CLONE_THREAD);   // | PX::CLONE_PARENT CLONE_PTRACE  CLONE_SETTLS |  CLONE_PARENT_SETTID // CLONE_CHILD_CLEARTID (? Thread pools? Other systems?)    // CLONE_PARENT is probably not needed with CLONE_THREAD
  static constexpr const uint32 NotCloneFlg = PX::O_CLOEXEC;   // Excluded user-specified flags         // Pass SIGCHLD to inform parent of the thread termination? (NOTE: The parent is noth the caller of 'clone', its the parent of the caller)
@@ -380,7 +390,7 @@ FUNC_WRAPPERNI(PX::thread,       thread       )
   }
  else {} // ???
  DBGMSG("StkFrame=%p, ThrFrame=%p",StkFrame,ThrFrame);
- DBGMSG("Info %p: Rec0=%p, Rec1=%p, Rec2=%p, Rec3=%p, Rec4=%p",fwsinf.ThreadInfo,(vptr)fwsinf.ThreadInfo->Recs[0],(vptr)fwsinf.ThreadInfo->Recs[1],(vptr)fwsinf.ThreadInfo->Recs[2],(vptr)fwsinf.ThreadInfo->Recs[3],(vptr)fwsinf.ThreadInfo->Recs[4]);
+ DBGMSG("Info %p: Rec0=%p, Rec1=%p, Rec2=%p, Rec3=%p, Rec4=%p",NPTM::GetThDesc()->ThreadInfo,(vptr)NPTM::GetThDesc()->ThreadInfo->Recs[0],(vptr)NPTM::GetThDesc()->ThreadInfo->Recs[1],(vptr)NPTM::GetThDesc()->ThreadInfo->Recs[2],(vptr)NPTM::GetThDesc()->ThreadInfo->Recs[3],(vptr)NPTM::GetThDesc()->ThreadInfo->Recs[4]);
 
 // register NTHD::SThCtx* ThFrm __asm__("5") = ThrFrame;                  // Allocate a register by index  // NOTE: no free registers on X32-X64
 // __asm__ __volatile__("" : "=r"(ThFrm) : "r"(ThFrm));    // This will preserve the register
@@ -388,12 +398,12 @@ FUNC_WRAPPERNI(PX::thread,       thread       )
  PX::pid_t pid = NAPI::clone(CloneFlg | ((uint32)GetParFromPk<5>(args...) & ~NotCloneFlg), StkFrame, (PX::PINT32)&ThrFrame->ThreadID, (PX::PINT32)&ThrFrame->ThreadID, nullptr);  // vfork     // Same stack, no copy-on-write   // pid saved to [ebp-XXXh] on X86 with O0
  if(!pid)    // In the provided stack, all required values MUST be in registers already!   // ARM32(LR), ARM64(X30), X86-X64(Stack), X86-X32(Stack)(watch out for cdecl stack release)
   {
-   STC::ThProcCall();  // Only on ARM it will get here  // Will try to get GETSTKFRAME inside   // X86-X32: GOT will be reread into EBX from [ebp-XXXh] (O0)
+   ThProcCallStub();   // Only on ARM it will get here  // Will try to get GETSTKFRAME inside   // X86-X32: GOT will be reread into EBX from [ebp-XXXh] (O0)
   }
  return pid;  // Not in a new thread - return an error code
 }
 //------------------------------------------------------------------------------------------------------------
-FUNC_WRAPPERNI(PX::thread_sleep,      thread_sleep     )     // Sleep self  (Until timeout or a signal)      // sys_pause ?
+FUNC_WRAPPERNI(NTHD::thread_sleep,      thread_sleep     )     // Sleep self  (Until timeout or a signal)      // sys_pause ?
 {
  uint64 time = GetParFromPk<0>(args...);
  NTHD::SThCtx* tinf = GetThreadSelf();
@@ -411,7 +421,7 @@ FUNC_WRAPPERNI(PX::thread_sleep,      thread_sleep     )     // Sleep self  (Unt
 //------------------------------------------------------------------------------------------------------------
 // Doing this from another thread so we must find its context by its ID
 //
-FUNC_WRAPPERNI(PX::thread_wait,       thread_wait      )
+FUNC_WRAPPERNI(NTHD::thread_wait,       thread_wait      )
 {
  uint64 time = GetParFromPk<1>(args...);
  NTHD::SThCtx* tinf = GetThreadByID(GetParFromPk<0>(args...));
@@ -432,32 +442,33 @@ FUNC_WRAPPERNI(PX::thread_wait,       thread_wait      )
 /*
  Only a parent process can wait and that is not the one that spawned the thread with CLONE_THREAD
 */
-FUNC_WRAPPERNI(PX::thread_status,   thread_status      )     // Get the thread return code (Works on finished threads with unavailable SThCtx)
+FUNC_WRAPPERNI(NTHD::thread_status,   thread_status      )     // Get the thread return code (Works on finished threads with unavailable SThCtx)
 {
  sint tid = GetParFromPk<0>(args...);
  NTHD::SThCtx* ThCtx = nullptr;
- if(tid != fwsinf.MainTh.ThreadID)
+ NTHD::STDesc* ThDsc = NPTM::GetThDesc();
+ if(tid != ThDsc->MainTh.ThreadID)
   {
-   if(!fwsinf.ThreadInfo)return PXERR(ENOMEM); // No more threads
-   NTHD::SThCtx** ptr = fwsinf.ThreadInfo->FindOldThreadByTID(tid);
+   if(!ThDsc->ThreadInfo)return PXERR(ENOMEM); // No more threads
+   NTHD::SThCtx** ptr = ThDsc->ThreadInfo->FindOldThreadByTID(tid);
    if(!ptr)return PXERR(ENOENT);
    ThCtx = NTHD::ReadRecPtr(ptr);
   }
-   else ThCtx = &fwsinf.MainTh;
+   else ThCtx = &ThDsc->MainTh;
  if(!ThCtx)return PXERR(EBADF);
  DBGMSG("Status: %08X",ThCtx->ExitCode);
  return ThCtx->ExitCode;
 }
 //------------------------------------------------------------------------------------------------------------
-FUNC_WRAPPERNI(PX::thread_exit,       thread_exit      )
+FUNC_WRAPPERNI(NTHD::thread_exit,       thread_exit      )
 {
  sint status = GetParFromPk<0>(args...);   // If this var is on stack, the stack may become deallocated (probably - Even marked records should be checked for zero TID)
  NTHD::SThCtx* tinf = GetThreadSelf();
  if(tinf && tinf->SelfPtr)
   {
-   tinf->LastThrdID = tinf->ThreadID; 
-   tinf->ExitCode   = status; 
-   NTHD::ReleaseRec((NTHD::SThCtx**)tinf->SelfPtr); 
+   tinf->LastThrdID = tinf->ThreadID;
+   tinf->ExitCode   = status;
+   NTHD::ReleaseRec((NTHD::SThCtx**)tinf->SelfPtr);
  }
  return NAPI::exit(status);
 }
@@ -475,7 +486,7 @@ struct SFWCTX      // NOTE: Such alignment may waste some memory on main thread 
 
 static sint Initialize(void* StkFrame=nullptr, void* ArgA=nullptr, void* ArgB=nullptr, void* ArgC=nullptr, bool InitConLog=false)    // _finline ?
 {
-// if(IsInitialized())return 1;
+ if(IsInitialized())return 1;
  if(!NLOG::CurrLog)NLOG::CurrLog = &NLOG::GLog;  // Will be set with correct address, relative to the Base
  if(InitConLog)   // On this stage file logging is not possible yet (needs InitStartupInfo)
   {
@@ -485,7 +496,7 @@ static sint Initialize(void* StkFrame=nullptr, void* ArgA=nullptr, void* ArgB=nu
  // NOTE: Init syscalls before InitStartupInfo if required
  InitStartupInfo(StkFrame, ArgA, ArgB, ArgC);
  IFDBG{DbgLogStartupInfo();}
- if(NTHD::SThCtx* MainTh=&fwsinf.MainTh; !MainTh->Self)
+ if(NTHD::SThCtx* MainTh=&NPTM::GetThDesc()->MainTh; !MainTh->Self)
   {
    MainTh->Self       = MainTh;     // For checks
    MainTh->SelfPtr    = nullptr;    // Not owned

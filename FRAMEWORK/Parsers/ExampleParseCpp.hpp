@@ -41,27 +41,36 @@ class CParseCpp
    csInDQString,
    csInSQStrEsc,
    csInDQStrEsc,
+   csInPossRStr,
+   csInSQRawStr,
+   csInDQRawStr,
+   csInSQRawStrBeg,
+   csInDQRawStrBeg,
+   csInSQRawStrEnd,
+   csInDQRawStrEnd,
   };
 //-----------------------------------------------------------------------
  enum ETknType          // Passed to the Lexer
   {
    ttNone,
-   ttTkName     = 0x0001,
-   ttNumber     = 0x0002,  // Decimal by default (if 0)
-   ttDecNum     = 0x0004,
-   ttHexNum     = 0x0008,
-   ttOctNum     = 0x0010,
-   ttBinNum     = 0x0020,
-   ttFltNum     = 0x0040,  // Dec or Hex
-   ttFltExp     = 0x0080,  // Float number have exponent
-   ttWhSpace    = 0x0100,
-   ttSpecial    = 0x0200, 
-   ttComment    = 0x0400, 
-   ttSQString   = 0x0800,  // Packed string - converts to an integer or an array of integers. Packing is platform specific // Always attempted to be embedded in the code without rdata placement
-   ttDQString   = 0x1000, 
-   ttInCurlyBr  = 0x2000,  // ???
-   ttInRoundBr  = 0x4000,  // ???
-   ttInSquareBr = 0x8000,  // ???
+   ttTkName     = 0x000001,
+   ttNumber     = 0x000002,  // Decimal by default (if 0)
+   ttDecNum     = 0x000004,
+   ttHexNum     = 0x000008,
+   ttOctNum     = 0x000010,
+   ttBinNum     = 0x000020,
+   ttFltNum     = 0x000040,  // Dec or Hex
+   ttFltExp     = 0x000080,  // Float number have exponent
+   ttWhSpace    = 0x000100,
+   ttSpecial    = 0x000200, 
+   ttComment    = 0x000400, 
+   ttSQString   = 0x000800,  // Packed string - converts to an integer or an array of integers. Packing is platform specific // Always attempted to be embedded in the code without rdata placement
+   ttDQString   = 0x001000, 
+   ttSQRawStr   = 0x002000,
+   ttDQRawStr   = 0x004000,
+   ttInCurlyBr  = 0x008000,  // ???
+   ttInRoundBr  = 0x010000,  // ???
+   ttInSquareBr = 0x020000,  // ???
   };
 
 enum EScpGroup
@@ -73,6 +82,8 @@ enum EScpGroup
  sgBrSquare,
  sgSQString,
  sgDQString,
+ sgSQRawStr,
+ sgDQRawStr,
 };
 //------------------------------------------------------------------------------------------------------------
 CTokenizer tkn;
@@ -86,13 +97,13 @@ void RegRanges_WS(void)
 //------------------------------------------------------------------------------------------------------------
 void RegRanges_Names(void)
 {
- // For names
- tkn.AddRange(csBase|(csInTkName << 8),   'a','z', csInTkName, 0, ttTkName);
- tkn.AddRange(csBase|(csInTkName << 8),   'A','Z', csInTkName, 0, ttTkName);
- tkn.AddRange(csBase|(csInTkName << 8),   '_','_', csInTkName, 0, ttTkName);
- tkn.AddRange(csBase|(csInTkName << 8), 0x80,0xFF, csInTkName, 0, ttTkName);   // UTF-8 multi-byte chars  // Too much to manage - just allow any of this to be in names as 'a - z'  // Means no special chars in extended codepoints will be supported (Too slow to parse)  // Aliasing will solve this at the Lexer level
+ // For names     // Must add to all prefixes and keywords that is handled
+ tkn.AddRange(csBase|(csInTkName << 8)|(csInPossRStr << 16),   'a','z', csInTkName, 0, ttTkName);
+ tkn.AddRange(csBase|(csInTkName << 8)|(csInPossRStr << 16),   'A','Z', csInTkName, 0, ttTkName);
+ tkn.AddRange(csBase|(csInTkName << 8)|(csInPossRStr << 16),   '_','_', csInTkName, 0, ttTkName);
+ tkn.AddRange(csBase|(csInTkName << 8)|(csInPossRStr << 16), 0x80,0xFF, csInTkName, 0, ttTkName);   // UTF-8 multi-byte chars  // Too much to manage - just allow any of this to be in names as 'a - z'  // Means no special chars in extended codepoints will be supported (Too slow to parse)  // Aliasing will solve this at the Lexer level
                                                    
- tkn.AddRange(csInTkName, '0','9', csInTkName, 0, ttNone  );
+ tkn.AddRange(csInTkName|(csInPossRStr << 8), '0','9', csInTkName, 0, ttNone  );
 } 
 //------------------------------------------------------------------------------------------------------------
 void RegRanges_Specials(void)          // TODO: Use @ for aliasing by default
@@ -128,22 +139,64 @@ void RegRanges_Specials(void)          // TODO: Use @ for aliasing by default
  tkn.AddRange(csInCmntML,                         '*','*', csInCmntEndML,        0, ttComment,  ttNone, CTokenizer::tfComment); 
  tkn.AddRange(csInCmntEndML,                      '/','/', csInCmntML,    sgCmntML, ttComment,  ttNone, CTokenizer::tfComment|CTokenizer::tfScopeCse|CTokenizer::tfLSplitOnSDZ|CTokenizer::tfBRstIfSplit);  
 
+// In C/C++ \ is used as line continuation mark so defining macros in multi-line is possible. It is also possible to change a single line comment to multi-line with it. And any tokens can be split too.
+// Just consume and ignore anything up to '\n' includin it. Anything on a next line will continue the token
+// This would mean that we must add such behaviour in EVERY state(Every name, number and every composed token) and it MUST be an unique state for proper continuation!
+// I am too lazy to implement that ugly nonsence!    // May be allow a char to be assigned globally to skip rest of the line(Same as '\n' is works globally)?
+}                                            
+//------------------------------------------------------------------------------------------------------------
+void RegRanges_Strings(void) 
+{
 // Strings: "" '' raw        // Parse escapes here or later?      // Store quotes as separate tokens?
- tkn.AddRange(csBase|(csTSpecial << 8),         '\'','\'', csInSQString, sgSQString, ttSQString, ttNone, CTokenizer::tfEscString|CTokenizer::tfScopeOpn);   // Raw format for this type of string too?
+ tkn.AddRange(csBase|(csTSpecial << 8),         '\'','\'', csInSQString, sgSQString, ttSQString, ttNone, CTokenizer::tfEscString|CTokenizer::tfScopeOpn|CTokenizer::tfTknLSplit);   // Raw format for this type of string too?
  tkn.AddRange(csInSQString,                     0x01,0xFF, csInSQString, sgSQString, ttSQString, ttNone, CTokenizer::tfEscString);
  tkn.AddRange(csInSQString,                     '\\','\\', csInSQStrEsc, sgSQString, ttSQString, ttNone, CTokenizer::tfEscString);   // Escape a char (including ')
- tkn.AddRange(csInSQString,                     '\'','\'', csBase,       sgSQString, ttSQString, ttNone, CTokenizer::tfEscString|CTokenizer::tfScopeCse|CTokenizer::tfTknLSplit);   // Close the scope
+ tkn.AddRange(csInSQString,                     '\'','\'', csBase,       sgSQString, ttSQString, ttNone, CTokenizer::tfEscString|CTokenizer::tfScopeCse|CTokenizer::tfTknRSplit|CTokenizer::tfTknLSplit);   // Close the scope
  tkn.AddRange(csInSQStrEsc,                     0x01,0xFF, csInSQString, sgSQString, ttSQString, ttNone, CTokenizer::tfEscString);   // Consume a char and return to the string state
 
- tkn.AddRange(csBase|(csTSpecial << 8),         '\"','\"', csInDQString, sgDQString, ttDQString, ttNone, CTokenizer::tfEscString|CTokenizer::tfScopeOpn);   // Raw format for this type of string too?
+ tkn.AddRange(csBase|(csTSpecial << 8),         '\"','\"', csInDQString, sgDQString, ttDQString, ttNone, CTokenizer::tfEscString|CTokenizer::tfScopeOpn|CTokenizer::tfTknLSplit);   // Raw format for this type of string too?
  tkn.AddRange(csInDQString,                     0x01,0xFF, csInDQString, sgDQString, ttDQString, ttNone, CTokenizer::tfEscString);
  tkn.AddRange(csInDQString,                     '\\','\\', csInDQStrEsc, sgDQString, ttDQString, ttNone, CTokenizer::tfEscString);   // Escape a char (including ')
- tkn.AddRange(csInDQString,                     '\"','\"', csBase,       sgDQString, ttDQString, ttNone, CTokenizer::tfEscString|CTokenizer::tfScopeCse|CTokenizer::tfTknLSplit);   // Close the scope
+ tkn.AddRange(csInDQString,                     '\"','\"', csBase,       sgDQString, ttDQString, ttNone, CTokenizer::tfEscString|CTokenizer::tfScopeCse|CTokenizer::tfTknRSplit|CTokenizer::tfTknLSplit);   // Close the scope
  tkn.AddRange(csInDQStrEsc,                     0x01,0xFF, csInDQString, sgDQString, ttDQString, ttNone, CTokenizer::tfEscString);   // Consume a char and return to the string state
 
-}                                               
+// Raw strings prefix
+ tkn.AddRange(csBase,            'R','R', csInPossRStr,             0, ttNone,     ttNone);      // NOTE: Slows down parsing of every 'R' 
+
+// Raw single-quoted string
+ tkn.AddRange(csInPossRStr,    '\'','\'', csInSQRawStrBeg, sgSQRawStr, ttSQRawStr, ttNone, CTokenizer::tfScpMrkBegin); 
+ tkn.AddRange(csInSQRawStrBeg, 0x01,0xFF, csInSQRawStrBeg, sgSQRawStr, ttSQRawStr, ttNone);
+ tkn.AddRange(csInSQRawStrBeg,   '(','(', csInSQRawStr,    sgSQRawStr, ttNone,     ttNone, CTokenizer::tfRawString|CTokenizer::tfTknLSplit|CTokenizer::tfScopeOpn|CTokenizer::tfScpMrkEnd);
+ tkn.AddRange(csInSQRawStr,    0x01,0xFF, csInSQRawStr,    sgSQRawStr, ttSQRawStr, ttNone, CTokenizer::tfRawString);
+
+ tkn.AddRange(csInSQRawStr,      ')',')', csInSQRawStrEnd, sgSQRawStr, ttSQRawStr, ttNone, CTokenizer::tfRawString|CTokenizer::tfTknMemStore|CTokenizer::tfScpMrkBegin);    // Remember a possible finished string
+ tkn.AddRange(csInSQRawStrEnd, 0x01,0xFF, csInSQRawStrEnd, sgSQRawStr, ttSQRawStr, ttNone, CTokenizer::tfRawString);                                // The string continues
+ tkn.AddRange(csInSQRawStrEnd,   ')',')', csInSQRawStrEnd, sgSQRawStr, ttSQRawStr, ttNone, CTokenizer::tfRawString|CTokenizer::tfTknMemStore|CTokenizer::tfScpMrkBegin);    // Repeat // Remember a possible scope closing token
+// tkn.AddRange(csInSQRawStrEnd, '\\','\\', csInSQRawStrEnd,    sgSQRawStr, ttSQRawStr, ttNone,  CTokenizer::tfBadToken);      // Disabled: we can`t be sure if it is actually in a closing marker now
+// tkn.AddRange(csInSQRawStrEnd, '/','/',   csInSQRawStrEnd,    sgSQRawStr, ttSQRawStr, ttNone,  CTokenizer::tfBadToken); 
+ tkn.AddRange(csInSQRawStrEnd, '\'','\'', csBase,          sgSQRawStr, ttSQRawStr, ttNone, CTokenizer::tfRawString|CTokenizer::tfScopeCse|CTokenizer::tfLSplitOnSDZ|CTokenizer::tfMemSplitOnSDZ|CTokenizer::tfScpMrkEnd|CTokenizer::tfOChStateOnSDZ); 
+
+// Raw double-quoted string
+ tkn.AddRange(csInPossRStr,    '\"','\"', csInDQRawStrBeg, sgDQRawStr, ttDQRawStr, ttNone, CTokenizer::tfScpMrkBegin); 
+ tkn.AddRange(csInDQRawStrBeg, 0x01,0xFF, csInDQRawStrBeg, sgDQRawStr, ttDQRawStr, ttNone);
+ tkn.AddRange(csInDQRawStrBeg,   '(','(', csInDQRawStr,    sgDQRawStr, ttNone,     ttNone, CTokenizer::tfRawString|CTokenizer::tfTknLSplit|CTokenizer::tfScopeOpn|CTokenizer::tfScpMrkEnd);
+ tkn.AddRange(csInDQRawStr,    0x01,0xFF, csInDQRawStr,    sgDQRawStr, ttDQRawStr, ttNone, CTokenizer::tfRawString);
+
+ tkn.AddRange(csInDQRawStr,      ')',')', csInDQRawStrEnd, sgDQRawStr, ttDQRawStr, ttNone, CTokenizer::tfRawString|CTokenizer::tfTknMemStore|CTokenizer::tfScpMrkBegin);    // Remember a possible finished string
+ tkn.AddRange(csInDQRawStrEnd, 0x01,0xFF, csInDQRawStrEnd, sgDQRawStr, ttDQRawStr, ttNone, CTokenizer::tfRawString);                                // The string continues
+ tkn.AddRange(csInDQRawStrEnd,   ')',')', csInDQRawStrEnd, sgDQRawStr, ttDQRawStr, ttNone, CTokenizer::tfRawString|CTokenizer::tfTknMemStore|CTokenizer::tfScpMrkBegin);    // Repeat // Remember a possible scope closing token
+// tkn.AddRange(csInDQRawStrEnd, '\\','\\', csInDQRawStrEnd,    sgDQRawStr, ttDQRawStr, ttNone,  CTokenizer::tfBadToken);      // Disabled: we can`t be sure if it is actually in a closing marker now
+// tkn.AddRange(csInDQRawStrEnd, '/','/',   csInDQRawStrEnd,    sgDQRawStr, ttDQRawStr, ttNone,  CTokenizer::tfBadToken); 
+ tkn.AddRange(csInDQRawStrEnd, '\"','\"', csBase,          sgDQRawStr, ttDQRawStr, ttNone, CTokenizer::tfRawString|CTokenizer::tfScopeCse|CTokenizer::tfLSplitOnSDZ|CTokenizer::tfMemSplitOnSDZ|CTokenizer::tfScpMrkEnd|CTokenizer::tfOChStateOnSDZ); 
+}
 //------------------------------------------------------------------------------------------------------------
-void RegRanges_Numbers(void)    // TODO: Reduce (Use noterm flag and batch grouping)
+//Check that you can have inputs like +++-+++-+-+-++3+-+-+-+5 and they are valid. 
+// Unary operators should be given more precedence than the binary arithmetic ones, 
+// to allow expressions like 5 * - 3 or -5 * +3 (to be interpreted as 5 * (-3) and (-5) * (+3)) or at least more than the adding operators + and - (in that case, de second -5 * +3 would be incorrect)
+// And do not forget -(123) is same as -123 bit it is known later
+// Ex: something-5    // Since a language can be whitespace free, does this mean that -5 is an argument to 'something' or it is an expression like 'int x = something - 5' ?
+// 
+void RegRanges_Numbers(void)  // NOTE: It is diffucult to determine negative numbers!   // TODO: Is it possible to attach a leading sign without actually knowing if it an operator or a part of the number?
 {
 // For all numbers
  tkn.AddRange(csBase,        '0','0', csInNumExt, 0, ttNumber, ttNone, CTokenizer::tfNumeric);    // 0OCTAL, 0x,0b    // Decimal 0, if alone
@@ -198,10 +251,11 @@ void Initialize(void)
 {
  //tkn.Initialize();
  this->RegRanges_WS();
- this->RegRanges_Specials();
+ this->RegRanges_Specials();  // Must be after WS and before everything else
+ this->RegRanges_Strings();
+ this->RegRanges_Scopes();
  this->RegRanges_Names();
  this->RegRanges_Numbers();
- this->RegRanges_Scopes();
 }
 //------------------------------------------------------------------------------------------------------------
 sint ParseFile(const achar* Path)

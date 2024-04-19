@@ -274,10 +274,10 @@ inline int _cdecl PrintFToBuf(char* format, char* buffer, UINT maxlen, ...)
  return res;
 }
 //---------------------------------------------------------------------------
-inline void* operator new(size_t Size, void* Obj)
+/*inline void* operator new(size_t Size, void* Obj)
 {
  return Obj;
-}
+} */
 //---------------------------------------------------------------------------
 struct SAppFile
 {

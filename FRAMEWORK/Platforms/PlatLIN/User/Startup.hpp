@@ -7,19 +7,24 @@ private:
 enum ESFlags {sfInitialized=0x01, sfDynamicLib=0x02, sfLoadedByLdr=0x04};
 struct SSINF
 {
- void*            STInfo;  // Pointer to stack frame info, received from kernel  // PEB on windows?
+ vptr             STInfo;  // Pointer to stack frame info, received from kernel  // PEB on windows?
  syschar**        CLArgs;  // Points to ARGV array  // Not split on windows!
  syschar**        EVVars;  // Points to EVAR array (cannot cache this pointer?)
  ELF::SAuxVecRec* AuxInf;  // Auxilary vector // LINUX/BSD: ELF::SAuxVecRec*
  vptr             NullPtr; // For any pointer that should point to NULL
+ PX::fdsc_t       DevNull;
+ PX::fdsc_t       DevRand;
 
- void*  TheModBase;
+ vptr   TheModBase;
  size_t TheModSize;
+ vptr   MainModBase;
+ size_t MainModSize;
  achar  SysDrive[8];
+ sint32 MemPageSize;
+ sint32 MemGranSize;
  sint32 UTCOffs;      // In seconds
  uint32 Flags;
- NTHD::SThCtx MainTh;    // Main(Init/Entry) thread // A thread from which the framework is initialized at main entry point for a module/app (For modules this is NOT the app`s process main thread)
- NTHD::SThInf* ThreadInfo;  // For additional threads (Null if only entry thread is used)
+ NTHD::STDesc thd;
 
 // Exe path (Even if this module is a DLL)
 // Current directory(at startup)   // Required?
@@ -27,187 +32,143 @@ struct SSINF
 // Temp path
 } static inline fwsinf = {};
 
+static _finline NTHD::STDesc* GetThDesc(void){return &fwsinf.thd;}
+//------------------------------------------------------------------------------------------------------------
+static vptr FindMainBase(size_t* Size)   // Use something else  // TODO: Probably /proc/self/maps search for /proc/self/exe content match
+{
+ sint ExePtr = GetAuxInfo(ELF::AT_PHDR);
+ if(ExePtr < 0)ExePtr = GetAuxInfo(ELF::AT_ENTRY);
+ if(ExePtr > 0)
+  {
+   vptr ptr = UELF::FindElfByAddr((vptr)ExePtr, Size);
+   DBGDBG("Found by ELF for %p: %p",(vptr)ExePtr, ptr);
+   if(ptr)return ptr;
+  }
+ achar* PPtr = nullptr;
+ sint   PLen = 0;
+ alignas(sizeof(vptr)) achar pbuf[2048];
+ alignas(sizeof(vptr)) uint8 tbuf[2048];
+ *pbuf = 0;
+ ExePtr = GetAuxInfo(ELF::AT_EXECFN);
+ DBGDBG("Exe path auxv: %p",(vptr)ExePtr);
+ if(ExePtr <= 0)
+  {
+   PLen = NAPI::readlink("/proc/self/exe", pbuf, sizeof(pbuf)-1);
+   if(PLen >= 0){pbuf[PLen] = 0; PPtr = pbuf;}
+  }
+  else PPtr = (achar*)ExePtr;
+ DBGDBG("Exe path: %s",((ExePtr > 0)?(achar*)ExePtr:""));
+
+ if(Size)*Size = 0;
+ if(!PPtr || !*PPtr)return nullptr;
+ PLen = AlignP2Frwd(PLen, sizeof(vptr));
+ SMemMap* MappedRanges = (SMemMap*)&pbuf;
+ MappedRanges->TmpBufLen = sizeof(tbuf);
+ MappedRanges->TmpBufPtr = tbuf;     // For reading from the system
+ if(NPFS::FindMappedRangesByPath(-1, 0, PPtr, MappedRanges, sizeof(pbuf)) <= 0)return nullptr;
+ if(!MappedRanges->RangesCnt)return nullptr;
+ vptr   addr = (vptr)MappedRanges->Ranges[0].RangeBeg;
+ size_t mlen = ELF::GetModuleSizeInMem(addr);   // Validate and get full size, including BSS
+ if(!mlen)return nullptr;
+ if(Size)*Size = mlen;
+ DBGDBG("Found by mappings: %p",addr);
+ return addr;
+}
+//------------------------------------------------------------------------------------------------------------
+static _ninline vptr FindModuleBase(size_t* Size)   // Use a pointer inside
+{
+ return UELF::FindElfByAddr(&fwsinf, Size);
+}
+//------------------------------------------------------------------------------------------------------------
 public:      // Do not hide platform dependant stuff!
 //------------------------------------------------------------------------------------------------------------
 static _finline size_t GetArgC(void){return (size_t)fwsinf.CLArgs[-1];}   // On Windows should be always 1? // Be careful with access to SInfo using casts. Clang may optimize out ALL! code because of it
 static _finline const syschar** GetArgV(void){return (const syschar**)fwsinf.CLArgs;}
 static _finline const syschar** GetEnvP(void){return (const syschar**)fwsinf.EVVars;}
 //------------------------------------------------------------------------------------------------------------
-static ELF::SAuxVecRec* GetAuxVRec(size_t Type)
-{
- for(ELF::SAuxVecRec* Rec=fwsinf.AuxInf;Rec->type != ELF::AT_NULL;Rec++)
-  {
-   if(Rec->type == Type)return Rec;
-  }
- return nullptr;
-}
-//------------------------------------------------------------------------------------------------------------
-
+static _finline uint32 GetPageSize(void)  {return fwsinf.MemPageSize;}
+static _finline uint32 GetGranSize(void)  {return fwsinf.MemGranSize;}
 //------------------------------------------------------------------------------------------------------------
 static _finline PX::fdsc_t GetStdIn(void)  {return PX::STDIN; }  // 0
 static _finline PX::fdsc_t GetStdOut(void) {return PX::STDOUT;}  // 1
 static _finline PX::fdsc_t GetStdErr(void) {return PX::STDERR;}  // 2
+
+static _finline PX::fdsc_t GetStdNull(void) {return fwsinf.DevNull;}
+static _finline PX::fdsc_t GetStdRand(void) {return fwsinf.DevRand;}
 //------------------------------------------------------------------------------------------------------------
 static _finline sint32 GetTZOffsUTC(void)  {return fwsinf.UTCOffs;}   // In seconds   // TODO: Reread optionally?
-static _finline bool   IsLoadedByLdr(void) {return fwsinf.Flags & sfLoadedByLdr;}    // OnWindows, Any DLL that loaded by loader
-static _finline bool   IsDynamicLib(void)  {return false;}
+static _finline bool   IsInitialized(void) {return fwsinf.Flags & sfInitialized;}
+static _finline bool   IsLoadedByLdr(void) {return fwsinf.Flags & sfLoadedByLdr;}     // Loading and unloading is managed by a loader (No need to call Exit(group) from the entry point)
+static _finline bool   IsDynamicLib(void)  {return fwsinf.Flags & sfDynamicLib;}      // Not a main executable
 //------------------------------------------------------------------------------------------------------------
-// %rdi, %rsi, %rdx, %rcx, %r8 and %r9
-// DescrPtr must be set to 'ELF Auxiliary Vectors' (Stack pointer at ELF entry point)
-//
-/*
-argv[0] is not guaranteed to be the executable path, it just happens to be most of the time. It can be a relative path from the current
-working directory, or just the filename of your program if your program is in PATH, or an absolute path to your program, or the name a
-symlink that points to your program file, maybe there are even more possibilities. It's whatever you typed in the shell to run your program.
-*/
-// Copies a next param to user`s buffer
-// A spawner process is responsible for ARGV
-// Quotes are stripped by the shell and quoted args are kept intact
-// NOTE: Do not expect the return value to be an argument index!
-//
-static sint GetCLArg(sint& AOffs, achar* DstBuf, uint DstCCnt=uint(-1))    // Enumerate and copy     // NOTE: Copying is inefficient!
-{
- return UELF::GetStrFromArr(&AOffs, GetArgV(), DstBuf, DstCCnt);
-}
+static _finline vptr   GetMainBase(void) {return fwsinf.MainModBase;}
+static _finline size_t GetMainSize(void) {return fwsinf.MainModSize;}
+static _finline vptr   GetModuleBase(void) {return fwsinf.TheModBase;}
+static _finline size_t GetModuleSize(void) {return fwsinf.TheModSize;}
 //------------------------------------------------------------------------------------------------------------
-static sint GetEnvVar(sint& AOffs, achar* DstBuf, uint DstCCnt=uint(-1))   // Enumerate and copy     // NOTE: Copying is inefficient!
+static sint GetMainPath(achar* DstBuf, size_t BufSize=uint(-1))  // NOTE: If returned length is BufSize-1 then the buffer is probably too small
 {
- return UELF::GetStrFromArr(&AOffs, GetEnvP(), DstBuf, DstCCnt);
-}
-//------------------------------------------------------------------------------------------------------------
-static _ninline sint GetEnvVar(const achar* Name, achar* DstBuf, uint DstCCnt=uint(-1))   // Find by name and copy   // NOTE: Copying is inefficient!  // NOTE: Broken on ARM64 if inlined! Why?
-{
- const  achar** vars = GetEnvP();
- bool Unnamed = !Name || !*Name;
- for(;const achar* evar = *vars;vars++)
+ sint len    = 0;
+ sint aoffs  = 0;
+ sint ExePtr = GetAuxInfo(ELF::AT_EXECFN);
+ if(ExePtr > 0)len = NSTR::StrCopy(DstBuf, (achar*)ExePtr, BufSize);
+ if(len <= 0)len = NAPI::readlink("/proc/self/exe", DstBuf, BufSize-1);   // TODO: Embed the string in the code
+ if(len <= 0)len = GetCLArg(aoffs, DstBuf, BufSize);   // First ard is USUALLY the exe path (But does not have to - the shell passes it)
+ if(len <= 0)
   {
-   sint spos = NSTR::ChrOffset(evar, '=');
-   if(spos < 0)continue;  // No separator!
-   if((!spos && Unnamed) || NSTR::IsStrEqualCS(Name, evar, (uint)spos))return (sint)NSTR::StrCopy(DstBuf, &evar[spos+1], DstCCnt);
+   SMemRange Range;
+   Range.FPath    = DstBuf;
+   Range.FPathLen = BufSize;
+   len = NPFS::FindMappedRangeByAddr(-1, (size_t)fwsinf.MainModBase, &Range);  // MainModBase MUST be already found!
   }
- return -1;
-}
-//------------------------------------------------------------------------------------------------------------
-static const syschar* GetCLArg(sint& AOffs, uint* Size=nullptr)       // Enumerate     // NOTE: Not null-terminated on Windows
-{
- if(AOffs < 0)return nullptr;    // Already finished
- const achar** vars = GetArgV();
- const syschar* val = vars[AOffs++];
- if(!val){AOffs = -1; return nullptr;}  // End of list reached
- if(Size)*Size = NSTR::StrLen(val);
- return val;
-}
-//------------------------------------------------------------------------------------------------------------
-static const syschar* GetEnvVar(sint& AOffs, uint* Size=nullptr)      // Enumerate
-{
- if(AOffs < 0)return nullptr;    // Already finished
- const achar** vars = GetEnvP();
- const syschar* val = vars[AOffs++];
- if(!val){AOffs = -1; return nullptr;}  // End of list reached
- if(Size)*Size = NSTR::StrLen(val);
- return val;
-}
-//------------------------------------------------------------------------------------------------------------
-static const syschar* GetEnvVar(const achar* Name, uint* Size=nullptr)          // Find by name
-{
- const achar** vars = GetEnvP();
- bool Unnamed = !Name || !*Name;
- for(;const achar* evar = *vars;vars++)
-  {
-   sint spos = NSTR::ChrOffset(evar, '=');
-   if(spos < 0)continue;  // No separator!
-   if((!spos && Unnamed) || NSTR::IsStrEqualCS(Name, evar, (uint)spos))
-    {
-     if(Size)*Size = NSTR::StrLen(&evar[spos+1]);
-     return &evar[spos+1];
-    }
-  }
- return nullptr;
-}
-//------------------------------------------------------------------------------------------------------------
-// AppleInfo on MacOS
-static sint GetAuxInfo(uint InfoID, vptr DstBuf, size_t BufSize)
-{
- //GetAuxVRec(size_t Type)
- return -1;
-}
-//------------------------------------------------------------------------------------------------------------
-//
-static _finline vptr GetModuleBase(void)
-{
- return fwsinf.TheModBase;
-}
-//------------------------------------------------------------------------------------------------------------
-static _finline size_t GetModuleSize(void)
-{
- return fwsinf.TheModSize;
+ if(len <= 0)return 0;
+ DstBuf[len] = 0;  // readlink won`t do that
+ return len;
 }
 //------------------------------------------------------------------------------------------------------------
 // Returns full path to current module and its name in UTF8
-static sint _finline GetModulePath(achar* DstBuf, size_t BufSize=uint(-1))
+static sint _finline GetModulePath(achar* DstBuf, size_t BufSize=uint(-1))   // NOTE: Plugins should be mapped for this to work
 {
- sint aoffs = 0;
- return GetCLArg(aoffs, DstBuf, BufSize);       // Will work for now
+ if(!IsDynamicLib())return GetMainPath(DstBuf, BufSize);   // Will be faster
+ SMemRange Range;
+ Range.FPath    = DstBuf;
+ Range.FPathLen = BufSize;
+ sint len = NPFS::FindMappedRangeByAddr(-1, (size_t)fwsinf.TheModBase, &Range);
+ if(len <= 0)return 0;
+ DstBuf[len] = 0;
+ return len;
 }
-//------------------------------------------------------------------------------------------------------------
-static NTHD::SThCtx* GetThreadSelf(void)     // Probably can find it faster by scanning stack pages forward and testing for SThCtx at beginning
-{
- return GetThreadByAddr(GETSTKFRAME());
-}
-//------------------------------------------------------------------------------------------------------------
-static NTHD::SThCtx* GetThreadByID(uint id)
-{
- if((id == (uint)-1)||(id == fwsinf.MainTh.ThreadID))return &fwsinf.MainTh;
- if(!fwsinf.ThreadInfo)return nullptr; // No more threads
- NTHD::SThCtx** ptr = fwsinf.ThreadInfo->FindThByTID(id);
- if(!ptr)return nullptr;
- return NTHD::ReadRecPtr(ptr);
-}
-//------------------------------------------------------------------------------------------------------------
-static NTHD::SThCtx* GetThreadByAddr(vptr addr)   // By an address on stack
-{
- if(((uint8*)addr >= (uint8*)fwsinf.MainTh.StkBase)&&((uint8*)addr < ((uint8*)fwsinf.MainTh.StkBase + fwsinf.MainTh.StkSize)))return &fwsinf.MainTh;
- if(!fwsinf.ThreadInfo)return nullptr; // No more threads
- NTHD::SThCtx** ptr = fwsinf.ThreadInfo->FindThByStack(addr);
- if(!ptr)return nullptr;
- return NTHD::ReadRecPtr(ptr);
-}
-//------------------------------------------------------------------------------------------------------------
-/*static NTHD::SThCtx* GetNextThread(NTHD::SThCtx* th) // Get thread by index?   // Start from NULL    // Need to think
-{
- return nullptr;
-}*/
 //------------------------------------------------------------------------------------------------------------
 static sint InitStartupInfo(vptr StkFrame=nullptr, vptr ArgA=nullptr, vptr ArgB=nullptr, vptr ArgC=nullptr)  // Probably should be private but...
 {
  DBGDBG("StkFrame=%p, ArgA=%p, ArgB=%p, ArgC=%p",StkFrame,ArgA,ArgB,ArgC);
  IFDBG{ DBGDBG("Stk[0]=%p, Stk[1]=%p, Stk[2]=%p, Stk[3]=%p, Stk[4]=%p", ((void**)StkFrame)[0], ((void**)StkFrame)[1], ((void**)StkFrame)[2], ((void**)StkFrame)[3], ((void**)StkFrame)[4]); }
 
-  // LOGMSG("StkFrame=%p, ArgA=%p, ArgB=%p, ArgC=%p",StkFrame,ArgA,ArgB,ArgC);
- //  LOGMSG("Stk[0]=%p, Stk[1]=%p, Stk[2]=%p, Stk[3]=%p, Stk[4]=%p", ((void**)StkFrame)[0], ((void**)StkFrame)[1], ((void**)StkFrame)[2], ((void**)StkFrame)[3], ((void**)StkFrame)[4]);
- /*if(!APtr)  // Try to get AUXV from '/proc/self/auxv'
+// NOTE: LibC only (MUSL does not pass ArgC, ArcV, EnvP to Init proc)
+ if(ArgB && ArgC && (((size_t*)ArgC) == (((size_t*)ArgB)+((size_t)ArgA)+1)) && (((size_t*)ArgB)[-1] == (size_t)ArgA))   // System entry point does not receive ArgC,ArgV,EnvP but LD passes those to _init
   {
-   return -1;
+   fwsinf.Flags |= sfLoadedByLdr;
+   StkFrame = ((size_t*)ArgB)-1;  // Start from ArgC  // NOTE: Lets hope that it is not a copy and actually the original ArgC:ArgV:Env:Aux arrays
+   DBGDBG("Loader detected(1)");
   }
-   // It may not be known if we are in a shared library
-*/
- /*if(StkFrame) // NOTE: C++ Clang enforces the stack frame to contain some EntryPoints`s saved registers
+ else if(StkFrame)
   {
-//   TODO: detect if this is a DLL loaded by loader, or if the EXE started from loader
-   if constexpr (IsArchX64)
+  // vptr optr = StkFrame;
+   size_t* Frame = (size_t*)UELF::FindStartupInfo(StkFrame);
+   if(Frame && !Frame[0] && !Frame[1] && !Frame[2] && !Frame[3])
     {
-     if constexpr(IsCpuARM)StkFrame = &((void**)StkFrame)[4]; // ARM 64: Stores X19,X29,X30 and aligns to 16   // __builtin_frame_address does not return the frame address as it was at the function entry
-       else StkFrame = &((void**)StkFrame)[1];  // Untested  // No ret addr on stack, only stack frame ptr
-
-    }
-     else
+     Frame = (size_t*)UELF::FindStartupInfoByAuxV(Frame);  // ArgC,ArgV,EnvP,AuxV are null - probbly incorrectly detected because of 4 null entries on stack
+     if(Frame)
       {
-       if constexpr(IsCpuARM)StkFrame = &((void**)StkFrame)[2]; // ARM 32: PUSH {R11,LR} - 0: RetAddr, 1:StackFramePtr   // __builtin_frame_address does not return the frame address as it was at the function entry
-         else StkFrame = &((void**)StkFrame)[1];  // No ret addr on stack, only stack frame ptr
+       fwsinf.Flags |= sfLoadedByLdr;    // Too far and NULLs on stakd are put by a loader most likely
+       DBGDBG("Loader detected(2)");
       }
-  }*/
+    }
+   StkFrame = Frame;
+   DBGDBG("FoundInfoPtr: %p", StkFrame);
+  // for(uint8* Ptr = (uint8*)optr;;Ptr += 8){LOGMSG("Stk %p: %p",Ptr,*(vptr*)Ptr);}  // <<< DBG
+  }
 
- if(StkFrame){StkFrame = UELF::FindStartupInfo(StkFrame); DBGDBG("FoundInfoPtr: %p", StkFrame);}
  if(StkFrame)
   {
  //  LOGMSG("StkFrame %p:\r\n%#*.32D",StkFrame,128,StkFrame);
@@ -220,14 +181,8 @@ static sint InitStartupInfo(vptr StkFrame=nullptr, vptr ArgA=nullptr, vptr ArgB=
    uint ParIdx   = 0;
    do{APtr=Args[ParIdx++];}while(APtr);  // Skip until AUX vector
    fwsinf.AuxInf = (ELF::SAuxVecRec*)&Args[ParIdx];
-
-   /* if(ArgNum > 3)
-     {
-      ArgNum = 3;
-      DBGDBG("Corrupted frame!!!");
-     }  */
-
   }
+
  DBGDBG("Getting UTC offset...");
  //PX::timezone tz = {};
  //if(!NAPI::gettimeofday(nullptr, &tz))fwsinf.UTCOffs = tz.minuteswest;
@@ -238,9 +193,34 @@ static sint InitStartupInfo(vptr StkFrame=nullptr, vptr ArgA=nullptr, vptr ArgB=
   }
    else {DBGDBG("gettimeofday failed with %i", r);}
  DBGDBG("UTC offset is %i seconds", fwsinf.UTCOffs); //LOGMSG("TZFILE offs: %i",tz.minuteswest);
-
- //  DbgLogStartupInfo();
  DBGDBG("STInfo=%p, CLArgs=%p, EVVars=%p, AuxInf=%p",fwsinf.STInfo,fwsinf.CLArgs,fwsinf.EVVars,fwsinf.AuxInf);
+ sint PageSize = GetAuxInfo(ELF::AT_PAGESZ);
+ if(PageSize > 0)fwsinf.MemPageSize = fwsinf.MemGranSize = PageSize;
+   else fwsinf.MemPageSize = fwsinf.MemGranSize = MEMPAGESIZE;
+ fwsinf.Flags  |= sfInitialized;
+
+ fwsinf.DevNull = OpenDevNull();   // Needed for a module base search!
+ fwsinf.DevRand = OpenDevRand();
+
+ fwsinf.MainModBase = FindMainBase(&fwsinf.MainModSize);
+ fwsinf.TheModBase  = FindModuleBase(&fwsinf.TheModSize);
+ DBGDBG("MainMod={%p, %p}, ThisMod={%p, %p}",fwsinf.MainModBase,(vptr)fwsinf.MainModSize,  fwsinf.TheModBase,(vptr)fwsinf.TheModSize);
+ bool KnownBases = fwsinf.MainModBase && fwsinf.TheModBase;
+ if(KnownBases && (fwsinf.MainModBase != fwsinf.TheModBase))
+  {
+   fwsinf.Flags |= sfDynamicLib;
+   DBGDBG("This is a dynamic lib");
+  }
+ if(!(fwsinf.Flags & sfLoadedByLdr))   // TODO: Compare module pointers
+  {
+   sint LdrBase = GetAuxInfo(ELF::AT_BASE);    // Our executables do not request the loader from the system
+   if(LdrBase > 0)
+    {
+     fwsinf.Flags |= sfLoadedByLdr;
+     if(!KnownBases)fwsinf.Flags |= sfDynamicLib;  // At least assume this
+     DBGDBG("Loader detected(3)");
+    }
+  }
  return 0;
 }
 //============================================================================================================
