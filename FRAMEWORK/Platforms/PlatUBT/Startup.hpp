@@ -6,14 +6,18 @@
 // TODO: Pack these fields in a structure and scramble them (OPTIONAL)
 struct SSINF
 {
- vptr            STInfo;  // Pointer to stack frame
- vptr            RetAddr; // Required for UBoot scanning
- vptr            UBootBase;
- vptr*           JmpTable;
- uint            ArgC;
- achar**         ArgV;
+ vptr    STInfo;  // Pointer to stack frame
+ vptr    RetAddr; // Required for UBoot scanning
+ vptr    UBootBase;
+ vptr*   JmpTable;
+ uint    ArgC;
+ achar** ArgV;
+ uint32  MemPageSize;
+ uint32  MemGranSize;
+ NTHD::STDesc thd;
+} static inline fwsinf = {};
 
-} static inline SInfo = {};
+static _finline NTHD::STDesc* GetThDesc(void){return &fwsinf.thd;}
 
 static const uint32 MaxUBootSize = 1024*1024;   // 1MB
 //------------------------------------------------------------------------------------------------------------
@@ -48,7 +52,7 @@ static vptr* FindJumpTable(vptr AddrInUboot)
    if(val < 0x00010000)continue;  // Too small
 #ifdef ARCH_X32
    if(val > 0xFFFF0000)continue;  // Too big
-#endif  
+#endif
    if((val < (size_t)GTbl)||(val > ((size_t)GTbl+0x100000)))continue; // Allocated in next block (separate malloc)   // NOTE: This check is unreliable
    size_t* TstTbl = (size_t*)val;
    for(int ctr=0;ctr < 24;ctr++)
@@ -140,7 +144,7 @@ struct SExecCmdLineFinder_ARM32c: public SExecCmdLineFinder_Base<SExecCmdLineFin
  static constexpr uint32 Offs = 0;
 };
 
-struct SExecCmdLineFinder_ARM64a: public SExecCmdLineFinder_Base<SExecCmdLineFinder_ARM64a>   
+struct SExecCmdLineFinder_ARM64a: public SExecCmdLineFinder_Base<SExecCmdLineFinder_ARM64a>
 {
 /*
   21 00 1E 12   AND    W1, W1, #4
@@ -159,7 +163,7 @@ struct SExecCmdLineFinder_ARM64a: public SExecCmdLineFinder_Base<SExecCmdLineFin
  static constexpr uint32 Tgt1 = 0x52800062;    // MOV  W2, #3
  static constexpr uint32 Tgt2 = 0x52800161;    // MOV  W1, #0xB
  static constexpr uint32 Tgt3 = 0x1A810041;    // CSEL W1, W2, W1, EQ
- static constexpr uint32 Msk1 = ~0x001Fu;   // Mask out registers field 
+ static constexpr uint32 Msk1 = ~0x001Fu;   // Mask out registers field
  static constexpr uint32 Msk2 = ~0x001Fu;
  static constexpr uint32 Msk3 = -1;
  static constexpr uint32 Dist = 8;
@@ -169,7 +173,7 @@ struct SExecCmdLineFinder_ARM64a: public SExecCmdLineFinder_Base<SExecCmdLineFin
 //-----------------------------------------------------------------------------------------
 static vptr FindExecCmdLine(vptr BaseAddr, size_t Size)
 {
- UBTMSG("FindExecCmdLine: %p, %08X",BaseAddr,Size);
+ UBTMSG("%s: %p, %08X", FUNC_NAME, BaseAddr, Size);
 #if defined(CPU_ARM)
   #if defined(ARCH_X64)
  static constexpr uint32 Step = 4;
@@ -208,8 +212,8 @@ static vptr FindExecCmdLine(vptr BaseAddr, size_t Size)
 //   if(Ptr=fnd2.Update(CurPtr, val))break;
 //   if(Ptr=fnd3.Update(CurPtr, val))break;
   }
- if(Ptr){UBTMSG("FindExecCmdLine: Found at %p", Ptr);}
-   else {UBTMSG("FindExecCmdLine: Nothing found!");}
+ if(Ptr){UBTMSG("%s: Found at %p", FUNC_NAME, Ptr);}
+   else {UBTMSG("%s: Nothing found!", FUNC_NAME);}
  return Ptr;
 }
 //-----------------------------------------------------------------------------------------
@@ -304,9 +308,12 @@ ASM_FUNC(ArmDisableCachesAndMmu)
 public:
 //------------------------------------------------------------------------------------------------------------
 //------------------------------------------------------------------------------------------------------------
-static _finline size_t GetArgC(void){return (size_t)SInfo.ArgC;}   // On Windows should be always 1? // Be careful with access to SInfo using casts. Clang may optimize out ALL! code because of it
-static _finline const achar** GetArgV(void){return (const achar**)SInfo.ArgV;}
+static _finline size_t GetArgC(void){return (size_t)fwsinf.ArgC;}   // On Windows should be always 1? // Be careful with access to fwsinf  using casts. Clang may optimize out ALL! code because of it
+static _finline const achar** GetArgV(void){return (const achar**)fwsinf.ArgV;}
 static _finline const achar** GetEnvP(void){return nullptr;}
+//------------------------------------------------------------------------------------------------------------
+static _finline uint32 GetPageSize(void)  {return fwsinf.MemPageSize;}
+static _finline uint32 GetGranSize(void)  {return fwsinf.MemGranSize;}
 //------------------------------------------------------------------------------------------------------------
 static _finline PX::fdsc_t GetStdIn(void)  {return PX::STDIN; }  // 0
 static _finline PX::fdsc_t GetStdOut(void) {return PX::STDOUT;}  // 1
@@ -389,13 +396,13 @@ static sint GetSysInfo(uint InfoID, void* DstBuf, size_t BufSize)
 //
 static _finline void* GetModuleBase(void)
 {
- return nullptr;//SInfo.TheModBase;
+ return nullptr;//fwsinf.TheModBase;
 }
 //------------------------------------------------------------------------------------------------------------
 //
 static _finline size_t GetModuleSize(void)
 {
- return 0;//SInfo.TheModSize;
+ return 0;//fwsinf.TheModSize;
 }
 //------------------------------------------------------------------------------------------------------------
 // Returns full path to current module and its name in UTF8
@@ -404,24 +411,25 @@ static size_t _finline GetModulePath(achar* DstBuf, size_t BufSize=-1)
  return 0;
 }
 //------------------------------------------------------------------------------------------------------------
-//#define DJTAPI(name) *SysApi.name.GetPtrSC<volatile vptr*>() = (vptr)0xAABBCCDD; //SInfo.JmpTable[(int)NUBOOT::EApiIdx::name]
-#define DJTAPI(name) *UnbindPtr(SAPI::name.GetPtrSC<vptr*>()) = SInfo.JmpTable[(int)NUBOOT::EApiIdx::name]
+//#define DJTAPI(name) *SysApi.name.GetPtrSC<volatile vptr*>() = (vptr)0xAABBCCDD; //fwsinf.JmpTable[(int)NUBOOT::EApiIdx::name]
+#define DJTAPI(name) *UnbindPtr(SAPI::name.GetPtrSC<vptr*>()) = fwsinf.JmpTable[(int)NUBOOT::EApiIdx::name]
 
 // MacOS 'dyld main' args: ACnt, Args, EVars, AVars
 // Without the -osx_min_version flag to ld, arguments are indeed passed on stack to _start ????????????????
 //
 static sint InitStartupInfo(void* StkFrame=nullptr, void* ArgA=nullptr, void* ArgB=nullptr, void* ArgC=nullptr)
 {
- SInfo.STInfo    = StkFrame;  // Pointer to stack frame (No useful information there)
- SInfo.RetAddr   = ArgC;
- SInfo.ArgV      = (achar**)ArgB;
- SInfo.ArgC      = (uint)ArgA;
- SInfo.UBootBase = FindBaseOfUBOOT(SInfo.RetAddr);
- if(!SInfo.UBootBase)return -1;
- SInfo.JmpTable  = FindJumpTable(SInfo.RetAddr);
- if(!SInfo.JmpTable)return -2;
+ fwsinf.MemPageSize = fwsinf.MemGranSize = MEMPAGESIZE;
+ fwsinf.STInfo    = StkFrame;  // Pointer to stack frame (No useful information there)
+ fwsinf.RetAddr   = ArgC;
+ fwsinf.ArgV      = (achar**)ArgB;
+ fwsinf.ArgC      = (uint)ArgA;
+ fwsinf.UBootBase = FindBaseOfUBOOT(fwsinf.RetAddr);
+ if(!fwsinf.UBootBase)return -1;
+ fwsinf.JmpTable  = FindJumpTable(fwsinf.RetAddr);
+ if(!fwsinf.JmpTable)return -2;
 
- DJTAPI(get_version);   // *SAPI::get_version.GetPtrSC<vptr>() = SInfo.JmpTable[(int)NUBOOT::EApiIdx::get_version];
+ DJTAPI(get_version);   // *SAPI::get_version.GetPtrSC<vptr>() = fwsinf.JmpTable[(int)NUBOOT::EApiIdx::get_version];
  DJTAPI(getc);
  DJTAPI(tstc);
  DJTAPI(putc);
@@ -445,28 +453,28 @@ static sint InitStartupInfo(void* StkFrame=nullptr, void* ArgA=nullptr, void* Ar
  DJTAPI(i2c_read);
 
  DBGDBG("StkFrame=%p, RetAddr=%p, ArgV=%p, ArgC=%u",StkFrame,ArgC,ArgA,ArgB);    // On Windows syscalls are not initialized yet at this point!
- UBTMSG("Base of UBOOT: %p",SInfo.UBootBase);
- UBTMSG("Jump Table: %p",SInfo.JmpTable);
+ UBTMSG("Base of UBOOT: %p",fwsinf.UBootBase);
+ UBTMSG("Jump Table: %p",fwsinf.JmpTable);
 
- vptr pExecCmdLine = FindExecCmdLine((void*)((size_t)SInfo.JmpTable[(int)NUBOOT::EApiIdx::malloc] & ~0xFFFF), 0x20000);     // ((size_t)this->malloc & ~0xFFFF)
+ vptr pExecCmdLine = FindExecCmdLine((void*)((size_t)fwsinf.JmpTable[(int)NUBOOT::EApiIdx::malloc] & ~0xFFFF), 0x20000);     // ((size_t)this->malloc & ~0xFFFF)
  *UnbindPtr(SAPI::ExecCmdLine.GetPtrSC<vptr*>()) = pExecCmdLine;
 
- UBTMSG("ExecCmdLine addr: %p",pExecCmdLine);  // DBGMSG   // NOTE: Framework`s logging will make the UBOOT module much bigger
+// UBTMSG("ExecCmdLine addr: %p",pExecCmdLine);  // DBGMSG   // NOTE: Framework`s logging will make the UBOOT module much bigger
  if(!pExecCmdLine)return -3;
  return 0;
 }
 //============================================================================================================
 static void DbgLogStartupInfo(void)
 {
- if(!SInfo.STInfo)return;
+ if(!fwsinf.STInfo)return;
  // Log command line arguments
- if(SInfo.ArgV)
+ if(fwsinf.ArgV)
   {
    void*  APtr = nullptr;
-   char** Args = SInfo.ArgV;
+   char** Args = fwsinf.ArgV;
    uint ParIdx = 0;
    LOGDBG("CArguments: ");
-   for(uint idx=0;idx < SInfo.ArgC;idx++)
+   for(uint idx=0;idx < fwsinf.ArgC;idx++)
     {
      LOGDBG("  Arg %u: %s",idx,APtr);
     }

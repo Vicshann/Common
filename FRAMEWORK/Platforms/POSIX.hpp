@@ -276,6 +276,7 @@ enum EOpnFlg    // For 'flags' field    // Platform/Arch dependant?
   O_CREAT     = DCV< 0x00000040, 0x00000200 >::V,    // If the file exists, this flag has no effect. Otherwise, the owner ID of the file is set to the user ID of the c_actor, the group ID of the file is set to the group ID of the c_actor, and the low-order 12 bits of the file mode are set to the value of mode.
   O_EXCL      = DCV< 0x00000080, 0x00000800 >::V,    // Ensure that this call creates the file. If O_EXCL and O_CREAT are set, open will fail if the file exists. In general, the behavior of O_EXCL is undefined if it is used without O_CREAT
 
+  O_NOCTTY    = DCV< 0x00000100, 0          >::V,    // If pathname refers to a terminal device—see tty(4)—it will not become the process's controlling terminal even if the process does not have one. // On GNU/Hurd systems and 4.4 BSD, opening a file never makes it the controlling terminal and O_NOCTTY is zero. 
   O_TRUNC     = DCV< 0x00000200, 0x00000400 >::V,    // If the file exists, its length is truncated to 0 and the mode and owner are unchanged.
   O_APPEND    = DCV< 0x00000400, 0x00000008 >::V,    // If set, the file pointer will be set to the end of the file prior to each write.
   O_NONBLOCK  = DCV< 0x00000800, 0x00000004 >::V,    // If O_NONBLOCK is set, the open will return without waiting for the device to be ready or available. Subsequent behavior of the device is device-specific.
@@ -879,9 +880,26 @@ static PVOID PXCALL mmap(PVOID addr, SIZE_T length, uint prot, uint flags, fdsc_
 // The address addr must be a multiple of the page size (but length need not be).
 static int   PXCALL munmap(PVOID addr, SIZE_T length);
 
-static constexpr const int MREMAP_MAYMOVE = 1;
-static constexpr const int MREMAP_FIXED   = 2;
+SCVR int MREMAP_MAYMOVE = 1;
+SCVR int MREMAP_FIXED   = 2;
 
+// https://stackoverflow.com/questions/69864177/how-to-increase-the-size-of-memory-region-allocated-with-mmap
+/*
+With just portable POSIX calls, mmap() with a non-NULL hint address = right after you existing mapping, but without MAP_FIXED; 
+it will pick that address if the pages are free (and as @datenwolf says, merge with the earlier mapping into one long extent). 
+Otherwise it will pick somewhere else. (Then you have to munmap that mapping that ended up not where you wanted it.)
+
+There is a Linux-specific mmap option: MAP_FIXED_NOREPLACE will return an error instead of mapping at an address different from the hint. 
+Kernels older than 4.17 don't know about that flag and will typically treat it as if you used no other flags besides MAP_ANONYMOUS, 
+so you should check the return value against the hint.
+
+Do not use MAP_FIXED_NOREPLACE | MAP_FIXED; that would act as MAP_FIXED on old kernels, and maybe also on new kernels that do know about MAP_FIXED_NOREPLACE.
+
+Assuming you know the start of the mapping you want to extend, and the desired new total size, mremap is a better choice than mmap(MAP_FIXED_NOREPLACE). 
+It's been supported since at least Linux 2.4, i.e. decades, and keeps the existing mapping flags and permissions automatically (e.g. MAP_PRIVATE, PROT_READ|PROT_WRITE)
+
+If you only knew the end address of the existing mapping, mmap(MAP_FIXED_NOREPLACE) might be a good choice.
+*/
 static PVOID PXCALL mremap(PVOID old_address, SIZE_T old_size, SIZE_T new_size, int flags, PVOID new_address);   // LINUX specific
 
 enum EMadv

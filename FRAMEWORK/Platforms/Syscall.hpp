@@ -149,9 +149,8 @@ enum class ESysCNum: int { //                       x86_32  x86_64  arm_32  arm_
                            mmap =             DSC<  90,     9,      -1,     222,    197       >::V,   // Not present on arm32. Ignore it on any x32 system, use mmap2 instead   // BSD: new mmap (freebsd6, November 2005)
                            mmap2 =            DSC<  192,    -1,     192,    -1,     71        >::V,   // x32 only   // BSD: old, unimplemented on MacOS
                            munmap =           DSC<  91,     11,     91,     215,    73        >::V,
-                           msync =            DSC<  144,    26,     144,    227,    -2        >::V,
-
-// mremap    // Linux-specific               
+                           msync =            DSC<  144,    26,     144,    227,    -2        >::V,    
+                           mremap =           DSC<  163,    25,     163,    216,    -1        >::V,   // Linux-specific           
                            madvise =          DSC<  219,    28,     220,    233,    75        >::V,
                            mprotect =         DSC<  125,    10,     125,    226,    74        >::V,
 //                   --- NETWORK             

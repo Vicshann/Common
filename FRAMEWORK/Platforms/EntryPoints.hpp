@@ -6,19 +6,18 @@
 #ifdef _APPENTRYPT    // Defined in AppMain.cpp if AppMain.hpp is present in a project that uses the Framework
 
 // For application`s main executables (Class entry point)
-//  __attribute__ ((section ("entry")))         // TODO: by cfg
+//  __attribute__ ((section ("entry")))         // TODO: by cfg (For raw binary)
 
-_SYSENTRY MODERN_INIT sint _scall _ModStart(vptr ArgA, vptr ArgB, vptr ArgC) noexcept  // On Windows ArgA is PEB ptr
+_SYSENTRY MODERN_INIT sint _scall _ModEnter(vptr ArgA, vptr ArgB, vptr ArgC) noexcept  // On Windows ArgA is PEB ptr
 {
- NPTM::SFWCTX ctx;
- if(ctx.Initialize(GETSTKFRAME(), ArgA, ArgB, ArgC, NCFG::InitCon))return 0;  // The entry point has ben called already
+ if(NPTM::Initialize(GETSTKFRAME(), ArgA, ArgB, ArgC, NCFG::InitCon))return 0;  // The entry point has ben called already
  DBGMSG("Framework initialized");
- CAppMain app;           // Included somewhere above
+ CAppMain app;           // Included somewhere above  // Optionally Store in static/dynamic memory id this is a DLL (And have a global ptr for it (Static: App::Instance))?
  sint stat = -10000;
  if(app.Initialize(ArgA, ArgB, ArgC) >= 0)
   {
    DBGMSG("Application initialized");
-   stat = app.Execute();
+   stat = app.Execute();       // NOTE: This call should be NEVER inlined or with -O2 it may be completely messed up (Infinite loops, etc)
    DBGMSG("App execution completed");
    app.Finalize();
   }
@@ -35,10 +34,9 @@ _SYSENTRY MODERN_INIT sint _scall _ModStart(vptr ArgA, vptr ArgB, vptr ArgC) noe
 #else
 sint _scall ModuleMain(vptr ArgA, vptr ArgB, vptr ArgC);  // Forward declare
 
-_SYSENTRY MODERN_INIT sint _scall _ModStart(vptr ArgA, vptr ArgB, vptr ArgC) noexcept  // On Windows ArgA is PEB ptr
+_SYSENTRY MODERN_INIT sint _scall _ModEnter(vptr ArgA, vptr ArgB, vptr ArgC) noexcept  // On Windows ArgA is PEB ptr
 {
- NPTM::SFWCTX ctx;
- if(ctx.Initialize(GETSTKFRAME(), ArgA, ArgB, ArgC, NCFG::InitCon))return 0; // The entry point has ben called already
+ if(NPTM::Initialize(GETSTKFRAME(), ArgA, ArgB, ArgC, NCFG::InitCon))return 0; // The entry point has ben called already
  DBGMSG("Framework initialized");
  sint stat = ModuleMain(ArgA, ArgB, ArgC); // Call 'Main' which should be somewhere above
  DBGMSG("Exiting");

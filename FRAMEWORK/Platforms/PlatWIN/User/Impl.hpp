@@ -64,7 +64,7 @@ DECL_SYSCALL(WPROCID(HashNtDll,"NtDeviceIoControlFile"),      NT::NtDeviceIoCont
 //============================================================================================================
 struct NAPI   // On NIX all syscall stubs will be in NAPI   // uwin-master
 {
-#include "../../UtilsNAPI.hpp"
+//#include "../../UtilsNAPI.hpp"
 
 FUNC_WRAPPERFI(PX::exit,       exit       ) { SAPI::NtTerminateThread(NT::NtCurrentThread, (uint32)GetParFromPk<0>(args...)); }
 FUNC_WRAPPERFI(PX::exit_group, exit_group ) { SAPI::NtTerminateProcess(NT::NtCurrentProcess, (uint32)GetParFromPk<0>(args...)); }
@@ -126,7 +126,7 @@ FUNC_WRAPPERNI(PX::mmapGD,     mmap       )
 
  if(!(flags & (PX::MAP_PRIVATE|PX::MAP_SHARED)))return vptr(-PX::EINVAL);   // One of MAP_SHARED or MAP_PRIVATE must be specified.   // MAP_SHARED: Write changes back to a mapped file (It must be opened as writable)
  if((flags & (PX::MAP_PRIVATE|PX::MAP_SHARED)) == (PX::MAP_PRIVATE|PX::MAP_SHARED))return vptr(-PX::EINVAL);  // ???
- if(pgoffset & ~MEMPAGESIZE)return vptr(-PX::EINVAL);  // offset must be a multiple of the page size as returned by sysconf(_SC_PAGE_SIZE)  // TODO: Check if it actually reports an error
+ if(pgoffset & (MEMPAGESIZE-1))return vptr(-PX::EINVAL);  // offset must be a multiple of the page size as returned by sysconf(_SC_PAGE_SIZE)  // TODO: Check if it actually reports an error
  if((flags & PX::MAP_ANONYMOUS)&&(fd != NT::NtInvalidHandle))return vptr(-PX::EINVAL);    // For portability
  if(!length)return vptr(-PX::EINVAL);     // Only Windows accepts 0 for entire file mappings
 
@@ -136,7 +136,7 @@ FUNC_WRAPPERNI(PX::mmapGD,     mmap       )
   {
    size_t RegionSize  = AlignP2Frwd(length, MEMGRANSIZE);       // Rounded >>>
    uint32 AllocProt   = NTX::MemProtPXtoNT(prot);
-   if(flags & PX::MAP_NOCACHE)AllocProt |= NT::PAGE_NOCACHE;   // ???
+   if(flags & PX::MAP_NOCACHE)AllocProt |= NT::PAGE_NOCACHE;    // ???
    res = SAPI::NtAllocateVirtualMemory(NT::NtCurrentProcess, &RegionBase, 0, &RegionSize, NT::MEM_RESERVE, AllocProt);  // First reserve with 64k granularity to avoid memory holes (allowed to fail if already has been done)    (Will cause memory waste in Working Set?)
    if(res)return (vptr)-NTX::NTStatusToLinuxErr(res);   // What actual error codes could be?   (If already reserved?)
    RegionBase = addr;     // Reset the base and size
@@ -167,10 +167,10 @@ FUNC_WRAPPERNI(PX::mmapGD,     mmap       )
  if(fd == NT::NtInvalidHandle){RegionSize = AlignP2Frwd(length, MEMGRANSIZE); fd = 0;}  // Unused fd for NtCreateSection is 0 (STATUS_OBJECT_TYPE_MISMATCH if -1)
   else RegionSize = length;
 
- uint32 SecRights = NT::SYNCHRONIZE|NT::SECTION_QUERY|NT::STANDARD_RIGHTS_REQUIRED;        // NOTE: Untested
- if(prot & PX::PROT_EXEC)SecRights |= NT::GENERIC_EXECUTE|NT::SECTION_MAP_EXECUTE;
- if(prot & PX::PROT_READ)SecRights |= NT::GENERIC_READ|NT::SECTION_MAP_READ;
- if(prot & PX::PROT_WRITE)SecRights |= NT::GENERIC_WRITE|NT::SECTION_MAP_WRITE|NT::SECTION_EXTEND_SIZE;
+ uint32 SecRights = +NT::SYNCHRONIZE|NT::SECTION_QUERY|NT::STANDARD_RIGHTS_REQUIRED;        // NOTE: Untested
+ if(prot & PX::PROT_EXEC)SecRights |= +NT::GENERIC_EXECUTE|NT::SECTION_MAP_EXECUTE;
+ if(prot & PX::PROT_READ)SecRights |= +NT::GENERIC_READ|NT::SECTION_MAP_READ;
+ if(prot & PX::PROT_WRITE)SecRights |= +NT::GENERIC_WRITE|NT::SECTION_MAP_WRITE|NT::SECTION_EXTEND_SIZE;
 
  uint32 SecAttrs = NT::SEC_COMMIT;
  if(flags & PX::MAP_HUGETLB)SecAttrs |= NT::SEC_LARGE_PAGES;
@@ -203,16 +203,17 @@ FUNC_WRAPPERNI(PX::mmapGD,     mmap       )
  if(res)return (vptr)-NTX::NTStatusToLinuxErr(res);  
  return RegionBase; 
 }
+//------------------------------------------------------------------------------------------------------------
 /*
- The address addr must be a multiple of the page size (but length need not be)
- If the MEM_RELEASE flag is set in the FreeType parameter, BaseAddress must be the base address returned by ZwAllocateVirtualMemory when the region was reserved.
+ The address addr must be a multiple of the page size (but length does not)
+ If the MEM_RELEASE flag is set in the FreeType parameter, BaseAddress must be the base address returned by NtAllocateVirtualMemory when the region was reserved.
  If the MEM_RELEASE flag is set in the FreeType parameter, the variable pointed to by RegionSize must be zero.
-     ZwFreeVirtualMemory frees the entire region that was reserved in the initial allocation call to ZwAllocateVirtualMemory.
- ZwFreeVirtualMemory does not fail if you attempt to release pages that are in different states, some reserved and some committed
+     NtFreeVirtualMemory frees the entire region that was reserved in the initial allocation call to NtAllocateVirtualMemory.
+ NtFreeVirtualMemory does not fail if you attempt to release pages that are in different states, some reserved and some committed
  NOTE: Ideally we must RELEASE only if the Size covers the entire region (But we have to use QueryVirtualMemory to know that)
 */
 //------------------------------------------------------------------------------------------------------------
-FUNC_WRAPPERNI(PX::munmap,     munmap     )                // ZwUnmapViewOfSectionEx
+FUNC_WRAPPERNI(PX::munmap,     munmap     )                // ZwUnmapViewOfSectionEx  // TODO: deallocate in loop to cover entire range in case of mremap was used (Cannot free several allocations at once on Windows)
 {
  const vptr   addr   = (vptr)GetParFromPk<0>(args...);
  const size_t length = GetParFromPk<1>(args...);
@@ -221,17 +222,84 @@ FUNC_WRAPPERNI(PX::munmap,     munmap     )                // ZwUnmapViewOfSecti
  size_t RegionSize   = 0;       // Rounded >>>   // If the dwFreeType parameter is MEM_RELEASE, this parameter must be 0
 
  NT::NTSTATUS res = SAPI::NtFreeVirtualMemory(NT::NtCurrentProcess, &RegionBase, &RegionSize, NT::MEM_RELEASE);   // Releases the entire region but only if addr is the same base address that came from mmap (in most cases this is what you do)
- if(!res)return PX::NOERROR;  // The entire allocated region is free now   // TODO: Check returned error, detect shared/private mappings and do UnmapViewOfSection for the addr instead of NtFreeVirtualMemory
- if(res == NT::STATUS_UNABLE_TO_DELETE_SECTION){res = SAPI::NtUnmapViewOfSection(NT::NtCurrentProcess, RegionBase); if(!res)return PX::NOERROR;}  // This region is mapped  // NOTE: The entire region will e unmapped
+ if(!res)return PX::NOERROR;  // The entire allocated region is free now  
+ if(res == NT::STATUS_UNABLE_TO_DELETE_SECTION){res = SAPI::NtUnmapViewOfSection(NT::NtCurrentProcess, RegionBase); if(!res)return PX::NOERROR;}  // This region is a mapped section  // NOTE: The entire region will e unmapped
 
  RegionBase = addr;
  RegionSize = length;
- res = SAPI::NtFreeVirtualMemory(NT::NtCurrentProcess, &RegionBase, &RegionSize, NT::MEM_DECOMMIT);   // Addr is not region base addr, try at least to decommit some pages (Don`t even try to base your memory manager on this behaviour!)
+ res = SAPI::NtFreeVirtualMemory(NT::NtCurrentProcess, &RegionBase, &RegionSize, NT::MEM_DECOMMIT);   // Addr is not region base addr, try at least to decommit some pages (Don`t even try to base your memory manager on this behavior!)
  if(!res)return PX::NOERROR;
  return -(sint)NTX::NTStatusToLinuxErr(res);
 }
 //------------------------------------------------------------------------------------------------------------
-FUNC_WRAPPERNI(PX::mremap,     mremap     ) {return 0;}    // LINUX specific
+// https://stackoverflow.com/questions/17197615/no-mremap-for-windows
+// Can extend only if there are some reserved pages at the end
+// NOTE: None of this is tested appropriately
+// What about mlock?
+//
+FUNC_WRAPPERNI(PX::mremap,     mremap     )   // LINUX specific  // Impossible to make actual remapping with a general memory 
+{
+ const size_t old_address = (size_t)GetParFromPk<0>(args...);
+ const size_t old_size    = GetParFromPk<1>(args...);
+ const size_t new_size    = GetParFromPk<2>(args...);
+       int    flags       = GetParFromPk<3>(args...);
+       size_t new_address = (size_t)GetParFromPk<4>(args...);
+
+ if(old_address & (NPTM::MEMPAGESIZE-1))return vptr(-PX::EINVAL); 
+ if(flags & PX::MREMAP_FIXED)
+  {
+   if(!(flags & PX::MREMAP_MAYMOVE))return vptr(-PX::EINVAL); 
+   if(new_address & (NPTM::MEMPAGESIZE-1))return vptr(-PX::EINVAL);   
+   if(IsRangesIntersect(old_address,old_size, new_address,new_size))return vptr(-PX::EINVAL);
+  }
+ NT::MEMORY_BASIC_INFORMATION mbi;
+ NT::NTSTATUS res = SAPI::NtQueryVirtualMemory(NT::NtCurrentProcess, (vptr)old_address, NT::MemoryBasicInformation, &mbi, sizeof(mbi), nullptr);
+ if(res)return vptr(-PX::EFAULT);    // old_address is invalid
+ if(mbi.Type != NT::MEM_PRIVATE)return vptr(-PX::EPERM);  // It is impossible to remap a file mapping on Windows by having only a memory pointer to it.
+
+ vptr   nptr = nullptr;
+ size_t al_new_size = AlignP2Frwd(new_size, MEMGRANSIZE);       // Rounded >>>
+ if(!(flags & PX::MREMAP_FIXED))   // Try to expand/shrink? Shrinking is safe(realign and make remaining pages reserved) Expanding may overlap already committed pages(But only in current allocation block), only sequential expanding is OK.         
+  {
+   vptr   RegionBase = (vptr)old_address;     
+   size_t RegionSize = new_size;          // Now 4k alignment is OK
+   res = SAPI::NtAllocateVirtualMemory(NT::NtCurrentProcess, &RegionBase, 0, &RegionSize, NT::MEM_COMMIT, mbi.Protect);  
+   if(res)      // Failed to resize
+    {
+     if(!(flags & PX::MREMAP_MAYMOVE))return nptr;  // Forbidden to relocate   // Try to expand, move if fails at unk addr
+     flags |= PX::MREMAP_FIXED;   // Try allocation in a new block
+     new_address = 0;             //  On a system-provided addr
+    }
+     else   // Resized inplace, shrinked. Must decommit the discarded pages
+      {
+       size_t aos = AlignP2Frwd(old_size, MEMPAGESIZE); 
+       if(RegionSize < aos)
+        {
+         RegionBase = (vptr)((size_t)RegionBase + RegionSize);  
+         RegionSize = aos - RegionSize;
+         res = SAPI::NtFreeVirtualMemory(NT::NtCurrentProcess, &RegionBase, &RegionSize, NT::MEM_DECOMMIT);
+         //if(res)  ?????????
+        }
+      }
+  }
+
+ if(flags & PX::MREMAP_FIXED)    // In a different region, at exact address
+  {
+   vptr   RegionBase  = (vptr)new_address;
+   size_t RegionSize  = al_new_size;
+   res = SAPI::NtAllocateVirtualMemory(NT::NtCurrentProcess, &RegionBase, 0, &RegionSize, NT::MEM_RESERVE, mbi.Protect);  // First reserve with 64k granularity to avoid memory holes (allowed to fail if already has been done)    (Will cause memory waste in Working Set?)
+   if(res)return (vptr)-NTX::NTStatusToLinuxErr(res);   // What actual error codes could be?   (If already reserved?)
+   RegionBase = (vptr)new_address;       // Reset the base and size
+   RegionSize = new_size;   // Now 4k alignment is OK
+   res = SAPI::NtAllocateVirtualMemory(NT::NtCurrentProcess, &RegionBase, 0, &RegionSize, NT::MEM_COMMIT, mbi.Protect);  // Then commit with 4k granularity (page size)
+   if(res)return (vptr)-NTX::NTStatusToLinuxErr(res); 
+  }
+   
+ NMOPS::MemCopy(nptr, (vptr)old_address, old_size);
+ res = NAPI::munmap((vptr)old_address, old_size);    // If release fails, tries decommit    // TODO: Check for address space leaks
+ //if(res)  ?????????
+ return nptr;
+}    
 //------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERNI(PX::madvise,    madvise    )
 {
@@ -329,7 +397,7 @@ FUNC_WRAPPERNI(PX::truncate,     truncate       )
  NT::HANDLE FileHandle = 0;
  const achar* path = GetParFromPk<0>(args...);
  uint64 Len = GetParFromPk<1>(args...);
- NT::NTSTATUS res = NTX::OpenFileObject(&FileHandle, path, NT::SYNCHRONIZE|NT::FILE_WRITE_ATTRIBUTES|NT::FILE_WRITE_DATA, 0, NT::FILE_ATTRIBUTE_NORMAL, NT::FILE_SHARE_READ|NT::FILE_SHARE_WRITE|NT::FILE_SHARE_DELETE, NT::FILE_OPEN, NT::FILE_SYNCHRONOUS_IO_NONALERT, &iosb);
+ NT::NTSTATUS res = NTX::OpenFileObject(&FileHandle, path, +NT::SYNCHRONIZE|NT::FILE_WRITE_ATTRIBUTES|NT::FILE_WRITE_DATA, 0, NT::FILE_ATTRIBUTE_NORMAL, NT::FILE_SHARE_READ|NT::FILE_SHARE_WRITE|NT::FILE_SHARE_DELETE, NT::FILE_OPEN, NT::FILE_SYNCHRONOUS_IO_NONALERT, &iosb);
  if(res)return -NTX::NTStatusToLinuxErr(res);  // Can the handle be open? (Status > 0)
  int rs = NAPI::ftruncate((PX::fdsc_t)FileHandle, Len);
  SAPI::NtClose(FileHandle);
@@ -347,7 +415,7 @@ FUNC_WRAPPERNI(PX::mkdir,      mkdir      )
  const achar* path = (achar*)GetParFromPk<0>(args...);
 // int mode = GetParFromPk<1>(args...);   // TODO: Mode support
 
- NT::NTSTATUS res = NTX::OpenFileObject(&FileHandle, path, NT::SYNCHRONIZE|NT::FILE_READ_ATTRIBUTES, 0, NT::FILE_ATTRIBUTE_NORMAL, NT::FILE_SHARE_READ|NT::FILE_SHARE_WRITE|NT::FILE_SHARE_DELETE, NT::FILE_CREATE, NT::FILE_DIRECTORY_FILE|NT::FILE_SYNCHRONOUS_IO_NONALERT, &iosb);
+ NT::NTSTATUS res = NTX::OpenFileObject(&FileHandle, path, +NT::SYNCHRONIZE|NT::FILE_READ_ATTRIBUTES, 0, NT::FILE_ATTRIBUTE_NORMAL, NT::FILE_SHARE_READ|NT::FILE_SHARE_WRITE|NT::FILE_SHARE_DELETE, NT::FILE_CREATE, NT::FILE_DIRECTORY_FILE|NT::FILE_SYNCHRONOUS_IO_NONALERT, &iosb);
  if(res)return -(int32)NTX::NTStatusToLinuxErr(res);  // Can the handle be open? (Status > 0)
  SAPI::NtClose(FileHandle);
  return PX::NOERROR;
@@ -407,7 +475,7 @@ FUNC_WRAPPERNI(PX::access,     access     )
  const achar* path = (achar*)GetParFromPk<0>(args...);
  int mode = GetParFromPk<1>(args...);
 
- uint32 BaseAccess = NT::SYNCHRONIZE|NT::FILE_READ_ATTRIBUTES;   // F_OK
+ uint32 BaseAccess = +NT::SYNCHRONIZE|NT::FILE_READ_ATTRIBUTES;   // F_OK
  if(mode & PX::X_OK)BaseAccess |= NT::FILE_EXECUTE;    // Close enough?
  if(mode & PX::W_OK)BaseAccess |= NT::FILE_WRITE_DATA;
  if(mode & PX::R_OK)BaseAccess |= NT::FILE_READ_DATA;
@@ -432,7 +500,7 @@ FUNC_WRAPPERNI(PX::getdentsGD,     getdents     )
  NT::HANDLE   hnd = (NT::HANDLE)GetParFromPk<0>(args...);
  const vptr   buf = (vptr)GetParFromPk<1>(args...);
  size_t len = GetParFromPk<2>(args...);
- bool  NoLinks = false;     // Retrieve real info about links (file/dor)
+ bool  NoLinks = false;     // Retrieve real info about links (file/dir)
  if((ssize_t)len < 0){len = size_t(-(ssize_t)len); NoLinks = true;}    // FRMWK extension
  NT::NTSTATUS res = SAPI::NtQueryDirectoryFile(hnd, 0, nullptr, nullptr, &iosb, buf, (uint32)len, NT::FileDirectoryInformation, 0, nullptr, 0);
  if(res)
@@ -507,7 +575,7 @@ FUNC_WRAPPERNI(PX::fstatat,       fstatat       )       // TODO: AT_SYMLINK_FOLL
  const achar* path = (achar*)GetParFromPk<1>(args...);
  PX::SFStat* sti = (PX::SFStat*)GetParFromPk<2>(args...);
  if(dirfd >= 0)DirHandle = (NT::HANDLE)dirfd;
- NT::NTSTATUS res = NTX::OpenFileObject(&FileHandle, path, NT::SYNCHRONIZE|NT::FILE_READ_ATTRIBUTES, 0, NT::FILE_ATTRIBUTE_NORMAL, NT::FILE_SHARE_READ|NT::FILE_SHARE_WRITE|NT::FILE_SHARE_DELETE, NT::FILE_OPEN, NT::FILE_SYNCHRONOUS_IO_NONALERT, &iosb, DirHandle);
+ NT::NTSTATUS res = NTX::OpenFileObject(&FileHandle, path, +NT::SYNCHRONIZE|NT::FILE_READ_ATTRIBUTES, 0, NT::FILE_ATTRIBUTE_NORMAL, NT::FILE_SHARE_READ|NT::FILE_SHARE_WRITE|NT::FILE_SHARE_DELETE, NT::FILE_OPEN, NT::FILE_SYNCHRONOUS_IO_NONALERT, &iosb, DirHandle);
  if(res)return -NTX::NTStatusToLinuxErr(res);  // Can the handle be open? (Status > 0)
  int rs = NAPI::fstat((PX::fdsc_t)FileHandle, sti);
  SAPI::NtClose(FileHandle);
@@ -630,8 +698,8 @@ FUNC_WRAPPERNI(PX::open,       open       )
  else if(amode == PX::O_RDWR){DesiredAccess |= NT::GENERIC_READ|NT::GENERIC_WRITE; ShareAccess |= NT::FILE_SHARE_READ|NT::FILE_SHARE_WRITE;}
  if(flags & PX::O_APPEND)  // NOTE: O_RDONLY is 0 and assumed default on Linux but here it is overriden by O_APPEND   // NOTE: Without FILE_APPEND_DATA offsets must be specified to NtWriteFile if no SYNCHRONIZE is specified
   {
-   if(amode){DesiredAccess |= NT::FILE_APPEND_DATA; ShareAccess |= NT::FILE_SHARE_WRITE;}
-    else {DesiredAccess = NT::FILE_APPEND_DATA|NT::SYNCHRONIZE; ShareAccess = NT::FILE_SHARE_WRITE; CreateOptions = 0;}
+   if(amode){DesiredAccess |= +NT::FILE_APPEND_DATA; ShareAccess |= NT::FILE_SHARE_WRITE;}
+    else {DesiredAccess = +NT::FILE_APPEND_DATA|NT::SYNCHRONIZE; ShareAccess = NT::FILE_SHARE_WRITE; CreateOptions = 0;}
   }
 
  if(flags & PX::O_CREAT)      // S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH|S_IWOTH;
@@ -819,45 +887,9 @@ FUNC_WRAPPERNI(PX::settimeofday,  settimeofday  ) {return 0;}
 #include "Startup.hpp"
 
 //============================================================================================================
-struct SFWCTX      // NOTE: Such alignment may waste some memory on main thread      // struct alignas(MEMPAGESIZE) SFWCTX - No need for now to store main thread ctx on the stack
-{
- // Some thread context data here (to be stored on stack)
-
-sint Initialize(void* StkFrame=nullptr, vptr ArgA=nullptr, vptr ArgB=nullptr, vptr ArgC=nullptr, bool InitConLog=false)    // _finline ?
+static sint Initialize(vptr StkFrame=nullptr, vptr ArgA=nullptr, vptr ArgB=nullptr, vptr ArgC=nullptr, bool InitConLog=false)    // _finline ?
 {
  if(IsInitialized())return 1;
-// wchar srcp[] = {L"../path//to/../my/./.././file"};
-// wchar buf[256];
-// uint len = NTX::NormalizePathNt(srcp, buf);
-
-/* volatile int crc = 0;//NCTM::Crc32((unsigned char*)&SysApi, sizeof(SAPI));
- crc += NCTM::Crc32((unsigned char*)&SAPI::NtProtectVirtualMemory, sizeof(SAPI::NtProtectVirtualMemory));
- crc += NCTM::Crc32((unsigned char*)&SAPI::NtAllocateVirtualMemory, sizeof(SAPI::NtAllocateVirtualMemory));
- crc += NCTM::Crc32((unsigned char*)&SAPI::NtFreeVirtualMemory, sizeof(SAPI::NtFreeVirtualMemory));
- crc += NCTM::Crc32((unsigned char*)&SAPI::NtReadVirtualMemory, sizeof(SAPI::NtReadVirtualMemory));
- crc += NCTM::Crc32((unsigned char*)&SAPI::NtWriteVirtualMemory, sizeof(SAPI::NtWriteVirtualMemory));
- crc += NCTM::Crc32((unsigned char*)&SAPI::NtQueryVirtualMemory, sizeof(SAPI::NtQueryVirtualMemory));
- crc += NCTM::Crc32((unsigned char*)&SAPI::NtCreateFile, sizeof(SAPI::NtCreateFile));
- crc += NCTM::Crc32((unsigned char*)&SAPI::NtWriteFile, sizeof(SAPI::NtWriteFile));
- crc += NCTM::Crc32((unsigned char*)&SAPI::NtReadFile, sizeof(SAPI::NtReadFile));
- crc += NCTM::Crc32((unsigned char*)&SAPI::NtDeleteFile, sizeof(SAPI::NtDeleteFile));
- crc += NCTM::Crc32((unsigned char*)&SAPI::NtWriteFileGather, sizeof(SAPI::NtWriteFileGather));
- crc += NCTM::Crc32((unsigned char*)&SAPI::NtReadFileScatter, sizeof(SAPI::NtReadFileScatter));
- crc += NCTM::Crc32((unsigned char*)&SAPI::NtFlushBuffersFile, sizeof(SAPI::NtFlushBuffersFile));
- crc += NCTM::Crc32((unsigned char*)&SAPI::NtQueryAttributesFile, sizeof(SAPI::NtQueryAttributesFile));
- crc += NCTM::Crc32((unsigned char*)&SAPI::NtQueryInformationFile, sizeof(SAPI::NtQueryInformationFile));
- crc += NCTM::Crc32((unsigned char*)&SAPI::NtMapViewOfSection, sizeof(SAPI::NtMapViewOfSection));
- crc += NCTM::Crc32((unsigned char*)&SAPI::NtUnmapViewOfSection, sizeof(SAPI::NtUnmapViewOfSection));
- crc += NCTM::Crc32((unsigned char*)&SAPI::NtCreateSection, sizeof(SAPI::NtCreateSection));
- crc += NCTM::Crc32((unsigned char*)&SAPI::NtOpenSection, sizeof(SAPI::NtOpenSection));
- crc += NCTM::Crc32((unsigned char*)&SAPI::NtQuerySection, sizeof(SAPI::NtQuerySection));
- crc += NCTM::Crc32((unsigned char*)&SAPI::NtClose, sizeof(SAPI::NtClose));
- crc += NCTM::Crc32((unsigned char*)&SAPI::NtDelayExecution, sizeof(SAPI::NtDelayExecution));
- crc += NCTM::Crc32((unsigned char*)&SAPI::NtTerminateThread, sizeof(SAPI::NtTerminateThread));
- crc += NCTM::Crc32((unsigned char*)&SAPI::NtTerminateProcess, sizeof(SAPI::NtTerminateProcess));
- crc += NCTM::Crc32((unsigned char*)&SAPI::NtLoadDriver, sizeof(SAPI::NtLoadDriver));
- crc += NCTM::Crc32((unsigned char*)&SAPI::NtUnloadDriver, sizeof(SAPI::NtUnloadDriver));  */
-
  if(!NLOG::CurrLog)NLOG::CurrLog = &NLOG::GLog;  // Will be set with correct address, relative to the Base
  if(InitConLog)   // On this stage file logging is not possible yet (needs InitStartupInfo)
   {
@@ -887,8 +919,6 @@ sint Initialize(void* StkFrame=nullptr, vptr ArgA=nullptr, vptr ArgB=nullptr, vp
   }
  return 0;// crc;
 }
-
-};
 //============================================================================================================
 /*
  	SetConsoleCP(CP_UTF8);

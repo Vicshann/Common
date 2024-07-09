@@ -24,7 +24,7 @@ static bool CheckCLArg(sint& AOffs, const achar* ArgName, uint32 Flags=0)
 
  sint match = (Flags & cfCaseSens)?(NSTR::MatchCS(CmdLine, ArgName)):(NSTR::MatchCI(CmdLine, ArgName));    // The name is used as a base string to match at its terminating 0
  if(match <= 0)return false;
- DBGTRC("Matching arg name at %u: %*s", (AOffs+(CmdLine-CLBase)), match, CmdLine);
+ DBGTRC("Matching arg name at %u: %.*ls", (AOffs+(CmdLine-CLBase)), match, CmdLine);
 
  CmdLine = &CmdLine[match];
  while(*CmdLine && (*CmdLine <= 0x20))CmdLine++;  // Skip any spaces after
@@ -52,7 +52,7 @@ static sint GetCLArg(sint& AOffs, achar* DstBuf=nullptr, uint DstCCnt=uint(-1)) 
  uint SrcLen = uint(-1);          // TODO: Replace with MaxUint or MAX_UINT
  WStrToUtf8(DstBuf, CmdLine, DstCCnt, SrcLen, SFchE);
  DstBuf[DstCCnt] = 0;
- DBGTRC("Extracted arg value at %u: %*s", (AOffs+(CmdLine-CLBase)), DstCCnt, DstBuf);
+ DBGTRC("Extracted arg value at %u: %.*s", (AOffs+(CmdLine-CLBase)), DstCCnt, DstBuf);
 
  wchar LastCh = CmdLine[SrcLen];
  if((LastCh != SFchE) && LastCh)  // Dst is full, find end of the argument
@@ -84,7 +84,7 @@ static const syschar* SkipCLArg(sint& AOffs, uint* Size=nullptr)       // Enumer
 
  uint SrcLen = 0;
  while((CmdLine[SrcLen] ^ SFchE) && CmdLine[SrcLen])SrcLen++;   // Optimize?
- DBGTRC("Skipping arg at %u: %*s", (AOffs+(CmdLine-CLBase)), SrcLen, CmdLine);
+ DBGTRC("Skipping arg at %u: %.*ls", (AOffs+(CmdLine-CLBase)), SrcLen, CmdLine);
 
  const wchar* EndPtr = &CmdLine[SrcLen];
  if(*EndPtr)EndPtr++; // Skip last Quote or Space
@@ -119,7 +119,7 @@ static bool CheckCLArg(sint& AOffs, const achar* ArgName, uint32 Flags=0)
 
  sint match = (Flags & cfCaseSens)?(NSTR::MatchCS(val, ArgName)):(NSTR::MatchCI(val, ArgName));    // The name is used as a base string to match at its terminating 0
  if(match <= 0)return false;
- DBGTRC("Matching arg name at %u: %*s", (AOffs & 0xFFFF), match, val);
+ DBGTRC("Matching arg name at %u: %.*s", (AOffs & 0xFFFF), match, val);
  if(val[match])AOffs = (AOffs & 0xFFFF) | ((match & 0x7FFF) << 16);   // A composite arg, remember offset in it
    else AOffs &= 0xFFFF;    // Just in case
  return true;
@@ -135,7 +135,7 @@ static sint GetCLArg(sint& AOffs, achar* DstBuf, uint DstCCnt=uint(-1))    // En
  val += (AOffs >> 16) & 0x7FFF;
  if(!DstBuf)return NSTR::StrLen(val) + 4;  // + space for a terminating 0
  size_t len = NSTR::StrCopy(DstBuf, val, DstCCnt);
- DBGTRC("Extracted arg value at %u: %*s", (AOffs & 0xFFFF), len, DstBuf);
+ DBGTRC("Extracted arg value at %u: %.*s", (AOffs & 0xFFFF), len, DstBuf);
  return len;
 }
 //------------------------------------------------------------------------------------------------------------

@@ -32,16 +32,16 @@ if defined PRJBUILDDIR (
  if defined sln_name (
   set vs_dir=%PRJBUILDDIR%\.vs
   mkdir !vs_dir!
-  mklink /J ".\.vs" "!vs_dir!"
+  mklink /D ".\.vs" "!vs_dir!"
  )
  set build_dir=%PRJBUILDDIR%\%prjname%
  mkdir !build_dir!
- mklink /J ".\BUILD" "!build_dir!"
+ mklink /D ".\BUILD" "!build_dir!"
 )
 
 if defined BACKUPSRCDIR (
  mkdir "%BACKUPSRCDIR%"
- mklink /J "%BACKUPSRCDIR%\%prjname%" "%~dp0"
+ mklink /D "%BACKUPSRCDIR%\%prjname%" "%~dp0"
 )
 
 pause

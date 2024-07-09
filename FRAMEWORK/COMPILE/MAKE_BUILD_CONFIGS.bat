@@ -91,8 +91,8 @@ copy /B "Base\TgtLinArm64.txt" + "Base\Base.cfg" + "Base\BaseDbg.cfg" + "Base\Ba
 copy /B "Base\TgtLinArm64.txt" + "Base\Base.cfg" + "Base\BaseRel.cfg" + "Base\BaseARM.cfg" + "Base\BaseARM64.cfg" + "Base\BaseRaw.cfg" "REL_RAW_ARM_X64.cfg"
 
 
-copy /B "Base\BaseOldARM.cfg" + "Base\Base.cfg" + "Base\BaseDbg.cfg" + "Base\BaseARM.cfg" + "Base\BaseARM32.cfg" "Base\BaseRaw.cfg" "DBG_RAW_OARM_X32.cfg"
-copy /B "Base\BaseOldARM.cfg" + "Base\Base.cfg" + "Base\BaseRel.cfg" + "Base\BaseARM.cfg" + "Base\BaseARM32.cfg" "Base\BaseRaw.cfg" "REL_RAW_OARM_X32.cfg"
+copy /B "Base\BaseOldARM.cfg" + "Base\Base.cfg" + "Base\BaseDbg.cfg" + "Base\BaseARM.cfg" + "Base\BaseARM32.cfg" + "Base\BaseRaw.cfg" "DBG_RAW_OARM_X32.cfg"
+copy /B "Base\BaseOldARM.cfg" + "Base\Base.cfg" + "Base\BaseRel.cfg" + "Base\BaseARM.cfg" + "Base\BaseARM32.cfg" + "Base\BaseRaw.cfg" "REL_RAW_OARM_X32.cfg"
 
 
 

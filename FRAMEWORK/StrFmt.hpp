@@ -97,11 +97,11 @@ template<typename T> static constexpr _finline T GetArgAsType(uint& ArgIdx, void
   {
    int asize = (SizeBits >> (ArgIdx << 1)) & 3;   //ValIdxToSize((SizeBits >> (ArgIdx << 1)) & 3);
 // Recover as floats
-   if constexpr (SameTypes<T, flt32>::V)
+   if constexpr (SameType<T, flt32>::V)
     {
      if(asize == 2)return (T)*(flt32*)ArgList[ArgIdx++];   // Read as is
     }
-   else if constexpr (SameTypes<T, flt64>::V)
+   else if constexpr (SameType<T, flt64>::V)
     {
      if(asize == 3)return (T)*(flt64*)ArgList[ArgIdx++];   // Read as is
       else if(asize == 2)return (T)*(flt32*)ArgList[ArgIdx++];   // Read as is

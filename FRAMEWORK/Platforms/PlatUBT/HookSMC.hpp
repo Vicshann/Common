@@ -97,14 +97,16 @@ __attribute__((naked)) static void CallHook(void)  // Size = 0x48
 // https://gcc.gnu.org/onlinedocs/gcc/Other-Builtins.html    // __builtin_assume_aligned
 // NOTE: Compiler will ignore any other alignment hints and will try to copy memory by 16 byte blocks, craching CPU if Src or Dst addr is not aligned to 16
 //
-static _ninline uint32 HookCallsToSMC(void* HookParam, THookProc HookProc, void* UBootBase=SInfo.UBootBase)
+static _ninline uint32 HookCallsToSMC(void* HookParam, THookProc HookProc, void* UBootBase=fwsinf.UBootBase)
 {
  constexpr int BlkSize  = 0x200;
  constexpr int MaxStubs = (BlkSize / 16) - 2;  // 2 for header stub
 
+ UBTMSG("%s: Enter", FUNC_NAME);
  uint32* DstAddr = (uint32*)&((uint8*)UBootBase)[-BlkSize];
+ UBTMSG("%s: DstAddr=%p", FUNC_NAME, DstAddr);
  bool HaveHooks = ((DstAddr[0] == 0x58000109) && (DstAddr[3] == 0xD61F0160));  //  May be already hooked, just update pointers then
- DBGMSG("Writing stubs at %p", DstAddr);
+ UBTMSG("%s: Writing stubs at %p", FUNC_NAME, DstAddr);
  DstAddr[0] = 0x58000109;  // "LDR X9, HookParam ;"
  DstAddr[1] = 0x580000AA;  // "LDR X10, HookProc ;"
  DstAddr[2] = 0x5800004B;  // "LDR X11, XProcAddr ;"
@@ -112,7 +114,7 @@ static _ninline uint32 HookCallsToSMC(void* HookParam, THookProc HookProc, void*
  *(void**)&DstAddr[4] = (void*)CallHook;
  *(void**)&DstAddr[6] = (void*)HookProc;
  *(void**)&DstAddr[8] = HookParam;   // NOTE: Better not point this to Stack ot hooks will crash if called after the app returned to UBOOT
- if(HaveHooks){DBGMSG("Already hooked!"); return 0;}
+ if(HaveHooks){UBTMSG("%s: Already hooked!", FUNC_NAME); return 0;}
 
  uint32 StubArrIdx = 10;
  uint32 Size = MaxUBootSize >> 2;  // div 4
@@ -121,7 +123,7 @@ static _ninline uint32 HookCallsToSMC(void* HookParam, THookProc HookProc, void*
   {
    if(DataPtr[ctr] != 0xD4000003)continue;    // SMC #0
    uint32* Addr = &DataPtr[ctr];
-   DBGMSG("Hooking SMC at %p", Addr);
+   UBTMSG("%s: Hooking SMC at %p", FUNC_NAME, Addr);
 
    DstAddr[StubArrIdx+0] = 0x58000048;  // "LDR X8, RetAddr ;"
    DstAddr[StubArrIdx+1] = CalcBranch(&DstAddr[StubArrIdx+1], DstAddr);
@@ -130,9 +132,9 @@ static _ninline uint32 HookCallsToSMC(void* HookParam, THookProc HookProc, void*
    *Addr = CalcBranch((void*)Addr, &DstAddr[StubArrIdx]);   // Set hook
    StubArrIdx += 4;
    sidx++;
-   if(sidx >= MaxStubs){DBGMSG("Max stubs reached!"); break;}
+   if(sidx >= MaxStubs){UBTMSG("%s: Max stubs reached!", FUNC_NAME); break;}
   }
- DBGMSG("Done hooking!");
+ UBTMSG("%s: Done!", FUNC_NAME);
  return 0;
 }
 //-----------------------------------------------------------------------------------------

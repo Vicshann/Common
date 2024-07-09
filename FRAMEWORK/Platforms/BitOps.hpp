@@ -3,17 +3,59 @@
 
 // NOTE: Duplicates in ArbiNum
 //===========================================================================
+// Count Leading Zeros
+// 
 // https://github.com/nemequ/portable-snippets
+// https://github.com/mackron/refcode
 //
 // https://en.cppreference.com/w/cpp/numeric/countl_zero
-
-// Count Leading Zeros
+// https://stackoverflow.com/questions/53443249/do-all-cpus-which-support-avx2-also-support-sse4-2-and-avx
+// X86: MSVC: __lzcnt and __lzcnt64 (SSE4.2 2009) which is turned into LZCNT. LZCNT differs from BSR. For example, LZCNT will produce the operand size when the input operand is zero. It should be noted that on processors that do not support LZCNT, the instruction byte encoding is executed as BSR.
+//      lzcnt counts, bsr returns the index or distance from bit 0 (which is the lsb)
+//      GCC:  __builtin_clz and __builtin_clzll which expanded into bsr+xor 31/64 if no __attribute__((target("lzcnt"))) or -mlzcnt is specified
+// ARM: (Ver 5) The CLZ instruction counts the number of leading zeros in the value in Rm and returns the result in Rd . The result value is 32 if no bits are set in the source register, and zero if bit 31 is set.
+//      (defined(_M_ARM) && _M_ARM >= 5) || defined(__ARM_FEATURE_CLZ)
+//
 template<typename T> constexpr static inline unsigned int clz(T Num)
 {
- return 0;
+#ifdef REAL_MSVC
+ unsigned long Index;   // Is it changed by _BitScanForward in case of Zero input? If not we can store (sizeof(Num)*8) in it
+ unsigned char res;
+ if constexpr (sizeof(T) > sizeof(long))
+  {
+   if constexpr (__has_builtin(_BitScanReverse64))res = _BitScanBitScanReverse64(&Index, (unsigned long long)Num);    // ARM and AMD64
+    else
+     {
+      res = _BitScanReverse(&Index, (unsigned long)(Num >> 32));
+      if(!res)res = _BitScanReverse(&Index, (unsigned long)Num);
+      Index += 32;
+     }
+  }
+   else res = _BitScanReverse(&Index, (unsigned long)Num);
+ if(res)return (unsigned int)Index;    // Found 1 at some position
+  else return (unsigned int)(sizeof(Num)*8);  // Num is zero, all bits is zero
+#else
+ // NOTE: We must detect if building below SSE4.2 on x86 because the compiler will use BSR which requires special handling for 0 values.
+#if defined(CPU_X86) && !defined(__SSE4_2__) && !defined(__AVX2__)   // AVX2 is close to SSE4.2 and usually will support POPCNT and LZCNT (BSR will be emitted for __AVX__)
+if(!Num)return BitSize<T>::V;  // Every bit is zero
+#endif
+ if constexpr (sizeof(T) > sizeof(long))return (unsigned int)__builtin_clzll((uint64)Num);  // X64 CPUs only?   // Returns the number of leading 0-bits in x, starting at the most significant bit position. If x is 0, the result is undefined
+   else return (unsigned int)__builtin_clz((uint32)Num);
+#endif
+/* else   // TODO: optimize?
+  {
+    int i = 0;
+    T v = 1 << ((sizeof(T) * 8)-1);
+	for(;!(Num & v); v >>= 1, i++);
+	return i;
+  }
+ return 0; */
 }
 //------------------------------------------------------------------------------------
 // Count Trailing Zeros
+// 
+// X86: TZCNT counts the number of trailing least significant zero bits in source operand (second operand) and returns the result in destination operand (first operand). TZCNT is an extension of the BSF instruction. The key difference between TZCNT and BSF instruction is that TZCNT provides operand size as output when source operand is zero while in the case of BSF instruction, if source operand is zero, the content of destination operand are undefined. On processors that do not support TZCNT, the instruction byte encoding is executed as BSF.
+// ARM: Uses 63 - CLZ(x). 0 is handled with a condition. (Does it? - TODO: Check it)
 //
 template<typename T> constexpr static inline unsigned int ctz(T Num)
 {
@@ -34,6 +76,10 @@ template<typename T> constexpr static inline unsigned int ctz(T Num)
  if(res)return (unsigned int)Index;    // Found 1 at some position
   else return (unsigned int)(sizeof(Num)*8);  // Num is zero, all bits is zero
 #else
+ // NOTE: We must detect if building below SSE4.2 on x86 because the compiler may use BSF which requires special handling for 0 values. (Clang always generates TZCNT for __builtin_ctz?)
+#if defined(CPU_X86) && !defined(__SSE4_2__) && !defined(__AVX2__)  // AVX2 is close to SSE4.2 and usually will support POPCNT and LZCNT 
+if(!Num)return BitSize<T>::V;  // Every bit is zero
+#endif
  if constexpr (sizeof(T) > sizeof(long))return (unsigned int)__builtin_ctzll((uint64)Num);  // X64 CPUs only?
    else return (unsigned int)__builtin_ctz((uint32)Num);
 #endif
@@ -70,7 +116,7 @@ template<typename T> constexpr static inline int PopCnt(T Num)
 //---------------------------------------------------------------------------
 template <class T> T RevBits(T n)
 {
- short bits = sizeof(n) * 8;
+ short bits = BitSize<T>::V;
  T mask = ~T(0); // equivalent to uint32_t mask = 0b11111111111111111111111111111111;
  while (bits >>= 1)
   {
@@ -158,4 +204,30 @@ template<typename T> constexpr _finline static T RevByteOrder(T Value)   // Can 
  return Value;
 }
 //------------------------------------------------------------------------------------
+// https://en.cppreference.com/w/cpp/numeric/bit_width
+//
+template<typename T> constexpr _finline static int BitWidth(T v)   // Numberic only   // Signed? Lose the sign?
+{
+ return BitSize<T>::V - clz(v);
+}
+//------------------------------------------------------------------------------------
+// https://en.cppreference.com/w/cpp/numeric/bit_ceil
+// Calculates the smallest integral power of two that is not smaller than x
+//
+template<typename T> constexpr _finline static T AlignToP2Up(T v)   // Signed? Lose the sign?
+{
+ if(v <= 1u)return T(1);
+ return T(1) << BitWidth(T(v - 1));
+}
+//------------------------------------------------------------------------------------
+// https://en.cppreference.com/w/cpp/numeric/bit_floor
+// If x is not zero, calculates the largest integral power of two that is not greater than x. If x is zero, returns zero.
+//
+template<typename T> constexpr _finline static T AlignToP2Dn(T v)  // Signed? Lose the sign?
+{
+ if(!v)return v;
+ return T(1) << (BitWidth(v) - 1);
+}
+//------------------------------------------------------------------------------------
+
 //===========================================================================

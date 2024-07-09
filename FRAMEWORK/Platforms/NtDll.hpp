@@ -445,6 +445,18 @@ enum SECTION_INFORMATION_CLASS
  MaxSectionInfoClass
 };
 
+struct MEMORY_BASIC_INFORMATION 
+{
+  PVOID  BaseAddress;
+  PVOID  AllocationBase;
+  DWORD  AllocationProtect;
+  WORD   PartitionId;
+  SIZE_T RegionSize;
+  DWORD  State;
+  DWORD  Protect;
+  DWORD  Type;
+};
+
 struct MEMORY_REGION_INFORMATION
 {
  PVOID AllocationBase;

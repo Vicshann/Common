@@ -260,7 +260,7 @@ template<uint32 poly = DefRevPolyCrc32, sint N> constexpr _finline static uint32
 }  
 //------------------------------------------------------------------------------------------------------------
 // For const strings
-template<uint32 poly = DefRevPolyCrc32, typename T> constexpr _finline static uint32 CRC32(T str, uint32 crc=InitialCrc32) requires (SameTypes<T, const achar*>::V || SameTypes<T, achar*>::V) // How the constraints affect compilation speed?  // 'volatile' solves ambiguity with 'const achar (&str)[N]' above (but does not work in consteval)
+template<uint32 poly = DefRevPolyCrc32, typename T> constexpr _finline static uint32 CRC32(T str, uint32 crc=InitialCrc32) requires (SameType<T, const achar*>::V || SameType<T, achar*>::V) // How the constraints affect compilation speed?  // 'volatile' solves ambiguity with 'const achar (&str)[N]' above (but does not work in consteval)
 {
  uint32 Val;
  crc = ~crc;

@@ -176,7 +176,7 @@ template<sint DLen> constexpr _finline static void* MemZeroConst(void* _RST pDst
 
 template<typename T> constexpr _finline static T* ZeroObject(T* _RST pDst){return (T*)MemZeroConst<sizeof(T)>(pDst);}
 //---------------------------------------------------------------------------
-template<typename T, uint ASize> constexpr static void InitFillPattern(uint32* FillArr, const T& Val)
+template<typename T, uint ASize> constexpr _finline static void InitFillPattern(uint32* FillArr, const T& Val)
 {
  if constexpr((sizeof(T) < sizeof(v512)) || !NCFG::VectorizeMemOps)
   {
@@ -233,8 +233,8 @@ template<typename T, bool rev=false> constexpr _finline static size_t CopyAs(voi
    }
  return Size - sizeof(T);
 }
-//---------------------------------------------------------------------------
-template<typename T, bool rev=false> constexpr _finline static size_t StoreAs(T Val, void* _RST* _RST Dst, size_t Size)
+//---------------------------------------------------------------------------                                            // Good habit: On big data structures do memset/memcpy/memmove explicitly! Avoid letting the compiler do it implicitly.
+template<typename T, bool rev=false> constexpr _finline static size_t StoreAs(T Val, void* _RST* _RST Dst, size_t Size)  // -fno-builtin or -fno-builtin-memset (No effect!) or -fno-tree-loop-distribute-patterns : https://godbolt.org/z/ovvq1T ???
 {
  if constexpr (rev)
   {
@@ -243,7 +243,7 @@ template<typename T, bool rev=false> constexpr _finline static size_t StoreAs(T 
   }
   else
    {
-    *(*(T**)Dst) = Val;
+    *(*(T**)Dst) = Val;           // This is part of custom memset implementation too but Cland inserts a call to memset here which causes infinite recursion!  // If Val size is 64 bytes Cland will Use memset here with -O2 even if AVX512 is enabled. Why? There is no instruction to read and write __m512 ?
     *((uint8**)Dst) += sizeof(T);
    }
  return Size - sizeof(T);
@@ -257,7 +257,7 @@ template<typename T, bool rev=false> constexpr _finline static size_t StoreAs(T 
 //   AlPtrA 1011 +1> 1100 +2> 1110
 //   AlPtrB 0101 +1> 0110 +2> 1000 : Will never sync above 2
 //
-template<bool rev=false> constexpr static size_t MemCopySync(void* _RST* _RST Dst, void* _RST* _RST Src, size_t Size)
+template<bool rev=false> constexpr static size_t MemCopySync(void* _RST* _RST Dst, void* _RST* _RST Src, size_t Size)   // Too complex to inline?
 {
  size_t Mask = ((size_t)*Dst|(size_t)*Src);
  if(Mask & 0x01){Size=CopyAs<uint8,rev>(Dst, Src, Size); Mask = ((size_t)*Dst|(size_t)*Src);}  // u8
@@ -343,7 +343,7 @@ template<uint AMin, bool rev=false> constexpr static size_t MemCopyMSync(void* _
 // Sizeof(D) is expected to be less than sizeof(S)
 // No vectorization for shifts?
 // NOTE: Will not work with vector types
-template<typename D, typename S, bool rev> constexpr static size_t SplitCopy(void* _RST* _RST pDst, void* _RST* _RST pSrc, size_t Size)
+template<typename D, typename S, bool rev> constexpr static size_t SplitCopy(void* _RST* _RST pDst, void* _RST* _RST pSrc, size_t Size)    // Too complex to inline?
 {
  D* Dst = *(D**)pDst;
  S* Src = *(S**)pSrc;
@@ -399,7 +399,7 @@ template<typename D, typename S, bool rev> constexpr static size_t SplitCopy(voi
 // Store from SRC to DST by splitting SRC value (Dst blk size is expected to be less than T) (Min size is SplAlign)
 // Parses second alignment
 // IFs should be faster than SWITCH because not accessing memory?
-template<typename T, bool rev=false> constexpr static size_t SplitCopy(void* _RST* _RST Dst, void* _RST* _RST Src, size_t Size, const size_t SplAlign)
+template<typename T, bool rev=false> constexpr static size_t SplitCopy(void* _RST* _RST Dst, void* _RST* _RST Src, size_t Size, const size_t SplAlign)    // Too complex to inline?
 {
  if constexpr (sizeof(T) <= sizeof(uint8))   // Should not happen assuming that SplAlign will be expected to be 0
   {
@@ -432,7 +432,7 @@ template<typename T, bool rev=false> constexpr static size_t SplitCopy(void* _RS
 }
 //---------------------------------------------------------------------------
 public:
-template<bool rev=false> constexpr static void* MemCopy(void* _RST Dst, void* _RST Src, size_t Size)
+template<bool rev=false> constexpr _ninline static void* MemCopy(void* _RST Dst, void* _RST Src, size_t Size)
 {
  if(!Size)return Dst;
  size_t AlSrc = AlignOfPtr(Src);
@@ -470,7 +470,7 @@ constexpr _finline static void* MemMove(void* _RST Dst, void* _RST Src, size_t S
   else return MemCopy<true>(((uint8*)Dst + Size), ((uint8*)Src + Size), Size);
 }
 //---------------------------------------------------------------------------
-_finline static void* MemZero(void* _RST Dst, size_t Size)
+_ninline static void* MemZero(void* _RST Dst, size_t Size)             // Too big - inline only for obfuscation
 {
  if((size_t)Dst & sizeof(uint8))Size=StoreAs<uint8>(0, &Dst, Size);          // Align to u16
  if(Size >= sizeof(uint16))
@@ -523,7 +523,7 @@ constexpr static void* MemRotRight(void* _RST Dst, size_t Size, size_t Bytes)
 }
 //---------------------------------------------------------------------------
 // Fill value size is same size as T (uint8 for void* and char)      // TODO: Recursive?
-template<typename T=uint8> constexpr static void* MemFill(void* _RST Dst, size_t Size, const T Val)  // TODO: Obj Type version to make alignment detection constexpr (MemFillObj)
+template<typename T=uint8> constexpr _ninline static void* MemFill(void* _RST Dst, size_t Size, const T Val)   // Too complex to inline // TODO: Obj Type version to make alignment detection constexpr (MemFillObj)
 {
  if(!Val)return MemZero(Dst, Size);
  alignas(NCFG::VectorizeMemOps?sizeof(v512):sizeof(uint64)) uint32 ValArr[NCFG::VectorizeMemOps?(sizeof(v512)/sizeof(uint32)):(sizeof(uint64)/sizeof(uint32))];   // TODO: Expand from Val
@@ -571,11 +571,26 @@ template<typename T=uint8> constexpr static void* MemFill(void* _RST Dst, size_t
 }
 //---------------------------------------------------------------------------
 // Returns number of matched bytes
-constexpr static size_t MemCmp(void* _RST Dst, void* _RST Src, size_t Size)
+constexpr _minline static size_t MemCmp(void* _RST Dst, void* _RST Src, size_t Size)
 {
  return 0;
 }
 //---------------------------------------------------------------------------
+// Such approach should be faster for small sizes where misalignments will make less perfomance hit than bunch of conditions
+//
+template<typename T, size_t Num=1> constexpr _finline static void ZeroObj(T* _RST Dst)   // Too much branches in ZeroMem
+{
+ for(uint8* ptr=(uint8*)Dst, *end=(uint8*)&Dst[Num];ptr < end;ptr++)*ptr = 0;   // It is perfectly vectorized with -O2    // Any possible alignment issues may be solved by compiler options (strict alignment)?
+}
+//---------------------------------------------------------------------------
+template<typename T, size_t Num=1> constexpr _finline static void CopyObj(T* _RST Dst, T* _RST Src) 
+{
+ for(uint8 *sptr=(uint8*)Src, *dptr=(uint8*)Dst, *dend=(uint8*)&Dst[Num];dptr < dend;dptr++)*dptr = *sptr;   // It is perfectly vectorized with -O2    // Any possible alignment issues may be solved by compiler options (strict alignment)?
+}
+//---------------------------------------------------------------------------
+
+// TODO: Variants for compile-time known size
+
 /*static void TestMemCpy(void)
 {
  alignas(sizeof(uint8))   uint8 TestStr1[]  = {"(1) Hello mem test World (1)!"};
@@ -601,9 +616,10 @@ constexpr static size_t MemCmp(void* _RST Dst, void* _RST Src, size_t Size)
 
 }; // NMOPS
 
-// NOTE: Compiler expects those to be demangled AND with external linkage! (No inlining for them, at all!)
+// NOTE: Compiler expects those to be demangled AND with external linkage! (No inlining for them, at all! Not Even __attribute__((flatten)), unfortunately.)
 //       Use '-ffunction-sections' + '-Wl,-gc-sections' to remove unused external-linkage functions
 // NOTE: Will suppress force_inline
+// NOTE: None of those should be implicitly used when -fno-builtin is specified. And try to avoid calling them since they will never inline and will do jump to actual functions. This prevents optimization at call site since type and sizes will not be considered at compile time anymore.
 // TODO: Get rid of div and mult
 // TODO: Align the addresses and use xmm for copy operations
 extern "C"
@@ -621,7 +637,7 @@ void* memmove(void* Dst, const void* Src, size_t Size)   // Fixed but inefficien
 //---------------------------------------------------------------------------
 // NOTE: memset will not be inlined and Val is never expanded at compile time when zero to MemZero
 // Is there a way to inline and optimize it?
-void* memset(void* Dst, const unsigned int Val, size_t Size)      // TODO: Aligned, SSE by MACRO   _EXTERNC
+void* memset(void* Dst, const unsigned int Val, size_t Size)   // TODO: Aligned, SSE by MACRO   _EXTERNC
 {
  return NMOPS::MemFill<uint8>(Dst,Size,(uint8)Val);
 }

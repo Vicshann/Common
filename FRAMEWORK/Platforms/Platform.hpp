@@ -84,7 +84,7 @@ PVOID _fastcall AllocMemHL(PVOID Mem, SIZE_T Size, SIZE_T AllocSize, SIZE_T Rese
 bool  _fastcall FreeMemHL(PVOID Mem, SIZE_T Size=0);
 }*/
 #ifdef DBGBUILD
-#include "APIValidator.hpp"
+#include "APIValidation.hpp"
 #endif
 };
 

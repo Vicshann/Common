@@ -5,6 +5,10 @@
 #include "./uboot.hpp"
 
 #define UBTMSG(msg,...) NPTM::SAPI::printf(msg "\n" __VA_OPT__(,) __VA_ARGS__)        //  __func__ "->" msg "\n"
+
+#if defined(DBGBUILD) || defined(FCFG_FORCE_DBGMSG)
+#define UBTDBG UBTMSG
+#endif
 //============================================================================================================
 // All "members" are placed sequentially in memory but their order may change
 // NOTE: Do not expect that the memory can be executable and writable at the same time! There is 'maxprot' values may be defined in EXE header which will limit that or it may be limited by the system
@@ -44,7 +48,7 @@ DECL_SYSCALL(0,       NUBOOT::ExecCmdLine,     ExecCmdLine    )
 // NOTE: Do not rely on this in any way! It is implemented mostly for the compile consistency
 struct NAPI
 {
-FUNC_WRAPPERFI(PX::exit,       exit       ) {return 0;}  // Just returns to loader
+FUNC_WRAPPERFI(PX::exit,       exit       ) {return;}  // Just returns to loader
 FUNC_WRAPPERFI(PX::exit_group, exit_group ) {return 0;}  // Just returns to loader
 FUNC_WRAPPERFI(PX::open,       open       ) {return 0;}
 FUNC_WRAPPERFI(PX::read,       read       ) {return 0;}
@@ -57,7 +61,11 @@ FUNC_WRAPPERFI(PX::mkdir,      mkdir      ) {return 0;}
 
 FUNC_WRAPPERFI(PX::mmapGD,     mmap       ) { return SAPI::malloc(GetParFromPk<1>(args...)); }     // Very approximate!
 FUNC_WRAPPERFI(PX::munmap,     munmap     ) { SAPI::free(GetParFromPk<0>(args...)); return 0; }
+FUNC_WRAPPERFI(PX::mprotect,   mprotect   ) {return 0;}
+FUNC_WRAPPERFI(PX::msync,      msync      ) {return 0;}
 
+FUNC_WRAPPERFI(PX::getpgrp,    getpgrp    ) {return 0;}
+FUNC_WRAPPERFI(PX::getpid,     getpid     ) {return 0;} 
 //---------------------------------------------------------------------------
 
 };

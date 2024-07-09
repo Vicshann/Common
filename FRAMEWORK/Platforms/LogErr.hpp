@@ -2,6 +2,9 @@
 #pragma once
 
 // See 'https://github.com/gabime/spdlog' for a decent independant logger
+// TODO: Output the message by segments if the buffer is full (Needs locking!)
+// TODO: Coloring for terminal output (Have to split, cannot accumulate the message, needs locking)
+// TODO: Optional hierarchical logging for own threads
 
 struct NLOG    // Can be instanciated if required
 {
@@ -186,13 +189,13 @@ _ninline static sint _fcall LogProc(const achar* Message, void** ArgList, uint32
     }
    if(LogFlag & lfLogLevel)
     {
-     if(LogLvl==llLogFail)*(uint32*)&TmpBuf[MSize] = 'LIAF';  //FAIL      // Mind the byte order!    // NOTE: Cannot do that, alignment problem (ARM)
-     else if(LogLvl==llLogError)*(uint32*)&TmpBuf[MSize] = 'RRRE';  //ERRR      // Mind the byte order!
-     else if(LogLvl==llLogWarning)*(uint32*)&TmpBuf[MSize] = 'NRAW';  //WARN
-     else if(LogLvl==llLogNote)*(uint32*)&TmpBuf[MSize] = 'ETON';  //NOTE
-     else if(LogLvl==llLogInfo)*(uint32*)&TmpBuf[MSize] = 'OFNI';  //INFO
-     else if(LogLvl==llLogDebug)*(uint32*)&TmpBuf[MSize] = 'GBED';  //DEBG
-     else if(LogLvl==llLogTrace)*(uint32*)&TmpBuf[MSize] = 'ECRT';  //TRCE
+     if(LogLvl==llLogFail)*(uint32*)&TmpBuf[MSize] = 'LIAF';          // FAIL  FAL     // Mind the byte order!    // NOTE: Cannot do that, alignment problem (ARM)
+     else if(LogLvl==llLogError)*(uint32*)&TmpBuf[MSize] = 'RRRE';    // ERRR  ERR     // Mind the byte order!
+     else if(LogLvl==llLogWarning)*(uint32*)&TmpBuf[MSize] = 'NRAW';  // WARN  WRN
+     else if(LogLvl==llLogNote)*(uint32*)&TmpBuf[MSize] = 'ETON';     // NOTE  NTE
+     else if(LogLvl==llLogInfo)*(uint32*)&TmpBuf[MSize] = 'OFNI';     // INFO  INF
+     else if(LogLvl==llLogDebug)*(uint32*)&TmpBuf[MSize] = 'GBED';    // DEBG  DBG
+     else if(LogLvl==llLogTrace)*(uint32*)&TmpBuf[MSize] = 'ECRT';    // TRCE  TRC
      else *(uint32*)&TmpBuf[MSize] = 'ENON';  // NONE
      MSize += 4;
      TmpBuf[MSize++] = 0x20;

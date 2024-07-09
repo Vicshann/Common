@@ -125,7 +125,7 @@ static constexpr bool IsSysMacOS = true;
 static constexpr bool IsSysMacOS = false;
 #endif
 
-#ifdef __FreeBSD__        // FreeBSD, NetBSD, OpenBSD, DragonFly BSD
+#if defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)        // FreeBSD, NetBSD, OpenBSD, DragonFly BSD
 #pragma message(">>> OS is BSD")
 #define SYS_BSD
 static constexpr bool IsSysBSD = true;
@@ -154,14 +154,15 @@ static constexpr bool IsDbgBuild = false;
 #define GETRETADDR() _ReturnAddress()
 //#define SETRETADDR(addr) (*(void**)_AddressOfReturnAddress() = (void*)(addr))    // Not on ARM? LR is usually pushed on stack
 
-#define _fcompact __forceinline              // No 'flatten' with MSVC?
+#define _fcompact __forceinline              // No 'flatten' with MSVC?      // inline void foo();  // Not between the return value and the function name (The compiler may give some obscure errors otherwise)
 #define _ninline _declspec(noinline)
 #define _finline __forceinline               // At least '/Ob1' is still required     [[msvc::forceinline]] ??
+#define _minline inline                      // May be inlined
 #define _naked __declspec(naked)
-#define _noret
-#define _used
+#define _noret __attribute__((noreturn))     // Clang/GCC only
+#define _used  __attribute__((used))         // Without this attr the compiler will remove almost all records from SysApi array for Windows system when -O2 is enabled
 //#pragma code_seg(".xtext")
-#pragma section(".xtxt",execute,read)       // 'execute' will be ignored for a data declared with _codesec if the section name is '.text', another '.text' section will be created, not executable
+#pragma section(".xtxt",execute,read)        // 'execute' will be ignored for a data declared with _codesec if the section name is '.text', another '.text' section will be created, not executable
 #define _codesec _declspec(allocate(".xtxt"))
 #define _codesecn(n) _declspec(allocate(".xtxt"))
 #pragma comment(linker,"/MERGE:.xtxt=.text")     // Without this SAPI struct won`t go into executable '.text' section
@@ -177,6 +178,7 @@ static constexpr bool IsDbgBuild = false;
 #define _fcompact __attribute__((flatten))         // Inlines everything inside the marked function
 #define _ninline __attribute__((noinline))
 #define _finline __attribute__((always_inline))
+#define _minline inline                      // May be inlined
 #define _naked   __attribute__((naked))
 #define _noret  __attribute__((noreturn))      // [[noreturn]] is ignored for some reason
 #define _used __attribute__((used))       // Without it Clang will strip every reference to syscall stubs when building for ARM
@@ -254,10 +256,20 @@ static constexpr bool IsDbgBuild = false;
 //#define STASRT(cond,txt)
 //#endif
 
+#ifndef COMP_MSVC
+// Another injected struct without injected members:(
+constexpr const char* __builtin_FUNCSIG(auto* rt = __builtin_source_location()) noexcept
+{
+ return static_cast<const std::source_location::__impl*>(rt)->_M_function_name;
+}
+#endif
+
 // These three work at a call site
 #define SRC_LINE __builtin_LINE()
 #define SRC_FILE __builtin_FILE()        // Full path included
-#define SRC_FUNC __builtin_FUNCTION()    // Only the name itself, no arguments or a return type (like __func__)
+#define SRC_FUNC __builtin_FUNCTION()    // Only the name itself, no arguments or a return type (like __func__)  // __builtin_FUNCSIG() ?? // TODO: Use __builtin_source_location() to get full signatures
+
+#define FUNC_NAME __func__
 
 // To retrieve a function signature including all argument types
 #if defined(__GNUC__) || (defined(__MWERKS__) && (__MWERKS__ >= 0x3000)) || (defined(__ICC) && (__ICC >= 600)) || defined(__ghs__)
@@ -295,8 +307,8 @@ static constexpr bool IsDbgBuild = false;
 #define UNUSED(expr) do { (void)(expr); } while (0)
 
 // Interface validator macros
-#define API_VALIDATE(fname,rettype,args...) static_assert(SameTypes<typename RemovePtr<decltype(static_cast<rettype(*)(args)>(fname))>::T, rettype (args)>::V, "");    // This will work with overloaded functions, including func(void)
-//#define API_VALIDATE(fname,rettype,args...) static_assert(SameTypes<decltype(fname), rettype (args)>::V, "");
+#define API_VALIDATE(fname,rettype,args...) static_assert(SameType<typename RemovePtr<decltype(static_cast<rettype(*)(args)>(fname))>::T, rettype (args)>::V, "");    // This will work with overloaded functions, including func(void)
+//#define API_VALIDATE(fname,rettype,args...) static_assert(SameType<decltype(fname), rettype (args)>::V, "");
 
 
 // This helps to create a function wrapper without copying its declared signature (If signatures is changed frequently during redesign it is a big hassle to keep the interfaces in sync)
@@ -314,8 +326,8 @@ static constexpr bool IsDbgBuild = false;
 
 #define CALL_RIFEXISTR(fchk,falt,farg,faarg) if constexpr(requires { Y::fchk; })res = Y::fchk farg; else res = Y::falt faarg;
 
-class CEmptyType {};
-using ETYPE = CEmptyType[0];    // This works plain and simple with ICC, GCC, CLANG (You can get a completely empty struct with such members and no annoying padding rules) but MSVC reports an error 'error C2229: struct has an illegal zero-sized array'
+struct SEmptyType {};
+using ETYPE = SEmptyType[0];   // As a member // This works plain and simple with ICC, GCC, CLANG (You can get a completely empty struct with such members and no annoying padding rules) but MSVC reports an error 'error C2229: struct has an illegal zero-sized array'
 // MSVC: sizeof(ETYPE) : error C2070: 'ETYPE': illegal sizeof operand
 // CLANG: With '--target=x86_64-windows-msvc' you cannot get an empty struct with such members, its size will be at least 1 byte
 
@@ -420,6 +432,7 @@ pointer	    64	    64	    64	    32	    32
  using time_t    = int64; // Modern time_t is 64-bit
  using size_t    = uint;  // To write a familiar type convs
  using ssize_t   = sint;
+ using uintptr_t = uint;
  using nullptr_t = decltype(nullptr);
 
  // Add definitions for floating point types?
@@ -455,6 +468,7 @@ typedef __builtin_va_list va_list;        // Requires stack alignment by 16
 
 //------------------------------------------------------------------------------------------------------------
 // Some type traits
+// https://github.com/mooncollin/CPPAdditions/tree/main
 
 //https://stackoverflow.com/questions/64060929/why-does-the-implementation-of-declval-in-libstdc-v3-look-so-complicated
 //  template<typename _Tp, typename _Up = _Tp&&>  _Up __declval(int);
@@ -463,20 +477,42 @@ typedef __builtin_va_list va_list;        // Requires stack alignment by 16
 // Ihis is fine... for now
 template <typename T> T declval();        // Not really useful to use an overloaded functions with decltype
 
-//template<typename T, typename U> struct SameTypes {enum { V = false };};   // Cannot be a member of a local class or a function
-//template<typename T> struct SameTypes<T, T> {enum { V = true };};
+//template<typename T, typename U> struct SameType {enum { V = false };};   // Cannot be a member of a local class or a function
+//template<typename T> struct SameType<T, T> {enum { V = true };};
 
-template<typename T, typename U> struct SameTypes {static constexpr bool V = false;};   // Cannot be a member of a local class or a function
-template<typename T> struct SameTypes<T, T> {static constexpr bool V = true;};
+struct TrueType {static constexpr const bool V = true;};       // inline constexpr bool
+struct FalseType {static constexpr const bool V = false;};
 
-template<typename A, typename B> constexpr _finline static bool IsSameTypes(A ValA, B ValB)
+template<typename T, typename U> struct SameType : FalseType {};   // Cannot be a member of a local class or a function
+template<typename T> struct SameType<T, T> : TrueType {};
+
+template<typename A, typename B> constexpr _finline static bool IsSameType(A ValA, B ValB)
 {
  UNUSED(ValA); UNUSED(ValB);
- return SameTypes<A, B>::V;
+ return SameType<A, B>::V;
 }
+
+// Check if two types are variants of same template  // static_assert(SameKind<decltype(v1), std::vector>::V, "no match");
+template<typename Test, template<typename...> class Ref> struct SameKind : FalseType {};        // is_specialization
+template<template<typename...> class Ref, typename... Args> struct SameKind<Ref<Args...>, Ref> : TrueType {};
+
+//template<class Type, template<typename...> class Template> inline constexpr bool SameKindV = SameKind<Type, Template>::V;
+
+/*template<typename A, typename B> constexpr _finline static bool IsSameKind(A ValA, B ValB)
+{
+ UNUSED(ValA); UNUSED(ValB);
+ return SameKind<A, Base>::V && SameKind<B, Base>::V;     // !!! How to get the 'Base' from A and B???    // https://godbolt.org/z/vnbfa6v7W
+}*/
+
+template<typename T> struct BitSize {using ST = decltype(sizeof(T)); static constexpr const ST V = sizeof(T) * ((ST)8);};
+template<typename T> constexpr T GetBitSize(T x){return BitSize<T>::V;}
+//------------------------------------------------------------------------------------
 
 template<typename T> struct IsUnsigned { static const bool V = (T(-1) >= 0); };     // template<typename T> constexpr _finline static bool IsPositive(void){return (T(-1) >= 0);}    // constinit
 
+template<bool condition> struct warn_if{};
+template<> struct [[deprecated]] warn_if<false>{constexpr warn_if() = default;};     // NOTE: MSVC have problems with this!
+#define static_warn(x, ...) ((void) warn_if<x>())
 //------------------------------------------------------------------------------------------------------------
 template<typename Ty> struct RemoveRef { using T = Ty; };
 template<typename Ty> struct RemoveRef<Ty&> { using T = Ty; };
@@ -581,8 +617,8 @@ template <typename Ty> static consteval bool IsPointer(const Ty&){return IsPtrTy
 template<typename T> constexpr _finline static int32 AddrToRelAddr(T CmdAddr, unsigned int CmdLen, T TgtAddr){return -((CmdAddr + CmdLen) - TgtAddr);}         // x86 only?
 template<typename T> constexpr _finline static T     RelAddrToAddr(T CmdAddr, unsigned int CmdLen, int32 TgtOffset){return ((CmdAddr + CmdLen) + TgtOffset);}  // x86 only?
 
-template <typename T> constexpr _finline static T RotL(T Value, unsigned int Shift){constexpr unsigned int MaxBits = sizeof(T) * 8U; return T((Value << Shift) | (Value >> ((MaxBits - Shift)&(MaxBits-1))));}
-template <typename T> constexpr _finline static T RotR(T Value, unsigned int Shift){constexpr unsigned int MaxBits = sizeof(T) * 8U; return T((Value >> Shift) | (Value << ((MaxBits - Shift)&(MaxBits-1))));}
+template <typename T> constexpr _finline static T RotL(T Value, unsigned int Shift){constexpr unsigned int MaxBits = BitSize<T>::V; return T((Value << Shift) | (Value >> ((MaxBits - Shift)&(MaxBits-1))));}
+template <typename T> constexpr _finline static T RotR(T Value, unsigned int Shift){constexpr unsigned int MaxBits = BitSize<T>::V; return T((Value >> Shift) | (Value << ((MaxBits - Shift)&(MaxBits-1))));}
 
 template <typename T> constexpr _finline static T Min(T ValA, T ValB){return (ValA < ValB)?ValA:ValB;}
 template <typename T> constexpr _finline static T Max(T ValA, T ValB){return (ValA > ValB)?ValA:ValB;}
@@ -596,10 +632,14 @@ template<typename N> constexpr _finline static N AlignFrwd(N Value, N Alignment)
 template<typename N> constexpr _finline static N AlignBkwd(N Value, N Alignment){return (Value/Alignment)*Alignment;}                              // NOTE: Slow but works with any Alignment value
 
 // 2,4,8,16,...
-template<typename N> constexpr _finline static bool IsPowerOf2(N Value){return Value && !(Value & (Value - 1));}
+//template<typename N> constexpr _finline static bool IsPowerOf2(N Value){return Value && !(Value & (Value - 1));}
+template<typename T> constexpr _finline static bool IsPowOfTwo(T v){return !(v & (v - 1));}   // Will return TRUE for v=0 which may be undesirable (but actually consistent)
+
 // TODO: Cast pointer types to size_t
 template<typename N> constexpr _finline static N AlignP2Frwd(N Value, unsigned int Alignment){return (Value+((N)Alignment-1)) & ~((N)Alignment-1);}    // NOTE: Result is incorrect if Alignment is not power of 2
 template<typename N> constexpr _finline static N AlignP2Bkwd(N Value, unsigned int Alignment){return Value & ~((N)Alignment-1);}                       // NOTE: Result is incorrect if Alignment is not power of 2
+
+template<typename T> constexpr _finline static bool IsRangesIntersect(T OffsA, T SizeA, T OffsB, T SizeB) {return (OffsA < (OffsB + SizeB)) && (OffsB < (OffsA + SizeA));}  
 //------------------------------------------------------------------------------------------------------------
 
 template<typename T> consteval size_t countof(T& a){return (sizeof(T) / sizeof(*a));}         // Not for array classes or pointers!  // 'a[0]' ?
@@ -607,7 +647,7 @@ template<typename T> consteval size_t countof(T& a){return (sizeof(T) / sizeof(*
 
 template<typename T> constexpr _finline static int SizeOfP2Type(void)
 {
- if constexpr (SameTypes<T,void>::V)return 0;
+ if constexpr (SameType<T,void>::V)return 0;
   else
    {
     static_assert(IsPowerOf2(sizeof(T)), "Only Pow2 types allowed!");
@@ -677,11 +717,11 @@ _finline operator charb* (void) const {return this->val.bv;}
 /*template<typename T, typename H=uint> struct alignas(H) SPTR
 {
  using R = typename RemoveConst<typename RemoveRef<T>::T>::T;   // Base type
- STASRT(SameTypes<H, uint>::V || SameTypes<H, uint32>::V || SameTypes<H, uint64>::V, "Unsupported pointer type!");
+ STASRT(SameType<H, uint>::V || SameType<H, uint32>::V || SameType<H, uint64>::V, "Unsupported pointer type!");
  char Value; //H Value;
  _finline constexpr SPTR(void) = default;    //{this->Value = 0;}          // Avoid default constructors in POD (SPTR will replace many members in POD structures)!
  _finline constexpr SPTR(H v){this->Value = v;}
- _finline constexpr SPTR(T* v) requires (!SameTypes<T, const char>::V) {this->Value = (H)v;}
+ _finline constexpr SPTR(T* v) requires (!SameType<T, const char>::V) {this->Value = (H)v;}
  _finline constexpr SPTR(int v){this->Value = (H)v;}                   // For '0' values
  _finline constexpr SPTR(pchar v){this->Value = (H)v.val.av;}
  //_finline SPTR(unsigned int v){this->Value = (H)v;}          // For '0' values
@@ -690,14 +730,14 @@ _finline operator charb* (void) const {return this->val.bv;}
 // template<typename X, int N> _finline  SPTR(const X(&v)[N]){this->Value = (H)v;}   // for arrays
  _finline constexpr SPTR(const char* v){this->Value = (H)v;}           // For string pointers
  _finline constexpr SPTR(nullptr_t v){this->Value = (H)v;}             // For 'nullptr' values
- template<typename X> _finline constexpr SPTR(X&& v) requires (!SameTypes<R, pchar>::V) {this->Value = (H)((T*)v);}   // For some classes that cannon convert themselves implicitly
- template<typename X> _finline constexpr SPTR(X&& v) requires (SameTypes<R, pchar>::V) {this->Value = (H)((const achar*)v);}
+ template<typename X> _finline constexpr SPTR(X&& v) requires (!SameType<R, pchar>::V) {this->Value = (H)((T*)v);}   // For some classes that cannon convert themselves implicitly
+ template<typename X> _finline constexpr SPTR(X&& v) requires (SameType<R, pchar>::V) {this->Value = (H)((const achar*)v);}
 
  _finline void operator= (H val){this->Value = val;}
  _finline void operator= (T* val){this->Value = (H)val;}     // May truncate or extend the pointer
 // _finline void operator= (SPTR<T,H> val){this->Value = val.Value;}   // -Wdeprecated-copy-with-user-provided-copy
  template<typename X> _finline operator X* (void) const {return (X*)this->Value;}
-// _finline operator auto* (void) const requires (!SameTypes<T, void>::V) {return (T*)this->Value;}
+// _finline operator auto* (void) const requires (!SameType<T, void>::V) {return (T*)this->Value;}
 // _finline operator T* (void) const {return (T*)this->Value;}        // Must be convertible to current pointer type
  _finline operator H (void) const {return this->Value;}             // Raw value
 
@@ -771,5 +811,20 @@ template <ConstString S> struct Axx {};
 //template <cstring file_name> struct event {
 //    static constexpr char const* const file_name_ = file_name.data_;
 //};
+//------------------------------------------------------------------------------------------------------------
+namespace SelfType    // NOTE: Stateful metaprogramming trick
+{
+ inline void GetSelfType() {}
+ template <typename T> struct Reader { friend auto GetSelfType(Reader<T>); };
+ template <typename T, typename U> struct Writer {friend auto GetSelfType(Reader<T>){return U{};} };
+ template <typename T> using Read = RemovePtr<decltype(GetSelfType(Reader<T>{}))>::T;
+}
+
+#define DEFINE_SELF \
+    struct _self_type_tag {}; \
+    constexpr auto _self_type_helper() -> decltype(::SelfType::Writer<_self_type_tag, decltype(this)>{}); \
+    using Self = ::SelfType::Read<_self_type_tag>;
+
+// Example: struct A { DEFINE_SELF };
 //------------------------------------------------------------------------------------------------------------
 

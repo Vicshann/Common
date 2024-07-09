@@ -620,7 +620,7 @@ static NT::NTSTATUS NativeCreateThread(PNT_THREAD_PROC ThreadRoutine, NT::PVOID 
     }
 #endif
 
- NT::ULONG ThAcc = NT::SYNCHRONIZE|NT::THREAD_GET_CONTEXT|NT::THREAD_SET_CONTEXT|NT::THREAD_QUERY_INFORMATION|NT::THREAD_SET_INFORMATION|NT::THREAD_SUSPEND_RESUME|NT::THREAD_TERMINATE;
+ NT::ULONG ThAcc = +NT::SYNCHRONIZE|NT::THREAD_GET_CONTEXT|NT::THREAD_SET_CONTEXT|NT::THREAD_QUERY_INFORMATION|NT::THREAD_SET_INFORMATION|NT::THREAD_SUSPEND_RESUME|NT::THREAD_TERMINATE;
 // NOTE: To avoid some WOW64 bugs on Windows10 we must always call a native version of this function 
  Status = SAPI::NtCreateThread(ThreadHandle, ThAcc, nullptr, ProcessHandle, &ClientId, &Context, &UserStack, (uint)CrtSusp); // Always returns ACCESS_DENIED for any CFG enabled process? // The thread starts at specified IP and with specified SP and no return address // End it with NtTerminateThread  // CrtSusp must be exactly 1 to suspend     
 #ifdef ARCH_X32 
@@ -1002,7 +1002,7 @@ static NT::NTSTATUS NativeCreateProcess(const achar* ImgPath, const achar** Args
  wchar FullPath[PathLen];
  InitFileObjectAttributes(ImgPath, plen, ptype, 0, &FilePathUS, FullPath, &oattr);
 
- res = SAPI::NtCreateFile(&hFile, NT::FILE_EXECUTE | NT::SYNCHRONIZE, &oattr, &iosb, nullptr, NT::FILE_ATTRIBUTE_NORMAL, NT::FILE_SHARE_READ, NT::FILE_OPEN, NT::FILE_SYNCHRONOUS_IO_NONALERT, nullptr, 0);  
+ res = SAPI::NtCreateFile(&hFile, +NT::SYNCHRONIZE | NT::FILE_EXECUTE, &oattr, &iosb, nullptr, NT::FILE_ATTRIBUTE_NORMAL, NT::FILE_SHARE_READ, NT::FILE_OPEN, NT::FILE_SYNCHRONOUS_IO_NONALERT, nullptr, 0);  
  if(res)return res;
 
  oattr.ObjectName = 0;  // Actually, it is possible to create a named process object here

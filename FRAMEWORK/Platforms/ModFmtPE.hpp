@@ -132,7 +132,7 @@ struct SFileHdr    // FILE_HEADER
 //------------------------------------------------------------------------------------------------------------
 struct SOptHdr    // OPTIONAL_HEADER
 {
-STASRT(SameTypes<PHT, PTRCURRENT>::V || SameTypes<PHT, PTRTYPE32>::V || SameTypes<PHT, PTRTYPE64>::V, "Unsupported architecture type!");
+STASRT(SameType<PHT, PTRCURRENT>::V || SameType<PHT, PTRTYPE32>::V || SameType<PHT, PTRTYPE64>::V, "Unsupported architecture type!");
 
  uint16  Magic;           // 0107-ROM projection;010B-Normal projection   0x18
  uint8   MajLinkerVer;    // Linker version number                        0x1A
@@ -142,8 +142,8 @@ STASRT(SameTypes<PHT, PTRCURRENT>::V || SameTypes<PHT, PTRTYPE32>::V || SameType
  uint32  UnInitDataSize;  // Size of the uninitialized data section (BSS) 0x24
  uint32  EntryPointRVA;   // Address of 1st instruction to be executed    0x28
  uint32  BaseOfCode;      // Address (RVA) of beginning of code section   0x2C
- typename TSW<SameTypes<PHT, PTRTYPE32>::V, uint32, ETYPE>::T  BaseOfData;   // Address (RVA) of beginning of data section   0x30
- typename TSW<SameTypes<PHT, PTRTYPE32>::V, uint32, uint64>::T ImageBase;    // The *preferred* load address of the file     0x34
+ typename TSW<SameType<PHT, PTRTYPE32>::V, uint32, ETYPE>::T  BaseOfData;   // Address (RVA) of beginning of data section   0x30
+ typename TSW<SameType<PHT, PTRTYPE32>::V, uint32, uint64>::T ImageBase;    // The *preferred* load address of the file     0x34
 /* union
   {
    struct

@@ -10,6 +10,21 @@
    https://graphics.stanford.edu/~seander/bithacks.html
 
 */
+#if !defined(_MSC_VER) && !__has_include (<source_location>)
+namespace std
+{
+ struct source_location
+  {
+   struct __impl      // Hardcoded
+    {
+      const char* _M_file_name;
+      const char* _M_function_name;
+      unsigned _M_line;
+      unsigned _M_column;
+    };
+  };
+}
+#endif
 
 #define _HIDENT(x) x
 #define _HXSTR(x) #x
@@ -101,6 +116,7 @@ using PX64 = NPTM::PX64;
                   // TODO: CStr which can be initialized from a pointer and contains string utilities
 
 
+#include "Containers/Allocators.hpp"
 
 //#include "MemUtils.hpp"
 //#include "MemStorage.hpp"
@@ -120,11 +136,12 @@ namespace NCRYPT     // https://github.com/abbbaf/Compile-time-hash-functions
 
 //--- Extra
 #include "StrLocalizer.hpp"
-//#include "StrIntern.hpp"    // StrStorage.hpp ???
-//#include "Parsers/ByteJam_long.hpp"      // uint16 * 3 max per bit
-//#include "Parsers/ByteJam_short.hpp"   // uint32 per bit
 #include "Parsers/ByteJam.hpp"
 #include "Parsers/Tokenizer.hpp"
+//---
+#ifdef FWK_CFG_USE_HOOKS
+#include "UniHook/UniHook.hpp"
+#endif
 //---
 
 #include "AppDef.hpp"

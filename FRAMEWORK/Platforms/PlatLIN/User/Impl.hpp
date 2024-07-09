@@ -47,6 +47,7 @@ DECL_SYSCALL(NSYSC::ESysCNum::mmap,       PX::mmap,       mmap       )
 #endif
 
 DECL_SYSCALL(NSYSC::ESysCNum::munmap,     PX::munmap,     munmap     )
+DECL_SYSCALL(NSYSC::ESysCNum::mremap,     PX::mremap,     mremap     )
 DECL_SYSCALL(NSYSC::ESysCNum::madvise,    PX::madvise,    madvise    )
 DECL_SYSCALL(NSYSC::ESysCNum::mprotect,   PX::mprotect,   mprotect   )
 DECL_SYSCALL(NSYSC::ESysCNum::msync,      PX::msync,      msync      )
@@ -160,6 +161,7 @@ FUNC_WRAPPERFI(PX::setpgid,    setpgid    ) {return SAPI::setpgid(args...);}
 //------------------------------------------------------------------------------------------------------------
 FUNC_WRAPPERFI(PX::mmapGD,     mmap       ) { CALL_IFEXISTRPC(mmap,mmap2,(IsArchX64),(args...),(addr,length,prot,flags,fd,uint32(offset>>12)),(vptr addr, size_t length, uint prot, uint flags, int fd, uint64 offset)) }
 FUNC_WRAPPERFI(PX::munmap,     munmap     ) {return SAPI::munmap(args...);}
+FUNC_WRAPPERFI(PX::mremap,     mremap     ) {return SAPI::mremap(args...);}                        
 FUNC_WRAPPERFI(PX::madvise,    madvise    ) {return SAPI::madvise(args...);}
 FUNC_WRAPPERFI(PX::mprotect,   mprotect   ) {return SAPI::mprotect(args...);}
 FUNC_WRAPPERFI(PX::msync,      msync      ) {return SAPI::msync(args...);}
@@ -480,10 +482,6 @@ FUNC_WRAPPERNI(NTHD::thread_exit,       thread_exit      )
 #include "Startup.hpp"
 
 //============================================================================================================
-struct SFWCTX      // NOTE: Such alignment may waste some memory on main thread // Initialize should be called from each thread?    // CLONE_SETTLS should set to this somehow (Allows to avoid of separate TLS allocation)  // struct alignas(MEMPAGESIZE) SFWCTX - No need for now to store main thread ctx on the stack
-{
- // Some thread context data here (to be stored on stack)
-
 static sint Initialize(void* StkFrame=nullptr, void* ArgA=nullptr, void* ArgB=nullptr, void* ArgC=nullptr, bool InitConLog=false)    // _finline ?
 {
  if(IsInitialized())return 1;
@@ -514,6 +512,4 @@ static sint Initialize(void* StkFrame=nullptr, void* ArgA=nullptr, void* ArgB=nu
   }
  return 0;
 }
-
-};
 //============================================================================================================
