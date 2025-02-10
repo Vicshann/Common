@@ -1,2 +1,0 @@
-
--target i686-unknown-freebsd

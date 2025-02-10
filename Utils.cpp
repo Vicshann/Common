@@ -2929,6 +2929,29 @@ HMODULE _stdcall FindModuleByExpName(LPSTR ModuleName)              // For modul
  return NULL;
 }
 //---------------------------------------------------------------------------
+HMODULE _stdcall FindModuleByExport(LPSTR ExportName, LPSTR NameOut)              // For modules with EXPORT directory
+{
+ MODULEENTRY32 ment32;
+ ment32.dwSize = sizeof(MODULEENTRY32);
+ HANDLE hModulesSnap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, GetCurrentProcessId());
+ if(Module32First(hModulesSnap, &ment32))
+  {
+   do
+    {
+     if(!NPEFMT::IsValidPEHeader(ment32.hModule))continue;
+     if(NPEFMT::GetProcAddr(ment32.hModule, ExportName))
+      {
+       if(NameOut)lstrcpyA(NameOut, ment32.szModule);
+       CloseHandle(hModulesSnap);
+       return ment32.hModule; 
+      }
+    }
+	 while(Module32Next(hModulesSnap, &ment32));
+  }
+ CloseHandle(hModulesSnap);
+ return NULL;
+}
+//---------------------------------------------------------------------------
 HANDLE WINAPI CreateFileX(PVOID lpFileName,DWORD dwDesiredAccess,DWORD dwShareMode,LPSECURITY_ATTRIBUTES lpSecurityAttributes,DWORD dwCreationDisposition,DWORD dwFlagsAndAttributes,HANDLE hTemplateFile)
 {
  if(!((PBYTE)lpFileName)[1])return CreateFileW((PWSTR)lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile);

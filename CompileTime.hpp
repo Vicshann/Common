@@ -115,9 +115,9 @@ template <typename C, unsigned int... Idx> struct ctStrHldr<C,ctCplIntList<Idx..
  constexpr __forceinline ctStrHldr(const C* const Str) : Array{ Str[Idx]... } {}  // Compile-time constructor  
 
  constexpr __forceinline unsigned int Size(void){return (sizeof...(Idx));}
- constexpr __forceinline C* Value(void){return (C*)&this->Array;}   
- constexpr __forceinline C* Decrypt(void){return (C*)&this->Array;}  
- constexpr __forceinline operator   const C*()    {return this->Array;}
+ constexpr __forceinline const C* Value(void){return (C*)&this->Array;}   
+ constexpr __forceinline const C* Decrypt(void){return (C*)&this->Array;}  
+ constexpr __forceinline operator   const C*()    {return (C*)&this->Array;}
 };
 //------------------------------------------------------------------------------
 
@@ -185,7 +185,7 @@ __forceinline ~ctCplEncryptedString()
 }
 #endif
 //------------------------------		
-__forceinline C* Decrypt(void)  // Run-time decryption   // There will be a copy of this function body for each encrypted string usage
+__forceinline const C* Decrypt(void)  // Run-time decryption   // There will be a copy of this function body for each encrypted string usage
 {
  for(unsigned int t = 0; t < sizeof...(Idx); t++)this->Array[t] = ctCplDecryptCharBlk(this->Array[t], t);   // Decrypt blocks of chars           
 // ((C*)&this->Value)[(((sizeof...(Idx))*sizeof(void*)) / sizeof(C))-1] = 0; // Force a terminating NULL (In case of failed decryption)
@@ -194,7 +194,7 @@ __forceinline C* Decrypt(void)  // Run-time decryption   // There will be a copy
 }
 //------------------------------
  constexpr __forceinline unsigned int Size(void){return Len;}	
- constexpr __forceinline C*   Value(void){return (C*)&this->Array;}	
+ constexpr __forceinline const C*   Value(void){return (C*)&this->Array;}	
  constexpr __forceinline operator   const C*()    {return this->Decrypt();}      // 'Decrypt' version to use this class un macros and skip it if necessary
 }; 
 
@@ -279,6 +279,7 @@ __forceinline  T* Decrypt(void) const    // const result?
  constexpr __forceinline operator const T* ()  const { return const_cast<CEStr<T,N>* >(this)->Decrypt();}  // constness of 'this' pointer is removed
 // constexpr __forceinline operator const T* ()  const { return (T*)this->Array; }
  constexpr __forceinline T* Ptr()  const { return (T*)this->Array; }
+ constexpr __forceinline T* Value()  const { return (T*)this->Array; }
  constexpr static __forceinline SIZE_T Size(void){return N-1;}  // In chars, without 0
 };
 #ifndef ctDISENCSTR

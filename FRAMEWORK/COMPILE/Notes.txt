@@ -1,3 +1,0 @@
-$ llvm-objcopy --only-keep-debug product.exe product.dbg
-$ llvm-objcopy --strip-all product.exe
-$ llvm-objcopy --add-gnu-debuglink=product.dbg product.exe

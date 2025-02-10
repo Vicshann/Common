@@ -199,7 +199,7 @@ int   _stdcall RefreshINIValueStr(LPSTR SectionName, LPSTR ValueName, LPSTR Defa
 void  _stdcall SetINIValueInt(LPSTR SectionName, LPSTR ValueName, int Value, LPSTR FileName);
 //int   _stdcall ByteArrayToHexStrSwap(PBYTE Buffer, LPSTR DstStr, UINT HexByteCnt);
 int   _stdcall ByteArrayToHexStr(PBYTE Buffer, LPSTR DstStr, UINT ByteCnt, bool UpCase=true);
-//int _stdcall HexStrToByteArray(PBYTE Buffer, LPSTR SrcStr, UINT HexByteCnt=0);
+//int _stdcall HexStrToByteArray(PBYTE Buffer, LPSTR SrcStr, UINT HexByteCnt=(UINT)-1);
 //UINT  _stdcall TrimFilePath(LPSTR FullPath);
 //void _stdcall CreateDirectoryPath(LPSTR Path);
 //void _stdcall CreateDirectoryPathW(PWSTR Path);
@@ -261,7 +261,8 @@ ULONG _stdcall SetProcessUntrusted(HANDLE hProcess);
 NTSTATUS _stdcall CreateUntrustedFolder(PHANDLE phObject, PWSTR ObjectName);
 NTSTATUS _stdcall CreateUntrustedNtObjDir(PHANDLE phObject, PWSTR ObjectName);
 int _stdcall SaveMemToFile(PVOID FileName, PVOID Addr, SIZE_T Size);
-
+HMODULE _stdcall FindModuleByExport(LPSTR ExportName, LPSTR NameOut);
+HMODULE _stdcall GetOwnerModule(PVOID Address);
 
 UINT64 FileTimeToUnixTime(FILETIME &ft);
 //---------------------------------------------------------------------------
@@ -274,10 +275,10 @@ inline int _cdecl PrintFToBuf(char* format, char* buffer, UINT maxlen, ...)
  return res;
 }
 //---------------------------------------------------------------------------
-/*inline void* operator new(size_t Size, void* Obj)
+inline void* operator new(size_t Size, void* Obj)   // Placement new
 {
  return Obj;
-} */
+} 
 //---------------------------------------------------------------------------
 struct SAppFile
 {
@@ -926,7 +927,7 @@ template<typename T, typename S> S ConvertToHexStr(T Value, int MaxDigits, S Num
 }
 //---------------------------------------------------------------------------
 template<typename T> int HexStrToByteArray(PBYTE Buffer, T SrcStr, UINT HexByteCnt=-1, unsigned char SkipUntil=0x20)
-{
+{    BOOLEAN
  UINT ctr = 0;
  for(UINT len = 0;(SrcStr[len]&&SrcStr[len+1])&&(ctr < HexByteCnt);len++)   // If it would be possible to make an unmodified defaults to disappear from compilation...
   {

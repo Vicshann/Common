@@ -333,16 +333,25 @@ static int GetResponseContent(CMiniStr& Rsp, CMiniStr& Content, bool NeedOK=fals
  int DataOffs = epos + 4;  // \r\n\r\n
  if(Chunk)
   {
+   UINT CntLen = 0;
    while(DataOffs < Rsp.Length())
     {
-     UINT CntLen = HexStrToNum<UINT>((LPSTR)&Rsp.c_data()[DataOffs]);  // Size of Chunk
+     LPSTR Ptr = (LPSTR)&Rsp.c_data()[DataOffs];
+     while(*Ptr < '0')
+      {
+       if(!*Ptr)return -1;    // No size string!
+       Ptr++;
+      }
+     CntLen = HexStrToNum<UINT>(Ptr);  // Size of Chunk
+     DBGMSG("Chunk Size: %u", CntLen);
      if(!CntLen)break;  // End chunk is 0
      int rpos = NSTR::StrOffset<NSTR::ChrOpSiLC<> >((LPSTR)Rsp.c_data(), "\r\n", DataOffs, Rsp.Length());
-     if(rpos < 0)break;
+     if(rpos < 0)break; // No data after size(Probably)!
      DataOffs  = rpos + 2;   // \r\n
      Content.cAppend((LPSTR)&Rsp.c_data()[DataOffs], CntLen);
      DataOffs += CntLen + 2;   // \r\n
     }
+   if(CntLen){Content.Clear(); return 2;}    // No last chunk yet
   }
    else Content.cAssign((LPSTR)&Rsp.c_data()[DataOffs], Rsp.Length() - DataOffs);
 #ifndef NETWNOGZ

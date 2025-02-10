@@ -15,6 +15,11 @@
   WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. 
 */
 
+// https://www.youtube.com/watch?v=bjz_bMNNWRk
+// https://github.com/CppCon/CppCon2024/blob/main/Presentations/Multi_Producer_Multi_Consumer_Lock_Free_Atomic_Queue.pdf
+// https://github.com/erez-strauss/lockfree_mpmc_queue
+// https://github.com/Gregory-Meyer/lockfree
+//
 struct NShMem     // TODO: Crossplatform - part of the FRAMEWORK 
 {
 static inline char ObjDirName[] = {"TempNamedObjects"};    // TODO: Generate it

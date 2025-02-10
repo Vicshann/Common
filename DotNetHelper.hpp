@@ -453,7 +453,8 @@ typedef struct ILCodeBuffer
 // clrjit.dll (.NET 4.0) ; mscorwks.dll (.NET 2.0+)
 // ICorJitInfo* VFT is ??_7CEEJitInfo@@6B@ in clr.dll
 static int    _stdcall CorJit_CompileMethod(struct CILJit* This, struct ICorJitInfo* pJitInfo, CORINFO_METHOD_INFO* pMethodInfo, UINT nFlags, LPBYTE* pEntryAddress, ULONG* pSizeOfCode);  // CorJitResult
-const char*   _stdcall GetMethodName(ICorJitInfo* This, CORINFO_METHOD_HANDLE ftn, const char **moduleName);    // _stdcall or thiscall?    // TODO: Fix definition of ICorJitInfo interface in 'corinfo.h' because index of GetMethodName is wrong (.NET 4)
+const char*   _stdcall GetMethodNameFromMetadata(ICorJitInfo* This, CORINFO_METHOD_HANDLE ftnHnd, const char **className, const char **namespaceName, const char **enclosingClassName);
+const char*   _stdcall GetMethodName(ICorJitInfo* This, CORINFO_METHOD_HANDLE ftn, const char **moduleName);  // FAIL: Removed in .NET 8  // _stdcall or thiscall?    // TODO: Fix definition of ICorJitInfo interface in 'corinfo.h' because index of GetMethodName is wrong (.NET 4)
 static void** _stdcall GetJit(void);
 //---------------------------------------------------------------------------
 static void** GetCompileMethodRef(HMODULE hModJit=NULL, PVOID pGetJit=NULL, bool ForceFind=false)
@@ -534,7 +535,7 @@ static void** GetCompileMethodRef(HMODULE hModJit=NULL, PVOID pGetJit=NULL, bool
  75 ??                                      jnz     ???
  B8 00 00 00 06                             mov     eax, 6000000h
 */
-static int FindIdxOfGetMethodName(ICorJitInfo* pJitInfo)
+static int FindIdxOfGetMethodName(ICorJitInfo* pJitInfo)    // WARNING: Not present in .NET 8
 {
  PVOID* Vft = *(PVOID**)pJitInfo;
  int CurIdx = 100;  // Should be enough  // 113 - 116
@@ -547,7 +548,7 @@ static int FindIdxOfGetMethodName(ICorJitInfo* pJitInfo)
    if((CurPtr < NxtPtr)&&(EndPtr > NxtPtr))EndPtr = NxtPtr;  // Do not scan into next proc
    UINT InsFlg = 0;
    DBGMSG("Scanning from %p to %p",CurPtr,EndPtr); 
-   for(;CurPtr < EndPtr;CurPtr++)    // Find CEEInfo::getMethodDefFromMethod;  Next in VFT should be getMethodName
+   for(;CurPtr < EndPtr;CurPtr++)    // Find CEEInfo::getMethodDefFromMethod;  Next in VFT should be getMethodName    // System.Private.CoreLib.dll
     {
      if(*(UINT16*)CurPtr == 0x0724)InsFlg |= 0x01;              // and     al, 7
      else if(*(UINT16*)CurPtr == 0x073C)InsFlg |= 0x02;         // cmp     al, 7
@@ -557,6 +558,42 @@ static int FindIdxOfGetMethodName(ICorJitInfo* pJitInfo)
 //   DBGMSG("InsFlg=%u",InsFlg);
   }
  DBGMSG("Failed to find getMethodName!"); 
+ return -1;
+}
+//---------------------------------------------------------------------------
+/*
+ 44 0B C8                                or      r9d, eax
+ 41 F7 C1 FF FF FF 00                    test    r9d, 0FFFFFFh       << Reliable:  41 F7 C? FF FF FF 00 ??  // 0x0000FFFFFFC0F741
+ 0F 84 9E 00 00 00                       jz      loc_1801160C0                                              // 0x00FFFFFFFFF0FFFF
+ 48 8B 3F                                mov     rdi, [rdi]
+ 8B 07                                   mov     eax, [rdi]
+ A9 30 00 00 80                          test    eax, 80000030h      << Reliable:  A? 30 00 00 80 ?? ?? ??  // 0x00000080000030A0
+ 0F 85 E5 00 00 00                       jnz     loc_180116117                                              // 0x000000FFFFFFFFF0
+ 48 8B 47 18                             mov     rax, [rdi+18h]
+ 48 8D 1D C3 9F EE FF                    lea     rbx, __ImageBase
+*/
+static int FindIdxOfGetMethodNameFromMetadata(ICorJitInfo* pJitInfo)
+{
+ PVOID* Vft = *(PVOID**)pJitInfo;
+ int CurIdx = 100;  // Should be enough  // 107 - ???
+ int MaxIdx = CurIdx + 30;
+ for(;CurIdx < MaxIdx;CurIdx++)
+  {
+   PBYTE NxtPtr = (PBYTE)Vft[CurIdx+1];   // Note: memory order may be not same as VFT order
+   PBYTE CurPtr = (PBYTE)Vft[CurIdx];
+   PBYTE EndPtr = CurPtr + 256;
+   if((CurPtr < NxtPtr)&&(EndPtr > NxtPtr))EndPtr = NxtPtr;  // Do not scan into next proc
+   UINT InsFlg = 0;
+   DBGMSG("Scanning from %p to %p",CurPtr,EndPtr); 
+   for(;CurPtr < EndPtr;CurPtr++)    // Find CEEInfo::getMethodDefFromMethod;  Next in VFT should be getMethodName    // System.Private.CoreLib.dll
+    {
+     if((*(UINT64*)CurPtr & 0x00FFFFFFFFF0FFFF) == 0x0000FFFFFFC0F741)InsFlg |= 0x01;              // test    r9d, 0FFFFFFh
+     else if((*(UINT64*)CurPtr & 0x000000FFFFFFFFF0) == 0x00000080000030A0)InsFlg |= 0x02;         // test    eax, 80000030h 
+     if(InsFlg == 3){DBGMSG("Found getMethodNameFromMetadata at %p with index %u", Vft[CurIdx], CurIdx); return CurIdx;}
+    }
+//   DBGMSG("InsFlg=%u",InsFlg);
+  }
+ DBGMSG("Failed to find getMethodNameFromMetadata!"); 
  return -1;
 }
 

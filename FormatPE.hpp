@@ -330,9 +330,10 @@ template<typename T> struct LOAD_CONFIG_DIR
  WORD   CSDVersion;
  WORD   DependentLoadFlags;
  T      EditList;
- T      SecurityCookie;
+ T      SecurityCookie;  // Addr on x32
  T      SEHandlerTable;
  T      SEHandlerCount;
+// ?????  The END?
  T      GuardCFCheckFunctionPointer;
  T      GuardCFDispatchFunctionPointer;
  T      GuardCFFunctionTable;
@@ -418,6 +419,11 @@ static UINT GetPEImageSize(PVOID Header)
  DOS_HEADER *DosHdr = (DOS_HEADER*)Header;
  WIN_HEADER<PECURRENT> *WinHdr = (WIN_HEADER<PECURRENT>*)&(((BYTE*)Header)[DosHdr->OffsetHeaderPE]);
  return WinHdr->OptionalHeader.SizeOfImage;
+}
+//---------------------------------------------------------------------------
+static PVOID GetPEImageBase(PVOID Header)
+{
+ return (PVOID)TBaseOfImage<PECURRENT>((PBYTE)Header);
 }
 //---------------------------------------------------------------------------
 // NOTE: Assumed that section offsets is sequential!
@@ -699,7 +705,7 @@ static bool GetSectionForAddress(PVOID ModuleBase, PVOID Address, SECTION_HEADER
  return false;
 }
 //---------------------------------------------------------------------------
-static bool GetModuleSection(PVOID ModuleBase, char *SecName, SECTION_HEADER **ResSec)
+static int GetModuleSection(PVOID ModuleBase, char *SecName, SECTION_HEADER **ResSec)
 {
  DOS_HEADER     *DosHdr = (DOS_HEADER*)ModuleBase;
  WIN_HEADER<PECURRENT>  *WinHdr = (WIN_HEADER<PECURRENT>*)&((PBYTE)ModuleBase)[DosHdr->OffsetHeaderPE];    // Size of PE header structure(x32/x64) is not important here
@@ -711,10 +717,10 @@ static bool GetModuleSection(PVOID ModuleBase, char *SecName, SECTION_HEADER **R
    if(((SIZE_T)SecName == ctr) || IsSectionNamesEqual((char*)&CurSec->SectionName, SecName))
     {
      if(ResSec)*ResSec = CurSec;  // NULL for only a presense test
-     return true;
+     return ctr;
     }
   }
- return false;
+ return -1;
 }
 //---------------------------------------------------------------------------
 static bool GetModuleSection(PVOID ModuleBase, UINT SecIdx, SECTION_HEADER **ResSec)

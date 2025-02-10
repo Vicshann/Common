@@ -1,4 +1,0 @@
-Windows does not have a pseudo-file like /dev/urandom. 
-The NT path \Device\KsecDD is the kernel driver behind these GenRandom functions, 
-but accessing the generator is done via DeviceIoControl rather than direct read operations.
----------------------

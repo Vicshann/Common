@@ -146,11 +146,11 @@ class SSL_SOCKET
 
 
 
-void  Initialize(SOCKET x,int Ty,PCCERT_CONTEXT pc=nullptr)
+void  Initialize(SOCKET x,int Ty,PCCERT_CONTEXT pc=nullptr, HCERTSTORE hCSi=nullptr)
 	{
 	X = x;
 	Type = Ty;
-	hCS = 0;
+	hCS = hCSi;
 	hCred.dwLower = 0;
 	hCred.dwUpper = 0;
 	hCtx.dwLower = 0;
@@ -191,8 +191,8 @@ void  Destroy(void)
 		OurCertificate = 0;
 		}
 
-	if (hCS)
-		CertCloseStore(hCS,0);
+	//if (hCS)
+	//	CertCloseStore(hCS,0);
 	hCS = 0;
 	}
 //------------------------------------------------------------------------------
@@ -547,12 +547,11 @@ int  s_ssend(char* b,int sz)
 		if (FAILED(ss))
 			return -1;
 
-
 		// Send this message
 		int rval;
 		rval = ssend_p((char*)Buffers[0].pvBuffer,Buffers[0].cbBuffer);
 		if (rval != Buffers[0].cbBuffer)
-			return rval;
+			return rval;         
 		rval = ssend_p((char*)Buffers[1].pvBuffer,Buffers[1].cbBuffer);
 		if (rval != Buffers[1].cbBuffer)
 			return rval;
@@ -560,7 +559,6 @@ int  s_ssend(char* b,int sz)
 		if (rval != Buffers[2].cbBuffer)
 			return rval;
 		}
-
 	return sz;
 	}
 //------------------------------------------------------------------------------	
@@ -989,31 +987,34 @@ static PCCERT_CONTEXT  CreateOurCertificate(const wchar_t* Name=L"Certificate")
 //==============================================================================
 //                Server functions
 //==============================================================================
+static int ImportCertificate(PWSTR Name, PWSTR Store, PCCERT_CONTEXT* Cert, HCERTSTORE* hCSi)
+{
+ // Find certificate in the store
+ // Open Certificate Store
+ *hCSi = CertOpenSystemStoreW(0,Store);
+ if (!*hCSi)
+ 	return -1;
+  
+ CERT_RDN cert_rdn;
+ CERT_RDN_ATTR cert_rdn_attr;
+ 
+ cert_rdn.cRDNAttr = 1;
+ cert_rdn.rgRDNAttr = &cert_rdn_attr;
+ 
+ cert_rdn_attr.pszObjId = szOID_COMMON_NAME;
+ cert_rdn_attr.dwValueType = CERT_RDN_ANY_TYPE;
+ cert_rdn_attr.Value.cbData = (DWORD)(lstrlenW(Name)*2);
+ 
+ cert_rdn_attr.Value.pbData = (BYTE*)Name;
+ *Cert = CertFindCertificateInStore(*hCSi, X509_ASN_ENCODING | PKCS_7_ASN_ENCODING , 0, CERT_FIND_SUBJECT_ATTR, &cert_rdn, NULL);    // CERT_FIND_SUBJECT_ATTR  CERT_FIND_ISSUER_ATTR       // -> CertFreeCertificateContext
+ //CertCloseStore(hCSi, 0);
+ return 0;		
+}
+//------------------------------------------------------------------------------
 int  ServerInit(bool NoLoop=false)
 	{
 	SECURITY_STATUS ss = 0;
 
-/*	if (wcslen(un))
-		{
-		// Find certificate in the store
-		// Open Certificate Store
-		hCS = CertOpenSystemStore(0,_T("MY"));
-		if (!hCS)
-			return -1;
-
-		CERT_RDN cert_rdn;
-		CERT_RDN_ATTR cert_rdn_attr;
-
-		cert_rdn.cRDNAttr = 1;
-		cert_rdn.rgRDNAttr = &cert_rdn_attr;
-
-		cert_rdn_attr.pszObjId = szOID_COMMON_NAME;
-		cert_rdn_attr.dwValueType = CERT_RDN_ANY_TYPE;
-		cert_rdn_attr.Value.cbData = (DWORD)wcslen(un);
-
-		cert_rdn_attr.Value.pbData = (BYTE *)un;
-		OurCertificate = CertFindCertificateInStore(hCS, X509_ASN_ENCODING | PKCS_7_ASN_ENCODING ,0,cft,&cert_rdn,NULL);
-		}*/
 	if (IsExternalCert)
 		{
 		;
@@ -1026,9 +1027,9 @@ int  ServerInit(bool NoLoop=false)
 
 	// Configure our SSL SChannel
 	memset(&m_SchannelCred,0,sizeof(m_SchannelCred));
-	m_SchannelCred.dwVersion = SCHANNEL_CRED_VERSION;
-	m_SchannelCred.dwFlags |= SCH_CRED_NO_DEFAULT_CREDS;
-	m_SchannelCred.dwFlags = SCH_CRED_NO_DEFAULT_CREDS | SCH_CRED_NO_SYSTEM_MAPPER | SCH_CRED_REVOCATION_CHECK_CHAIN;
+	m_SchannelCred.dwVersion  = SCHANNEL_CRED_VERSION;
+	m_SchannelCred.dwFlags   |= SCH_CRED_NO_DEFAULT_CREDS;
+	m_SchannelCred.dwFlags    = SCH_CRED_NO_DEFAULT_CREDS | SCH_CRED_NO_SYSTEM_MAPPER | SCH_CRED_REVOCATION_CHECK_CHAIN;
 	m_SchannelCred.hRootStore = hCS;
 	m_SchannelCred.dwMinimumCipherStrength = 128;
 
@@ -1043,13 +1044,14 @@ int  ServerInit(bool NoLoop=false)
 
 	// AcquireCredentialsHandle
 
-	ss = AcquireCredentialsHandle(0,SCHANNEL_NAME,SECPKG_CRED_INBOUND,0,&m_SchannelCred,0,0,&hCred,0);
+	ss = AcquireCredentialsHandle(0,SCHANNEL_NAME,SECPKG_CRED_INBOUND,0,&m_SchannelCred,0,0,&hCred,0);   
 //	ss = AcquireCredentialsHandle(0,UNISP_NAME,SECPKG_CRED_INBOUND,0,&m_SchannelCred,0,0,&hCred,0);
-	if (FAILED(ss))
-		return -1;
+	if (FAILED(ss)) { DBGMSG("SECURITY_STATUS: %08X, RootStore: %p", ss, hCS);
+		return -1;   }
 
 	if (NoLoop)
 		return 0;
+    DBGMSG("Looping..., RootStore: %p", hCS);
 	return ServerLoop();
 	}
 //------------------------------------------------------------------------------
