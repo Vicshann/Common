@@ -82,10 +82,10 @@ template <UINT32 msk = 0xEDB88320> __forceinline static UINT32 CRC32(char* Text,
 // TODO: CRC64
 //==============================================================================
 
-static consteval __forceinline SIZE_T MakeBuildKey(void)
+static consteval SIZE_T MakeBuildKey(void)
 {
- constexpr DWORD DTCrc  = CRC32A(__DATE__ __TIME__);
- constexpr DWORD EncKey =  ((~((unsigned int)(__DATE__[4]) * (unsigned int)(__DATE__[5])) & 0xFF) | ((~((unsigned int)(__TIME__[0]) * (unsigned int)(__TIME__[1])) & 0xFF) << 8) | ((~((unsigned int)(__TIME__[3]) * (unsigned int)(__TIME__[4])) & 0xFF) << 16) | ((~((unsigned int)(__TIME__[6]) * (unsigned int)(__TIME__[7])) & 0xFF) << 24));   // DWORD
+ constexpr const DWORD DTCrc  = CRC32A(__DATE__ __TIME__);
+ constexpr const DWORD EncKey = ((~((unsigned int)(__DATE__[4]) * (unsigned int)(__DATE__[5])) & 0xFF) | ((~((unsigned int)(__TIME__[0]) * (unsigned int)(__TIME__[1])) & 0xFF) << 8) | ((~((unsigned int)(__TIME__[3]) * (unsigned int)(__TIME__[4])) & 0xFF) << 16) | ((~((unsigned int)(__TIME__[6]) * (unsigned int)(__TIME__[7])) & 0xFF) << 24));   // DWORD
  SIZE_T Result = EncKey ^ DTCrc;
  if constexpr(sizeof(SIZE_T) > 4)
   {
@@ -94,7 +94,7 @@ static consteval __forceinline SIZE_T MakeBuildKey(void)
   }    
  return Result; 
 }
-
+ 
 struct NCMN
 {
 

@@ -616,6 +616,20 @@ UINT RemoveChars(char* Chars)
    CloseHandle(hFile);
    return (Result == this->Length());
   }
+//----------------------
+ bool UpdateFile(PVOID FileName)
+  {
+   HANDLE hFile;
+   if(!((PBYTE)FileName)[1])hFile = CreateFileW((PWSTR)FileName,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
+     else hFile = CreateFileA((LPSTR)FileName,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,NULL);
+   if(hFile == INVALID_HANDLE_VALUE)return false;
+   SetFilePointer(hFile,0,NULL,FILE_END);
+   DWORD Result   = 0;
+   WriteFile(hFile,this->Data,this->Length(),&Result,NULL);
+   CloseHandle(hFile);
+   this->Clear();
+   return (Result == this->Length());
+  }
 
 
 };

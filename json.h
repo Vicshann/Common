@@ -494,6 +494,18 @@ public:
    return this;
   }
 //--------------
+ CJSonItem* TakeFrom(CJSonItem& itm)  // Do not copies DATA/VALUE and NAME, only pointers
+  {
+   this->Cleanup();
+   this->Type   = itm.Type;
+   this->Data   = itm.Data;
+   this->Name   = itm.Name;         // Only for Object`s items  // TODO: Replace with PWSTR
+   this->mCount = itm.mCount;
+   this->Value.Items = itm.Value.Items;
+   memset(&itm,0,sizeof(CJSonItem));
+   return this;
+  }
+//--------------
  CJSonItem* Move(UINT CurIdx, UINT NewIdx)  // Moves children item  // TODO: Multi move
   {
    if((NewIdx >= this->mCount)||(CurIdx >= this->mCount))return NULL; // Out of bounds

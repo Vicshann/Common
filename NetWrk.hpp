@@ -316,20 +316,20 @@ static int GetResponseContent(CMiniStr& Rsp, CMiniStr& Content, bool NeedOK=fals
 {
  Content.Clear();
  int LnEnd = NSTR::CharOffsetSC(Rsp.c_str(), '\r', 0, Rsp.Length());
- if((Rsp.Length() < 5) || (NSTR::StrOffset<NSTR::ChrOpSiLC<> >(Rsp.c_str(), "HTTP/", 0, LnEnd) < 0)){Content = Rsp; return 1;}         //(NSTR::CompareIC("HTTP/", Rsp.c_str()) >= 0)
- int epos = NSTR::StrOffset<NSTR::ChrOpSiLC<> >((CHAR*)Rsp.c_data(), "\r\n\r\n", 0, Rsp.Length());
+ if((Rsp.Length() < 5) || (NSTR::StrOffset<NSTR::ChrOpSiLC<> >(Rsp.c_str(), ctEMBSA("HTTP/"), 0, LnEnd) < 0)){Content = Rsp; return 1;}         //(NSTR::CompareIC("HTTP/", Rsp.c_str()) >= 0)
+ int epos = NSTR::StrOffset<NSTR::ChrOpSiLC<> >((CHAR*)Rsp.c_data(), ctEMBSA("\r\n\r\n"), 0, Rsp.Length());
  if(NeedOK)   // Response only
   {
-   int rpos = NSTR::StrOffset<NSTR::ChrOpSiLC<> >((CHAR*)Rsp.c_data(), "200 OK", 0, (epos > 0)?(epos):(Rsp.Length()));
+   int rpos = NSTR::StrOffset<NSTR::ChrOpSiLC<> >((CHAR*)Rsp.c_data(), ctEMBSA("200 OK"), 0, (epos > 0)?(epos):(Rsp.Length()));
    if(rpos < 0)
     {
-     rpos = NSTR::StrOffset<NSTR::ChrOpSiLC<> >((CHAR*)Rsp.c_data(), "206 Partial Content", 0, (epos > 0)?(epos):(Rsp.Length()));
+     rpos = NSTR::StrOffset<NSTR::ChrOpSiLC<> >((CHAR*)Rsp.c_data(), ctEMBSA("206 Partial Content"), 0, (epos > 0)?(epos):(Rsp.Length()));
      if(rpos < 0){LOGMSG("No content success in HTTP response header(Size=%u)!",Rsp.Length());}
     }
   }
  if(epos < 0){Content = Rsp; return 2;}     // LOGMSG("No content!"); 
- bool GZipd = (NSTR::StrOffset<NSTR::ChrOpSiLC<> >((CHAR*)Rsp.c_data(), "Content-Encoding: gzip", 0, epos) > 0);
- bool Chunk = (NSTR::StrOffset<NSTR::ChrOpSiLC<> >((CHAR*)Rsp.c_data(), "Transfer-Encoding: chunked", 0, epos) > 0); 
+ bool GZipd = (NSTR::StrOffset<NSTR::ChrOpSiLC<> >((CHAR*)Rsp.c_data(), ctEMBSA("Content-Encoding: gzip"), 0, epos) > 0);
+ bool Chunk = (NSTR::StrOffset<NSTR::ChrOpSiLC<> >((CHAR*)Rsp.c_data(), ctEMBSA("Transfer-Encoding: chunked"), 0, epos) > 0); 
  int DataOffs = epos + 4;  // \r\n\r\n
  if(Chunk)
   {
@@ -345,7 +345,7 @@ static int GetResponseContent(CMiniStr& Rsp, CMiniStr& Content, bool NeedOK=fals
      CntLen = HexStrToNum<UINT>(Ptr);  // Size of Chunk
      DBGMSG("Chunk Size: %u", CntLen);
      if(!CntLen)break;  // End chunk is 0
-     int rpos = NSTR::StrOffset<NSTR::ChrOpSiLC<> >((LPSTR)Rsp.c_data(), "\r\n", DataOffs, Rsp.Length());
+     int rpos = NSTR::StrOffset<NSTR::ChrOpSiLC<> >((LPSTR)Rsp.c_data(), ctEMBSA("\r\n"), DataOffs, Rsp.Length());
      if(rpos < 0)break; // No data after size(Probably)!
      DataOffs  = rpos + 2;   // \r\n
      Content.cAppend((LPSTR)&Rsp.c_data()[DataOffs], CntLen);
@@ -416,6 +416,16 @@ static ULONG netServerDataExchange(SOCKET Soc, CMiniStr* Req, CMiniStr* Rsp, int
    Len = DLeft;
   }
  return Total;
+}
+//---------------------------------------------------------------------------
+static int _stdcall FormatDateForHttp(SYSTEMTIME* st, LPSTR DateStr)
+{
+ LCID lcidEnUs = MAKELCID(MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US), SORT_DEFAULT);
+ int olen = GetDateFormatA(lcidEnUs, 0, st, ctEMBSA("ddd, dd MMM yyyy"), DateStr, MAX_PATH);     // Wed, 27 Sep 2017 14:55:07 GMT
+ DateStr[--olen] = 0x20;
+ olen += GetTimeFormatA(lcidEnUs, 0, st, ctEMBSA("HH:mm:ss"), &DateStr[++olen], MAX_PATH); 
+ lstrcatA(DateStr, ctEMBSA(" GMT"));
+ return olen+4;
 }
 //---------------------------------------------------------------------------
 

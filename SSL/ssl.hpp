@@ -787,7 +787,7 @@ int  ServerLoop()
 			&sbout,
 			&flg,
 			0);
-	    DBGMSG("AcceptSecurityContext: %08X", ss);
+	    DBGMSG("AcceptSecurityContext: %08X", ss);   //  SEC_E_DECRYPT_FAILURE 0x80090330; SEC_I_CONTINUE_NEEDED 0x00090312
 		InitContext = true;
 
 		if (ss == SEC_E_INCOMPLETE_MESSAGE)
@@ -907,8 +907,13 @@ void  NoFail(HRESULT hr)
 //		throw;
 	}
 //------------------------------------------------------------------------------
-static PCCERT_CONTEXT  CreateOurCertificate(const wchar_t* Name=L"Certificate")
+static PCCERT_CONTEXT  CreateOurCertificate(const wchar_t* Name=nullptr)  //L"Certificate")
 {
+  NCTM::CEStr EStrProv(MS_DEF_PROV_W);
+  NCTM::CEStr EStrName(L"Certificate");
+ // NCTM::CEStr EStrCont(L"Container");
+  if(!Name)Name = EStrName.Decrypt();
+  
 	// CertCreateSelfSignCertificate(0,&SubjectName,0,0,0,0,0,0);
 	HRESULT hr = 0;
 	HCRYPTPROV hProv = NULL;
@@ -925,7 +930,7 @@ static PCCERT_CONTEXT  CreateOurCertificate(const wchar_t* Name=L"Certificate")
 		sib.pbData = (BYTE*)cb; 
 		sib.cbData = 1000;
 		wchar_t cnbuf[512];
-		lstrcpyW(cnbuf, L"CN=");
+		lstrcpyW(cnbuf, ctENCSW(L"CN="));
 		lstrcatW(cnbuf, Name);
 		//wchar_t*	szSubject= L"CN=Certificate";
 		if (!CertStrToNameW(CRYPT_ASN_ENCODING, cnbuf,0,0,sib.pbData,&sib.cbData,NULL))return NULL;
@@ -933,14 +938,19 @@ static PCCERT_CONTEXT  CreateOurCertificate(const wchar_t* Name=L"Certificate")
 	
 
 		// Acquire Context
-		wchar_t* pszKeyContainerName = L"Container";
-
-		if (!CryptAcquireContextW(&hProv,pszKeyContainerName,MS_DEF_PROV_W,PROV_RSA_FULL,CRYPT_NEWKEYSET | CRYPT_MACHINE_KEYSET))
+        wchar_t  KeyContName[128];  // Each unique certificate must have unique key container or next call to CertCreateSelfSignCertificate will overwrite its private key resulting in SEC_E_DECRYPT_FAILURE error
+        wchar_t* pszProviderName = EStrProv.Decrypt();   
+		wchar_t* pszKeyContainerName = KeyContName;//EStrCont.Decrypt();   //L"Container";
+        lstrcpyW(KeyContName, ctENCSW(L"Container_")); //PrintFmt(KeyContName,sizeof(KeyContName),""
+        lstrcatW(KeyContName, Name);
+        for(int idx=0;KeyContName[idx];idx++)
+         if(wchar_t v=KeyContName[idx];v == '.')KeyContName[idx] = '_';  // TODO: Fix more chars
+		if (!CryptAcquireContextW(&hProv,pszKeyContainerName,pszProviderName,PROV_RSA_FULL,CRYPT_NEWKEYSET | CRYPT_MACHINE_KEYSET))
 			{
 			hr = GetLastError();
 			if (GetLastError() == NTE_EXISTS)
 				{
-				if (!CryptAcquireContextW(&hProv,pszKeyContainerName,MS_DEF_PROV_W,PROV_RSA_FULL,CRYPT_MACHINE_KEYSET))return NULL;
+				if (!CryptAcquireContextW(&hProv,pszKeyContainerName,pszProviderName,PROV_RSA_FULL,CRYPT_MACHINE_KEYSET))return NULL;
 					//{
 					//throw;
 					//}
@@ -956,7 +966,7 @@ static PCCERT_CONTEXT  CreateOurCertificate(const wchar_t* Name=L"Certificate")
 		// Generate the certificate
 		CRYPT_KEY_PROV_INFO kpi = {0};
 		kpi.pwszContainerName = pszKeyContainerName;
-		kpi.pwszProvName = MS_DEF_PROV_W;
+		kpi.pwszProvName = pszProviderName;
 		kpi.dwProvType = PROV_RSA_FULL;
 		kpi.dwFlags = CERT_SET_KEY_CONTEXT_PROP_ID;
 		kpi.dwKeySpec = AT_KEYEXCHANGE;
@@ -1044,7 +1054,7 @@ int  ServerInit(bool NoLoop=false)
 
 	// AcquireCredentialsHandle
 
-	ss = AcquireCredentialsHandle(0,SCHANNEL_NAME,SECPKG_CRED_INBOUND,0,&m_SchannelCred,0,0,&hCred,0);   
+	ss = AcquireCredentialsHandle(0,ctENCSW(SCHANNEL_NAME),SECPKG_CRED_INBOUND,0,&m_SchannelCred,0,0,&hCred,0);   
 //	ss = AcquireCredentialsHandle(0,UNISP_NAME,SECPKG_CRED_INBOUND,0,&m_SchannelCred,0,0,&hCred,0);
 	if (FAILED(ss)) { DBGMSG("SECURITY_STATUS: %08X, RootStore: %p", ss, hCS);
 		return -1;   }

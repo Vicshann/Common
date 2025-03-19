@@ -668,7 +668,7 @@ static BOOL IsSectionNamesEqual(CHAR *NameA, CHAR *NameB)
  return TRUE;
 }
 //------------------------------------------------------------------------------
-static BOOL IsNamesEqual(CHAR *NameA, CHAR *NameB)
+static BOOL IsNamesEqual(const char* NameA, const char* NameB)
 {
  for(;;NameA++,NameB++)
   {
@@ -917,7 +917,7 @@ template<typename T> _declspec(noinline) static LPSTR TGetProcedureInfoByAddr(PB
  return NULL;
 }
 //---------------------------------------------------------------------------      
-template<typename T, bool Raw=false> _declspec(noinline) static PVOID TGetProcedureAddress(PBYTE ModuleBase, LPSTR ProcName, LPSTR* Forwarder=NULL, PVOID* ProcEntry=NULL)  // No forwarding support, no ordinals
+template<typename T, bool Raw=false> _declspec(noinline) static PVOID TGetProcedureAddress(PBYTE ModuleBase, const char* ProcName, LPSTR* Forwarder=NULL, PVOID* ProcEntry=NULL)  // No forwarding support, no ordinals
 {
  DOS_HEADER* DosHdr        = (DOS_HEADER*)ModuleBase;
  WIN_HEADER<T>* WinHdr     = (WIN_HEADER<T>*)&ModuleBase[DosHdr->OffsetHeaderPE];
@@ -952,7 +952,7 @@ template<typename T, bool Raw=false> _declspec(noinline) static PVOID TGetProced
  return Addr;     
 }
 //---------------------------------------------------------------------------
-static PVOID GetProcedureAddress(PVOID ModuleBase, LPSTR ApiName, LPSTR* Forwarder=NULL, PVOID* ProcEntry=NULL) 
+static PVOID GetProcedureAddress(PVOID ModuleBase, const char* ApiName, LPSTR* Forwarder=NULL, PVOID* ProcEntry=NULL) 
 {
 // DBGMSG("ApiName: %s",ApiName);
  if(!ModuleBase)return NULL;
@@ -961,7 +961,7 @@ static PVOID GetProcedureAddress(PVOID ModuleBase, LPSTR ApiName, LPSTR* Forward
  return TGetProcedureAddress<PETYPE32>((PBYTE)ModuleBase,ApiName,Forwarder,ProcEntry); 
 }
 //---------------------------------------------------------------------------
-static PVOID GetProcAddr(PVOID ModuleBase, LPSTR ApiName)
+static PVOID GetProcAddr(PVOID ModuleBase, const char* ApiName)
 {
  LPSTR Forwarder = NULL;
  PVOID Addr = GetProcedureAddress(ModuleBase, ApiName, &Forwarder);

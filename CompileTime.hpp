@@ -74,11 +74,11 @@ struct NCTM
 
 constexpr static unsigned int ctAlignAsPtr(unsigned int Size){return (Size/sizeof(void*)) + (bool)(Size%sizeof(void*));}   // Used to calculate a string size in pointer-sized blocks
 
-//template <typename T> constexpr inline static T ctRotL(T Value, unsigned int Shift){constexpr unsigned int MaxBits = sizeof(T) * 8U; return (Value << Shift) | (Value << ((MaxBits - Shift)&(MaxBits-1)));}  // Should be moved to Common.hpp
-//template <typename T> constexpr inline static T ctRotR(T Value, unsigned int Shift){constexpr unsigned int MaxBits = sizeof(T) * 8U; return (Value >> Shift) | (Value << ((MaxBits - Shift)&(MaxBits-1)));}  // Should be moved to Common.hpp
+template <typename T> constexpr inline static T ctRotL(T Value, unsigned int Shift){constexpr unsigned int MaxBits = sizeof(T) * 8U; return (Value << Shift) | (Value << ((MaxBits - Shift)&(MaxBits-1)));}  // Should be moved to Common.hpp
+template <typename T> constexpr inline static T ctRotR(T Value, unsigned int Shift){constexpr unsigned int MaxBits = sizeof(T) * 8U; return (Value >> Shift) | (Value << ((MaxBits - Shift)&(MaxBits-1)));}  // Should be moved to Common.hpp
 
-template <typename T> constexpr __forceinline static T RotL(T Value, unsigned int Shift){constexpr unsigned int MaxBits = sizeof(T) * 8U; return (Value << Shift) | (Value >> ((MaxBits - Shift)&(MaxBits-1)));}
-template <typename T> constexpr __forceinline static T RotR(T Value, unsigned int Shift){constexpr unsigned int MaxBits = sizeof(T) * 8U; return (Value >> Shift) | (Value << ((MaxBits - Shift)&(MaxBits-1)));}
+//template <typename T> constexpr __forceinline static T RotL(T Value, unsigned int Shift){constexpr unsigned int MaxBits = sizeof(T) * 8U; return (Value << Shift) | (Value >> ((MaxBits - Shift)&(MaxBits-1)));}
+//template <typename T> constexpr __forceinline static T RotR(T Value, unsigned int Shift){constexpr unsigned int MaxBits = sizeof(T) * 8U; return (Value >> Shift) | (Value << ((MaxBits - Shift)&(MaxBits-1)));}
 
 constexpr  __forceinline static int ctStrLen(char const* str, const int offs){return (str[offs])?(ctStrLen(str, offs+1)):(offs);}       // Offset included in result
 constexpr  __forceinline static int ctStrDif(char const* sa, char const* sb, const int offs){return (sa[offs] == sb[offs])?(ctStrDif(sa, sb, offs+1)):(offs);}   // Offset included in result
@@ -223,10 +223,9 @@ __forceinline const C* Decrypt(void)  // Run-time decryption   // There will be 
 #endif  */
 
 //====================================================================================
-static const bool   IsBigEnd = false;
-static const SIZE_T ExEncKey = (SIZE_T)0xD6B4A9C5E2B4C7D3ull;   // TODO: Must be same as a hardware calculated key
-
-static constexpr SIZE_T ctBuildKey = (SIZE_T)MakeBuildKey();  // TODO: Move to CT_CRYPT // NOTE: Data members come before function members so if MakeBuildKey is member of the same class then it is considered an undefined function
+static inline constexpr const bool   IsBigEnd   = false;
+static inline constexpr const SIZE_T ExEncKey   = (SIZE_T)0xD6B4A9C5E2B4C7D3ull;   // TODO: Must be same as a hardware calculated key
+static inline constexpr const SIZE_T ctBuildKey = 0x2387bc671822b5f8; // IT WILL NEWER WORK WITH RANDOM CONSTANTS - COMPILERS ARE TOO SMART!  MakeBuildKey();  // 0x2387bc671822b5f8; // // TODO: Move to CT_CRYPT // NOTE: Data members come before function members so if MakeBuildKey is member of the same class then it is considered an undefined function
 
 __forceinline static SIZE_T MakeExKeyPart(void) // Updates ExEncKeyRT // TODO: Hardware counter based
 {
@@ -234,54 +233,94 @@ __forceinline static SIZE_T MakeExKeyPart(void) // Updates ExEncKeyRT // TODO: H
 }
 //-------------------------------------------------------------------
 // Packs bytes so that their in-memory representation will be same on the current platform
-template<typename T, typename V> constexpr static T RePackElements(V Arr, unsigned int BLeft)
+template<typename T, typename V, typename S> constexpr static T RePackElements(S Arr, unsigned int BLeft)
 {
- using ElType = decltype(Arr[0]);
+ using ElType = V;  // decltype(Arr[0]);
  static_assert(sizeof(T) > sizeof(ElType), "Destination type is smaller!");
  T Result = 0;
  if constexpr (IsBigEnd)
  {
   for(unsigned int ctr = 0; BLeft && (ctr < (sizeof(T) / sizeof(ElType))); ctr++, BLeft--)
-   Result |= (T)Arr[ctr] << ((((sizeof(T) / sizeof(ElType))-1)-ctr) * (8*sizeof(ElType)));
+   Result |= (T)(V(Arr[ctr])) << ((((sizeof(T) / sizeof(ElType))-1)-ctr) * (8*sizeof(ElType)));
  }
  else
  {
   for(unsigned int ctr = 0; BLeft && (ctr < (sizeof(T) / sizeof(ElType))); ctr++, BLeft--)
-   Result |= (T)Arr[ctr] << (ctr * (8*sizeof(ElType)));
+   Result |= (T)(V(Arr[ctr])) << (ctr * (8*sizeof(ElType)));
  }
  return Result;
 }
 //----------------------------------------------------------------------
-
-template<typename T, SIZE_T N> struct CEStr
+template<typename V, typename T, SIZE_T N> struct CESHolder
 {
- static const SIZE_T BytesLen  = sizeof(T) * N;     // Size  (Str including 0)
- static const SIZE_T ArrSize   = (BytesLen / sizeof(SIZE_T)) + (bool)(BytesLen & (sizeof(SIZE_T) - 1));  // FullSize (Allocated)
+ static inline constexpr const SIZE_T BytesLen = sizeof(V) * N;     // Size  (Str including 0)
+ static inline constexpr const SIZE_T WholeLen = (BytesLen / sizeof(SIZE_T));
+ static inline constexpr const SIZE_T ArrSize  = WholeLen + (bool)(BytesLen & (sizeof(SIZE_T) - 1));  // FullSize (Allocated)
+ static inline constexpr const SIZE_T DataKey  = ctBuildKey; // Why doing mix with the template args causes the key here and in Decrypt being different? //(SIZE_T(ctBuildKey^(ctBuildKey * N)));  // NOTE: If decryption does not work, blame MakeBuildKey or MSVC compiler!
  //static const SIZE_T UniqueKey;
+ //static_assert(sizeof(T) <= 2);
 
  SIZE_T Array[ArrSize]; // size_t
-                                        // /*for(SIZE_T idx=0,vo=N*sizeof(T);idx < ArrSize;vo=Array[idx],idx++)Array[idx] = ((Array[idx] * N) ^ vo) * (__COUNTER__ * __LINE__);*/
-// _finline ~CEStr() {   }  // Implement stack cleaning on destruction  // <<<<<<<<<<<<< Move this to decrypted string holder
- consteval CEStr(const T* str, SIZE_T l) { Init(str, N); }  // Must have an useless arg to be different from another constructor
- consteval CEStr(const T(&str)[N]) { Init(str, N); }
- consteval void Init(const T* str, SIZE_T len)
+   
+//consteval CESHolder(void){}      // Required for derived classes                               // /*for(SIZE_T idx=0,vo=N*sizeof(T);idx < ArrSize;vo=Array[idx],idx++)Array[idx] = ((Array[idx] * N) ^ vo) * (__COUNTER__ * __LINE__);*/
+// _finline ~CESHolder() {   }  // Implement stack cleaning on destruction  // <<<<<<<<<<<<< Move this to decrypted string holder
+//consteval CESHolder(const T* str, SIZE_T l) { Init(str); }  // Must have an useless arg to be different from another constructor
+//consteval CESHolder(const T(&str)[N]) { Init(str); }
+
+consteval void Init(const T* str)
  {
   //static constexpr SIZE_T UniqueKey = CRC32(str,0); // Makes every string encrypted with an unique key    // How to pass it to 'Decrypt'?
-  for(SIZE_T sidx = 0, didx = 0, xkey = ctBuildKey ^ ExEncKey; sidx < N; didx++, sidx += (sizeof(SIZE_T)/sizeof(T)), xkey = RotL(xkey, 1))Array[didx] = RePackElements<SIZE_T>(&str[sidx], N - sidx) ^ RotR(xkey, -didx & 0x0F); 
+  for(SIZE_T sidx = 0, didx = 0, xkey = DataKey ^ ExEncKey; sidx < N; didx++, sidx += (sizeof(SIZE_T)/sizeof(V)), xkey = RotL(xkey, 1))Array[didx] = RePackElements<SIZE_T,V>(&str[sidx], N - sidx) ^ RotR(xkey, -didx & 0x0F); 
  }
-__forceinline  T* Decrypt(void) const    // const result?
+// WARNING: Very fragile (MSVC only?) The  compiler tries to reuse the decryption function body with different strings and different keys
+template<SIZE_T x=DataKey> __forceinline inline V* Decrypt(void)  //{return this->Decrypt<x>((V*)&const_cast<CESHolder<V,T,N>* >(this)->Array[0]);}          //&const_cast<CESHolder<V,T,N>* >(this)->Array[0]);}     // const result?
+{
+ volatile SIZE_T* ptr = (SIZE_T*)&const_cast<CESHolder<V,T,N>* >(this)->Array[0];  // NOTE: Without 'volatile' this entire function may be optimized away and strings will be left unencrypted
+ for(SIZE_T ctr=0,xkey=RotR(~DataKey ^ MakeExKeyPart(),3);ctr < ArrSize;ctr++, xkey=RotL(xkey, 1))ptr[ctr] = (ptr[ctr] ^ RotR(~RotL(xkey, 3), -ctr & 0x0F));    // Xor key itself is encrypted
+ return (V*)ptr;
+}
+template<SIZE_T x=DataKey> __forceinline inline V* Decrypt(V* To)    
  {
-  volatile SIZE_T* arr = &const_cast<CEStr<T,N>* >(this)->Array[0];  // NOTE: Without 'volatile' this entire function may be optimized away and strings will be left unencrypted
+  volatile SIZE_T* src = (SIZE_T*)&const_cast<CESHolder<V,T,N>* >(this)->Array[0];  // NOTE: Without 'volatile' this entire function may be optimized away and strings will be left unencrypted
+  volatile SIZE_T* dst = (SIZE_T*)To;  // NOTE: Dst buffer may be smaller (Size) than the array of units   // NOTE: Dst may cause alignment issues!  // TODO: TRy to optimize alignment
 //#pragma clang loop unroll(full)  //#pragma unroll  // No effect: it will not unroll unless an optimization mode 1,2 or 3 is enabled
-  for(SIZE_T ctr=0,xkey=RotR(~ctBuildKey ^ MakeExKeyPart(),3);ctr < ArrSize;ctr++, xkey=RotL(xkey, 1))arr[ctr] = (arr[ctr] ^ RotR(~RotL(xkey, 3), -ctr & 0x0F));    // Xor key itself is encrypted
-  return (T*)this->Array;
+  SIZE_T xkey = RotR(~DataKey ^ MakeExKeyPart(),3);   //valA ^ valB;
+  SIZE_T ctr  = 0;
+  for(;ctr < WholeLen;ctr++, xkey=RotL(xkey, 1))dst[ctr] = (src[ctr] ^ RotR(~RotL(xkey, 3), -ctr & 0x0F));    // Xor key itself is encrypted
+  if constexpr (WholeLen != ArrSize)
+   {
+    constexpr const SIZE_T Num = (BytesLen - (WholeLen * sizeof(SIZE_T))) / sizeof(V);
+    volatile SIZE_T val = src[ArrSize-1] ^ RotR(~RotL(xkey, 3), -ctr & 0x0F);
+    volatile V* dptr = (V*)&dst[WholeLen];
+    volatile V* sptr = (V*)&val;
+    for(SIZE_T idx=0;idx < Num;idx++)dptr[idx] = sptr[idx];
+   }
+  return (V*)To; 
  }
- constexpr __forceinline operator const T* ()  const { return const_cast<CEStr<T,N>* >(this)->Decrypt();}  // constness of 'this' pointer is removed
-// constexpr __forceinline operator const T* ()  const { return (T*)this->Array; }
- constexpr __forceinline T* Ptr()  const { return (T*)this->Array; }
- constexpr __forceinline T* Value()  const { return (T*)this->Array; }
- constexpr static __forceinline SIZE_T Size(void){return N-1;}  // In chars, without 0
+ constexpr __forceinline operator const V* ()  const { return const_cast<CESHolder<V,T,N>* >(this)->Decrypt();}  // constness of 'this' pointer is removed
+// constexpr __forceinline operator const V* ()  const { return (V*)this->Array; }
+ constexpr __forceinline V* Ptr()  const { return (V*)this->Array; }
+ constexpr __forceinline V* Value()  const { return (V*)this->Array; }
+ constexpr static __forceinline SIZE_T Size(void){return N;}  // In bytes
 };
+
+template<typename T, SIZE_T N> struct CEStr: CESHolder<T,T,N>
+{
+ //using CESHolder::CESHolder;
+ consteval CEStr(const T* str, SIZE_T l) { Init(str); }  // Must have an useless arg to be different from another constructor
+ consteval CEStr(const T(&str)[N]) { Init(str); }
+ constexpr static __forceinline SIZE_T Size(void){return N-1;}  // In chars, without 0  // Or should include the 0?
+};
+
+template<typename T, SIZE_T N> struct CEBArr: CESHolder<UINT8,T,N>
+{
+//using CESHolder::CESHolder;
+ consteval CEBArr(const T* str, SIZE_T l) { Init(str); }  // Must have an useless arg to be different from another constructor
+ consteval CEBArr(const T(&str)[N]) { Init(str); }
+};
+
+//#define ctDISENCSTR
+
 #ifndef ctDISENCSTR
 #define ctENCSA(Str) NCTM::CEStr(Str).Decrypt()
 #define ctENCSW(Str) NCTM::CEStr(Str).Decrypt()
@@ -289,6 +328,10 @@ __forceinline  T* Decrypt(void) const    // const result?
 #define ctENCSA(Str) (Str)
 #define ctENCSW(Str) (Str)
 #endif 
+
+// TODO: Just embed strings in code, no encryption needed
+#define ctEMBSA ctENCSA
+#define ctEMBSW ctENCSW
 //====================================================================================
 /*
  G++   __PRETTY_FUNCTION__:  const char* CProp<T, name>::GetName() [with T = float; char* name = 0]     
@@ -368,12 +411,14 @@ constexpr unsigned int ctCplHash(const unsigned char* Str)           { return (*
 template<typename Ty> struct RemoveRef { using T = Ty; };
 template<typename Ty> struct RemoveRef<Ty&> { using T = Ty; };
 template<typename Ty> struct RemoveRef<Ty&&> { using T = Ty; };
+
+
+//------------------------------------------------------------------------------
+
 };
 
 // ps is embedded packed string or EncryptedString using C++20 (Fast, no index sequences required)
 //template<CTStr str> consteval static const auto operator"" _ps() { return str; }   // must be in a namespace or global scope  // C++20, no inlining required if consteval and MSVC bug is finally fixed   // Examples: auto st = "Hello World!"_ps;  MyProc("Hello World!"_ps);
 //template<CNStr str> consteval static const auto operator"" _es() { return str; }   // must be in a namespace or global scope  // C++20, no inlining required if consteval and MSVC bug is finally fixed   // Examples: auto st = "Hello World!"_ps;  MyProc("Hello World!"_ps);
-
-
 
 #pragma warning(pop)

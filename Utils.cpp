@@ -1049,6 +1049,7 @@ void _stdcall SetINIValueInt(LPSTR SectionName, LPSTR ValueName, int Value, LPST
 //---------------------------------------------------------------------------
 int _stdcall RefreshINIValueInt(LPSTR SectionName, LPSTR ValueName, int Default, LPSTR FileName)
 {
+ DBGMSG("SectionName=%s, ValueName=%s",SectionName,ValueName);
 #ifdef DEMOVER
  int  Result = Default;
 #else
@@ -1062,6 +1063,7 @@ int _stdcall RefreshINIValueInt(LPSTR SectionName, LPSTR ValueName, int Default,
 //---------------------------------------------------------------------------
 int _stdcall RefreshINIValueStr(LPSTR SectionName, LPSTR ValueName, LPSTR Default, LPSTR RetString, DWORD Size, LPSTR FileName)
 {
+ DBGMSG("SectionName=%s, ValueName=%s",SectionName,ValueName);
 #ifdef DEMOVER
  lstrcpy(RetString,Default);
  int Result = Size;
@@ -3109,16 +3111,6 @@ void _stdcall DumpBufferASN1(PBYTE BufASN1, long LenASN1, int Depth)
   }
 }
 //------------------------------------------------------------------------------------------------------------
-int _stdcall FormatDateForHttp(SYSTEMTIME* st, LPSTR DateStr)
-{
- LCID lcidEnUs = MAKELCID(MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US), SORT_DEFAULT);
- int olen = GetDateFormatA(lcidEnUs, 0, st, "ddd, dd MMM yyyy", DateStr, MAX_PATH);     // Wed, 27 Sep 2017 14:55:07 GMT
- DateStr[--olen] = 0x20;
- olen += GetTimeFormatA(lcidEnUs, 0, st, "HH:mm:ss", &DateStr[++olen], MAX_PATH); 
- lstrcatA(DateStr, " GMT");
- return olen+4;
-}
-//------------------------------------------------------------------------------------------------------------
 bool _stdcall IsWow64(void)
 {
  static PVOID Proc = NULL;
@@ -3284,5 +3276,19 @@ NTSTATUS _stdcall CreateUntrustedNtObjDir(PHANDLE phObject, PWSTR ObjectName)
     }
  }  
  return STATUS_UNSUCCESSFUL;
+}
+//------------------------------------------------------------------------------------------------------------
+int _stdcall StackBackTrace(PVOID StkAddr, PVOID ModuleBase, SIZE_T ModuleSize, SIZE_T MaxTrace)
+{
+ PBYTE* StkPtr = (PBYTE*)StkAddr;
+ PBYTE  ModBeg = (PBYTE)ModuleBase;
+ PBYTE  ModEnd = ModBeg + ModuleSize;
+ for(SIZE_T idx=0;idx < MaxTrace;idx++)
+  {
+   PBYTE sval = StkPtr[idx];
+   if((sval >= ModBeg)&&(sval < ModEnd)) LOGMSG("STRC %4u: %p 0x%08X",idx,sval,NPEFMT::RvaToFileOffset(ModBeg, sval - ModBeg));
+     else LOGMSG("STRC %4u: %p",idx,sval);
+  }
+ return 0;
 }
 //------------------------------------------------------------------------------------------------------------

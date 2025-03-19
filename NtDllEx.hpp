@@ -142,7 +142,7 @@ static int SetSkipThreadReport(PTEB ThTeb)  // See RtlIsCurrentThreadAttachExemp
  return 0;
 }
 //------------------------------------------------------------------------------------
-static PVOID GetModuleBaseLdr(LPSTR ModName, ULONG* Size=NULL, long* BaseIdx=NULL)  // NOTE: No loader locking used!
+static PVOID GetModuleBaseLdr(const char* ModName, ULONG* Size=NULL, long* BaseIdx=NULL)  // NOTE: No loader locking used!
 {
  if(!ModName)
   {
@@ -225,6 +225,8 @@ static NTSTATUS FileCreateSync(PWSTR FileName, ACCESS_MASK DesiredAccess, ULONG 
  UNICODE_STRING FilePathUS;
  UINT Length = 11;
  wchar_t Path[512] = {'\\','?','?','\\','G','l','o','b','a','l','\\'};
+ //if((*FileName == '\\')||(*FileName == '/'))FileName++;
+ if((*FileName == '\\')||(*FileName == '/'))Length = 0;
  for(int idx=0;*FileName;FileName++,Length++)Path[Length] = *FileName;
  FilePathUS.Buffer = Path;
  FilePathUS.Length = Length * sizeof(wchar_t);

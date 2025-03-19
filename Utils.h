@@ -246,7 +246,7 @@ int _stdcall BinaryPackToBlobStr(LPSTR ApLibPath, LPSTR SrcBinPath, LPSTR OutBin
 long _stdcall NextItemASN1(PBYTE DataPtr, PBYTE* Body, PBYTE Type, UINT* Size);
 long _stdcall GetTypeFromASN1(PBYTE* DstPtr, PBYTE BufASN1, long LenASN1, UINT ValType, UINT ValIdx);
 void _stdcall DumpBufferASN1(PBYTE BufASN1, long LenASN1, int Depth=0);
-int _stdcall FormatDateForHttp(SYSTEMTIME* st, LPSTR DateStr);
+//int _stdcall FormatDateForHttp(SYSTEMTIME* st, LPSTR DateStr);
 bool _stdcall IsWow64(void);
 BOOL _stdcall ForceProcessSingleCore(HANDLE hProcess);
 int __stdcall SetProcessPrivilegeState(bool bEnable, LPSTR PrName, HANDLE hProcess=GetCurrentProcess());
@@ -265,6 +265,7 @@ HMODULE _stdcall FindModuleByExport(LPSTR ExportName, LPSTR NameOut);
 HMODULE _stdcall GetOwnerModule(PVOID Address);
 
 UINT64 FileTimeToUnixTime(FILETIME &ft);
+int _stdcall StackBackTrace(PVOID StkAddr, PVOID ModuleBase, SIZE_T ModuleSize, SIZE_T MaxTrace=32);
 //---------------------------------------------------------------------------
 inline int _cdecl PrintFToBuf(char* format, char* buffer, UINT maxlen, ...)
 {
@@ -927,7 +928,7 @@ template<typename T, typename S> S ConvertToHexStr(T Value, int MaxDigits, S Num
 }
 //---------------------------------------------------------------------------
 template<typename T> int HexStrToByteArray(PBYTE Buffer, T SrcStr, UINT HexByteCnt=-1, unsigned char SkipUntil=0x20)
-{    BOOLEAN
+{    
  UINT ctr = 0;
  for(UINT len = 0;(SrcStr[len]&&SrcStr[len+1])&&(ctr < HexByteCnt);len++)   // If it would be possible to make an unmodified defaults to disappear from compilation...
   {
@@ -1636,7 +1637,16 @@ template<int Ctr, int MIdx, typename T> constexpr __forceinline PBYTE _stdcall A
  return Addr;
 }
 //---------------------------------------------------------------------------
-
+/*int _stdcall FormatDateForHttp(SYSTEMTIME* st, LPSTR DateStr)
+{
+ LCID lcidEnUs = MAKELCID(MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US), SORT_DEFAULT);
+ int olen = GetDateFormatA(lcidEnUs, 0, st, ctEMBSA("ddd, dd MMM yyyy"), DateStr, MAX_PATH);     // Wed, 27 Sep 2017 14:55:07 GMT
+ DateStr[--olen] = 0x20;
+ olen += GetTimeFormatA(lcidEnUs, 0, st, ctEMBSA("HH:mm:ss"), &DateStr[++olen], MAX_PATH); 
+ lstrcatA(DateStr, ctEMBSA(" GMT"));
+ return olen+4;
+}*/
+//---------------------------------------------------------------------------
 //---------------------------------------------------------------------------
 #pragma warning(pop)
 

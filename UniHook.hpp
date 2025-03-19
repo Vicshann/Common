@@ -352,7 +352,7 @@ public:
 //------------------------------------------------------------------------------------
 bool IsActive(void){return (bool)this->HookLen;}
 //------------------------------------------------------------------------------------
-bool SetHook(LPSTR ProcName, LPSTR LibName, UINT Flags=EHookFlg::hfFillNop|EHookFlg::hfFollowJmp, T HookFunc=NULL)
+bool SetHook(const char* ProcName, const char* LibName, UINT Flags=EHookFlg::hfFillNop|EHookFlg::hfFollowJmp, T HookFunc=NULL)
 {
  if(this->IsActive() && !(Flags & EHookFlg::hfForceHook))return false;       // Already set
  HMODULE  hLib  = (HMODULE)NNTDLL::GetModuleBaseLdr(LibName);            // GetModuleHandleA(LibName);
